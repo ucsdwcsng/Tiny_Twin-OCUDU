@@ -1,0 +1,81 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "f1_removal_procedure.h"
+#include "../ue_context/f1ap_cu_ue_context.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/asn1/f1ap/common.h"
+#include "ocudu/asn1/f1ap/f1ap_pdu_contents.h"
+#include "ocudu/f1ap/cu_cp/f1ap_cu.h"
+#include "ocudu/f1ap/f1ap_message.h"
+
+using namespace ocudu;
+using namespace ocucp;
+
+f1_removal_procedure::f1_removal_procedure(const asn1::f1ap::f1_removal_request_s& request_,
+                                           f1ap_message_notifier&                  pdu_notifier_,
+                                           f1ap_du_processor_notifier&             cu_cp_notifier_,
+                                           f1ap_ue_context_list&                   ue_list_,
+                                           ocudulog::basic_logger&                 logger_) :
+  request(request_), pdu_notifier(pdu_notifier_), cu_cp_notifier(cu_cp_notifier_), ue_list(ue_list_), logger(logger_)
+{
+}
+
+void f1_removal_procedure::operator()(coro_context<async_task<void>>& ctx)
+{
+  CORO_BEGIN(ctx);
+
+  // If there are still active UEs, reset their context in other layers.
+  if (ue_list.size() > 0) {
+    CORO_AWAIT(handle_ue_transaction_info_loss());
+  }
+
+  // Send F1 Removal Response
+  send_f1_removal_response();
+
+  CORO_RETURN();
+}
+
+async_task<void> f1_removal_procedure::handle_ue_transaction_info_loss()
+{
+  ue_transaction_info_loss_event ev;
+
+  // Add DU UEs to the list of UEs with transaction information lost.
+  ev.ues_lost.reserve(ue_list.size());
+  for (auto& ue : ue_list) {
+    ev.ues_lost.push_back(ue.second.ue_ids.ue_index);
+  }
+
+  // After receiving an F1 Removal Request, no more F1AP Rx PDUs are expected. Cancel running UE F1AP transactions and
+  // mark each UE so that subsequent UE Context Release Procedures skip the F1 round trip (the DU will drop the context
+  // locally as part of F1 removal).
+  // Note: size of ue_list may change during this operation (e.g. if a concurrent UE context release was being
+  // processed and got cancelled). Therefore, we leverage the list ev.ues_lost for the iteration.
+  for (cu_cp_ue_index_t ue_idx : ev.ues_lost) {
+    auto* u = ue_list.find(ue_idx);
+    if (u != nullptr) {
+      u->f1_removal_in_progress = true;
+      u->ev_mng.cancel_all();
+    }
+  }
+  ev.ues_lost.erase(std::remove_if(ev.ues_lost.begin(),
+                                   ev.ues_lost.end(),
+                                   [this](cu_cp_ue_index_t ue_idx) { return ue_list.find(ue_idx) == nullptr; }),
+                    ev.ues_lost.end());
+
+  logger.info("{}: F1 Removal Request received, but there are still UEs connected to the DU. Resetting {} UEs.",
+              name(),
+              ev.ues_lost.size());
+
+  return cu_cp_notifier.on_transaction_info_loss(std::move(ev));
+}
+
+void f1_removal_procedure::send_f1_removal_response()
+{
+  f1ap_message resp;
+  resp.pdu.set_successful_outcome().load_info_obj(ASN1_F1AP_ID_F1_REMOVAL);
+  asn1::f1ap::f1_removal_resp_s& rem = resp.pdu.successful_outcome().value.f1_removal_resp();
+  rem->transaction_id                = (*request)[0]->transaction_id();
+  pdu_notifier.on_new_message(resp);
+}

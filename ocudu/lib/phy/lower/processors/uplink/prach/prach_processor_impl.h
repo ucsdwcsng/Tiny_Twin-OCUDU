@@ -1,0 +1,100 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "prach_processor_worker.h"
+#include "ocudu/phy/lower/processors/uplink/prach/prach_processor.h"
+#include "ocudu/phy/lower/processors/uplink/prach/prach_processor_baseband.h"
+#include "ocudu/phy/lower/processors/uplink/prach/prach_processor_notifier.h"
+#include "ocudu/phy/lower/processors/uplink/prach/prach_processor_request_handler.h"
+#include <atomic>
+
+namespace ocudu {
+
+/// \brief PRACH processor implementation.
+///
+/// Acts as a PRACH processor worker pool which assigns the PRACH occasion requests to the first available worker.
+class prach_processor_impl : public prach_processor,
+                             private prach_processor_baseband,
+                             private prach_processor_request_handler
+{
+  std::atomic<bool>                                    stopped = false;
+  std::vector<std::unique_ptr<prach_processor_worker>> workers;
+  prach_processor_notifier*                            notifier = nullptr;
+
+  // See prach_processor_request_handler for documentation.
+  void handle_request(shared_prach_buffer buffer, const prach_buffer_context& context) override
+  {
+    // Ignore request if the processor has stopped.
+    if (stopped.load(std::memory_order_relaxed)) {
+      return;
+    }
+
+    ocudu_assert(notifier, "Notifier has not been connected.");
+
+    // Iterate all workers...
+    for (std::unique_ptr<prach_processor_worker>& worker : workers) {
+      // Select the first worker available.
+      if (worker->is_available()) {
+        // Set request.
+        worker->handle_request(std::move(buffer), context);
+
+        // Stop iterating.
+        return;
+      }
+    }
+
+    // If no available workers, notify error and the buffer is discarded.
+    notifier->on_prach_request_overflow(context);
+  }
+
+  // See prach_processor_baseband for documentation.
+  void process_symbol(const baseband_gateway_buffer_reader& samples, const symbol_context& context) override
+  {
+    // Iterate all workers...
+    for (std::unique_ptr<prach_processor_worker>& worker : workers) {
+      // Process baseband.
+      worker->process_symbol(samples, context);
+    }
+  }
+
+public:
+  /// Creates a PRACH processor containing workers.
+  explicit prach_processor_impl(std::vector<std::unique_ptr<prach_processor_worker>> workers_) :
+    workers(std::move(workers_))
+  {
+    ocudu_assert(!workers.empty(), "No workers are available.");
+    for (const std::unique_ptr<prach_processor_worker>& worker : workers) {
+      ocudu_assert(worker, "Invalid worker.");
+    }
+  }
+
+  // See prach_processor for documentation.
+  void connect(prach_processor_notifier& notifier_) override
+  {
+    for (std::unique_ptr<prach_processor_worker>& worker : workers) {
+      worker->connect(notifier_);
+    }
+    notifier = &notifier_;
+  }
+
+  // See prach_processor interface for documentation.
+  void stop() override
+  {
+    stopped = true;
+
+    for (std::unique_ptr<prach_processor_worker>& worker : workers) {
+      worker->stop();
+    }
+  }
+
+  // See prach_processor for documentation.
+  prach_processor_request_handler& get_request_handler() override { return *this; }
+
+  // See prach_processor for documentation.
+  prach_processor_baseband& get_baseband() override { return *this; }
+};
+
+} // namespace ocudu

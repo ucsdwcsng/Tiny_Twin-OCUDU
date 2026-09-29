@@ -1,0 +1,137 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>TEST-AERIAL-SA</htmlTabRef>
+  <htmlTabName>AERIAL 100 MHz TDD SA</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>gracehopper1-oai</node>
+    <images>oai-gnb-aerial</images>
+    <tag_prefix>arm_</tag_prefix>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <always_exec>true</always_exec>
+    <desc>Configure 100 MHz bandwidth on WNC RU</desc>
+    <node>gracehopper1-oai</node>
+    <script>scripts/set-wnc-bandwidth.sh</script>
+    <args>100</args>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach Quectel</desc>
+    <id>up2-aerial</id>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>gracehopper1-oai</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy PNF/Nvidia CUBB in a container</desc>
+    <node>gracehopper1-oai</node>
+    <yaml_path>ci-scripts/yaml_files/sa_gnb_aerial</yaml_path>
+    <services>nv-cubb</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy VNF in a container</desc>
+    <node>gracehopper1-oai</node>
+    <yaml_path>ci-scripts/yaml_files/sa_gnb_aerial</yaml_path>
+    <services>oai-gnb-aerial</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach Quectel</desc>
+    <id>up2-aerial</id>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 100pings in 20sec</desc>
+    <id>up2-aerial</id>
+    <svr_id>oc-cn5g-20897-aerial</svr_id>
+    <ping_args>-c 100 -i 0.2</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (DL/UDP/800M)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 800M -t 30 -R -l 1428</iperf_args>
+    <svr_id>oc-cn5g-20897-aerial</svr_id>
+    <id>up2-aerial</id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (UL/UDP/150M)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 150M -t 30 -l 1428</iperf_args>
+    <svr_id>oc-cn5g-20897-aerial</svr_id>
+    <id>up2-aerial</id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Optional iperf (DL/UDP/1000M)(30 sec)(single-ue profile)</desc>
+    <may_fail>true</may_fail>
+    <iperf_args>-u -b 1000M -t 30 -R -l 1428</iperf_args>
+    <svr_id>oc-cn5g-20897-aerial</svr_id>
+    <id>up2-aerial</id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Optional iperf (UL/UDP/200M)(30 sec)(single-ue profile)</desc>
+    <may_fail>true</may_fail>
+    <iperf_args>-u -b 200M -t 30 -l 1428</iperf_args>
+    <svr_id>oc-cn5g-20897-aerial</svr_id>
+    <id>up2-aerial</id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach Quectel</desc>
+    <id>up2-aerial</id>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy gNB</desc>
+    <node>gracehopper1-oai</node>
+    <yaml_path>ci-scripts/yaml_files/sa_gnb_aerial</yaml_path>
+    <analysis>
+      <services>oai-gnb-aerial=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>gracehopper1-oai</node>
+    <images>oai-gnb-aerial</images>
+  </testCase>
+
+</testCaseList>

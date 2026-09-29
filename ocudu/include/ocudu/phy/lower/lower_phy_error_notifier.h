@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/support/prach_buffer_context.h"
+
+namespace ocudu {
+
+struct resource_grid_context;
+
+/// Lower physical layer interface used to notify miscellaneous types of error events.
+class lower_phy_error_notifier
+{
+public:
+  /// Default destructor.
+  virtual ~lower_phy_error_notifier() = default;
+
+  /// \brief Notifies a resource grid outside the slot window.
+  ///
+  /// This error occurs when a resource grid transmission request for slot \f$n\f$ is received after the processing
+  /// of slot \f$n\f$ has started.
+  ///
+  /// The time window the lower physical layer can receive a resource grid for a slot starts with
+  /// lower_phy_timing_notifier::on_tti_boundary() and finishes with the beginning of the processing of the first symbol
+  /// within the slot.
+  ///
+  /// \param[in] context Context in which the resource grid is not available.
+  /// \sa lower_phy_rg_handler::handle_resource_grid.
+  virtual void on_late_resource_grid(const resource_grid_context& context) = 0;
+
+  /// \brief Notifies a PRACH request outside the slot window.
+  ///
+  /// This error occurs when a PRACH request for slot \f$n\f$ is received after slot \f$n\f$ started being
+  /// processed.
+  ///
+  /// \param[in] context Context of the PRACH request raising the error notification.
+  virtual void on_prach_request_late(const prach_buffer_context& context) = 0;
+
+  /// \brief Notifies an excess of PRACH requests.
+  ///
+  /// This error occurs when the number of pending PRACH requests reaches the limit.
+  ///
+  /// \param[in] context Context of the PRACH request raising the error notification.
+  virtual void on_prach_request_overflow(const prach_buffer_context& context) = 0;
+
+  /// \brief Notifies a PUxCH request outside the slot window.
+  ///
+  /// This error occurs when a PUxCH request for slot \f$n\f$ is received after slot \f$n\f$ started being
+  /// processed.
+  ///
+  /// \param[in] context Context of the PUxCH request raising the error notification.
+  virtual void on_puxch_request_late(const resource_grid_context& context) = 0;
+};
+
+} // namespace ocudu

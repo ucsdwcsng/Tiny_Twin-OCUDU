@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+spec:
+  inputs:
+    ocudu_path:
+      type: string
+      default: $CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME
+      description: "OCUDU repository path."
+    ocudu_ref:
+      type: string
+      default: $CI_COMMIT_REF_NAME
+      description: "OCUDU reference branch or tag."
+---
+variables:
+  TF_VAR_ocudu_path: $CI_SERVER_HOST/$[[ inputs.ocudu_path ]]
+  TF_VAR_ocudu_ref: $[[ inputs.ocudu_ref ]]
+  TF_VAR_ci_project_title: $CI_PROJECT_TITLE
+
+include:
+  - component: ${CI_SERVER_FQDN}/components/opentofu/validate-plan-apply@4.5.0
+    inputs:
+      root_dir: .gitlab
+      state_name: gitlab-configuration
+      auto_define_backend: true
+      trigger_in_child_pipeline: true
+      child_pipeline_name: gitlab_configuration
+      child_pipeline_stage: ci
+      child_pipeline_rules:
+        - if: $ON_MR && $GITLAB_TOKEN
+          changes:
+            paths: &gitlab_changes
+              - .gitlab/main.tf
+              - .gitlab/ci-shared/gitlab_settings/**/*.tf
+        - if: $ON_DEFAULT_BRANCH && $GITLAB_TOKEN
+          changes:
+            paths: *gitlab_changes
+            compare_to: "$CI_COMMIT_BEFORE_SHA"
+      fmt_rules:
+        - if: $ON_MR
+          allow_failure: false
+      validate_rules:
+        - if: $ON_MR
+          allow_failure: false
+      apply_rules:
+        - if: $ON_DEFAULT_BRANCH
+
+gitlab_configuration:
+  variables:
+    CACHE_KEY: .gitlab-$CI_PIPELINE_ID
+
+# Additional CI/CD settings not supported by Terraform provider
+configure_cicd_settings:
+  stage: ci
+  image: curlimages/curl:8.18.0
+  script:
+    - |
+      curl --fail --request PUT \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --data "ci_allow_fork_pipelines_to_run_in_parent_project=false" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID" > /dev/null
+  rules:
+    - if: $ON_DEFAULT_BRANCH && $GITLAB_TOKEN
+      changes:
+        paths:
+          - .gitlab/main.tf
+        compare_to: "$CI_COMMIT_BEFORE_SHA"

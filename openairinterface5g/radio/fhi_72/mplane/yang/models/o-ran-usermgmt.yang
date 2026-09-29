@@ -1,0 +1,331 @@
+module o-ran-usermgmt {
+  yang-version 1.1;
+  namespace "urn:o-ran:user-mgmt:1.0";
+  prefix "o-ran-usermgmt";
+
+  import ietf-netconf-acm {
+    prefix nacm;
+    reference
+      "RFC 8341: Network Configuration Access Control Model";
+  }
+
+  import o-ran-wg4-features {
+    prefix "feat";
+  }
+
+  import ietf-crypto-types {
+    prefix ct;
+  }
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the user management model for the O-RAN Equipment.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 16.0.0
+
+      1) add SSH Public Key.";
+
+    reference "ORAN-WG4.M.0-v16.00";
+  }
+
+  revision "2023-12-11" {
+    description
+      "version 10.1.0
+
+      1) clarify handling of User-Names.";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2022-08-15" {
+    description
+      "version 10.0.0
+
+      1) introduced SHARED-ORU-MULTI-OPERATOR feature.";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+
+  revision "2021-12-01" {
+    description
+      "version 1.3.0
+
+      1) typographical corrections in descriptions";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2020-12-10" {
+    description
+      "version 1.2.0
+
+      1) updated description for enabled leaf";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) change name leaf to type nacm:user-name-type
+      2) added account-type to qualify when password is required ";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  typedef password-type {
+    type string {
+      length "8..128";
+      pattern "[a-zA-Z0-9!$%\\^()\\[\\]_\\-~{}.+]*" {
+        error-message "Password content does not meet the requirements";
+      }
+    }
+    description
+      "The password for this entry.
+       The Password must contain at least 2 characters from
+       each of the following groups:
+       a) Lower case alphabetic (a-z)
+       b) Upper case alphabetic (A-Z)
+       c) Numeric 0-9
+       d) Special characters Allowed !$%^()[]_-~{}.+
+       Password must not contain Username.
+
+       When a password is received by a NETCONF server,
+       it should be securely stored in the O-RU's configuration datastore.
+       How to securely store the password in the datastore is implementation-specific
+       and out of scope of WG4 M-Plane specification.";
+  }
+
+  grouping user-list {
+    description "a user list grouping";
+    list user {
+      key "name";
+      description
+        "The list of local users configured on this device.";
+      leaf name {
+        type nacm:user-name-type;
+        description
+          "The user name string identifying this entry.
+
+          NOTE: o-ran-usermgmt:user-profile/user/name is
+          identical to nacm:nacm/groups/group/user-name
+          but the current schema is preserved for backwards
+          compatibility.";
+      }
+      leaf account-type {
+        type enumeration {
+          enum PASSWORD {
+            description "the user-name is for password based authentication";
+          }
+          enum CERTIFICATE {
+            description "the user-name is for certificate based authentication";
+          }
+          enum SSHPUBLICKEY {
+            if-feature feat:CLIENT-AUTH-SSH-PUBLIC-KEY;
+            description "the user-name is for public key based authentication";
+          }
+        }
+        default "PASSWORD";
+        description "the account type";
+      }
+
+      leaf password {
+        nacm:default-deny-all;
+        type password-type;
+        description
+          "The password for this entry.
+
+          This field is only valid when account-type is PASSWORD,
+          i.e., when account-type is NOT present or present and set to
+          PASSWORD.";
+      }
+
+      container ssh-public-key {
+        nacm:default-deny-all;
+        when "../account-type='SSHPUBLICKEY'";
+        if-feature feat:CLIENT-AUTH-SSH-PUBLIC-KEY;
+        uses ct:public-key-grouping;
+        description
+          "The SSH pubic key for this entry.
+
+          This field is valid only when account-type is SSHPUBLICKEY.";
+      }
+
+      leaf enabled {
+        type boolean;
+        description
+          "Indicates whether an account is enabled or disabled.
+
+           A NETCONF Server shall reject a configuration that attempts to
+           enable a Password account for an account where the password leaf
+           is not configured.
+
+           This validation statement is included in the YANG description and
+           not in a MUST statement to preserve backwards compatibility.";
+      }
+      leaf-list sro-id {
+        if-feature feat:SHARED-ORU-MULTI-OPERATOR;
+        type string;
+        description
+          "An optional list if Shared Resource Operator identities associated with the
+          user-account. Used to realize enhanced access privileges in a shared O-RU.
+          When an sro-id is configured in the O-RU, the O-RU shall
+          implement additional sro-id based NETCONF access control
+          as specified in O-RAN.WG4.MP.0-v10.00.
+          The O-RU does not further interpret the specific value of sro-id.";
+      }
+    }
+  }
+
+  container users {
+    must "user/enabled='true'" {
+      error-message "At least one account needs to be enabled.";
+    }
+    //TAKE NOTE - any configuration with zero enabled users is invalid.
+    //This will typically be the case when using a simulated NETCONF Server
+    //and so this constraint should be removed when operating in those scenarios
+
+    //The config data base of the O-RAN equipment should ensure that the user
+    //default account is enabled on factory restart
+
+    description "list of user accounts";
+    uses user-list;
+  }
+
+  rpc chg-password {
+    description "the RPC used to change a password";
+    nacm:default-deny-all;
+    input {
+      leaf currentPassword {
+        type password-type;
+        mandatory true;
+        description
+          "provide the current password";
+      }
+      leaf newPassword {
+        type password-type;
+        mandatory true;
+        description
+          "provide a new password";
+      }
+      leaf newPasswordConfirm {
+        type password-type;
+        mandatory true;
+        description
+          "re-enter the new password ";
+      }
+    }
+    output {
+      leaf status {
+        type enumeration {
+          enum "Successful" {
+            value 1;
+            description "change password operation is successful";
+          }
+          enum "Failed" {
+            value 2;
+            description "change password operation failed";
+          }
+        }
+        mandatory true;
+        description
+          "Successful or Failed";
+      }
+      leaf status-message {
+        type string;
+        description
+          "Gives a more detailed reason for success / failure";
+      }
+    }
+  }
+
+  rpc chg-ssh-public-key {
+    if-feature feat:CLIENT-AUTH-SSH-PUBLIC-KEY;
+    description "the RPC used to change SSH public key";
+    nacm:default-deny-all;
+    input {
+      container current-ssh-public-key {
+        uses ct:public-key-grouping;
+        description
+          "provide the current SSH public algorithm and key";
+      }
+      container new-ssh-public-key {
+        uses ct:public-key-grouping;
+        description
+          "provide a new SSH public algorithm and key";
+      }
+      container new-ssh-public-key-confirm {
+        uses ct:public-key-grouping;
+        description
+          "re-enter the new SSH public algorithm and key";
+      }
+    }
+    output {
+      leaf status {
+        type enumeration {
+          enum "Successful" {
+            value 1;
+            description "change SSH public key operation is successful";
+          }
+          enum "Failed" {
+            value 2;
+            description "change SSH public key operation failed";
+          }
+        }
+        mandatory true;
+        description
+          "Successful or Failed";
+      }
+      leaf status-message {
+        type string;
+        description
+          "Gives a more detailed reason for success / failure";
+      }
+    }
+  }
+
+}

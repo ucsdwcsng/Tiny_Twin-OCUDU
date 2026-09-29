@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "ethernet_frame_builder_impl.h"
+#include "../support/network_order_binary_serializer.h"
+#include "ethernet_constants.h"
+
+using namespace ocudu;
+using namespace ether;
+
+frame_builder_impl::frame_builder_impl(const ocudu::ether::vlan_frame_params& eth_params_) : eth_params(eth_params_) {}
+
+units::bytes frame_builder_impl::get_header_size() const
+{
+  return ETH_HEADER_SIZE;
+}
+
+void frame_builder_impl::build_frame(span<uint8_t> buffer)
+{
+  ofh::network_order_binary_serializer serializer(buffer.data());
+
+  // Write destination MAC address (6 Bytes).
+  serializer.write(eth_params.mac_dst_address);
+
+  // Write source MAC address (6 Bytes).
+  serializer.write(eth_params.mac_src_address);
+
+  // Write Ethernet Type (2 Bytes).
+  serializer.write(eth_params.eth_type);
+}

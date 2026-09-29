@@ -1,0 +1,127 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>TEST-SA-FR1-N310-2x2-60MHz</htmlTabRef>
+  <htmlTabName>60 MHz 2x2 TDD SA DSUUU</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States</desc>
+    <node>matix</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Cluster_Image</class>
+    <desc>Pull Images from Cluster</desc>
+    <images>oai-gnb</images>
+    <node>matix</node>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach UE</desc>
+    <id>up2</id>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>matix</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy gNB (TDD/Band77/60MHz/N310) in a container</desc>
+    <node>matix</node>
+    <yaml_path>ci-scripts/yaml_files/5g_sa_n310_2x2_60MHz</yaml_path>
+    <num_attempts>3</num_attempts>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach UE</desc>
+    <id>up2</id>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 100pings in 20sec</desc>
+    <id>up2</id>
+    <svr_id>matix-cn5g</svr_id>
+    <ping_args>-c 100 -i 0.2</ping_args>
+    <ping_packetloss_threshold>1</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (DL/150Mbps/UDP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 150M -t 30 -R</iperf_args>
+    <svr_id>matix-cn5g</svr_id>
+    <id>up2</id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (UL/250Mbps/UDP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 250M -t 30</iperf_args>
+    <svr_id>matix-cn5g</svr_id>
+    <id>up2</id>
+    <iperf_packetloss_threshold>10</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>70</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (BIDIR TCP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-t 30 --bidir</iperf_args>
+    <svr_id>matix-cn5g</svr_id>
+    <id>up2</id>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach UE</desc>
+    <id>up2</id>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>5</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy gNB</desc>
+    <node>matix</node>
+    <yaml_path>ci-scripts/yaml_files/5g_sa_n310_2x2_60MHz</yaml_path>
+    <analysis>
+      <services>oai-gnb=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States</desc>
+    <node>matix</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>matix</node>
+    <images>oai-gnb</images>
+  </testCase>
+
+</testCaseList>

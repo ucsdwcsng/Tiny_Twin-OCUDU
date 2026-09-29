@@ -1,0 +1,88 @@
+<!--
+SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+-->
+
+Change Log for Releases
+=======================
+
+## 26.04 (initial OCUDU release)
+- UL MIMO
+- NRPPa using RSRP and Sounding Reference Signals (SRS)
+- Xn and Conditional HO
+- FR2 120 KHz
+- PRACH formats A3, C0 and C2
+- Robust Header Compression (RoHC)
+- Support for RRC_INACTIVE
+- Support for aperiodic and narrowband SRS
+- CSI-RS based RL monitoring
+- M-plane (through O1 helper elements)
+- Hardware accelerator support through DPDK BBDEV
+- Other bug-fixes and improved stability and performance in all parts
+
+## 25.10
+- Reworked threading and execution model to support more deployment use-cases
+- Added separate applications for CU-CP and CU-UP
+- Updated E1AP ASN1 to Release 18.5
+- New WebSocket interface for metrics reporting and remote commands
+- PDCP transmit parallelization for security processing
+- Added new OFH parameter to set RU reference level
+- Added automatic SBOM generation
+- Itensified CI coverage and testing
+- Simplified and aligned Docker/Helm configs, moved metrics to telegraf
+- Other bug-fixes and improved stability and performance in all parts
+
+## 25.04
+- PUCCH format F3 and F4
+- Single layer closed loop UL-MIMO using Sounding Reference Signals (SRS)
+- Discontinuous Reception (DRX)
+- ETWS/CMAS
+- Improved QoS including QoS-aware scheduler
+- Contention-free Random Access during HO
+- Widely extended metrics reporting
+- Other bug-fixes and improved stability and performance in all parts
+
+## 24.10.1
+- Fix PUSCH benchmark
+
+## 24.10
+- CU/DU split
+- RAN slicing
+- Compile time selection of split 7 and split 8
+- E2 support in the CU
+
+## 24.04
+ * Allow multiple cells per gNB
+ * Added Intra-gNB handover
+ * Added NTN support for GEO
+ * Other bug-fixes and improved stability and performance in all parts
+
+## 23.10.1
+ * Hotfix that updated the number of downlink threads based on the processing delay for default FDD configurations
+ 
+## 23.10
+ * Added downlink MIMO (up to 4 layers)
+ * Added Open Fronthaul (OFH) interface for split 7.2 ORAN radio units (optionally using DPDK)
+ * Added E2 interface including KPM and RAN control (RC) service model
+ * Added Timing Advance support
+ * Added Docker files
+ * Expose many more config parameters
+ * Other bug-fixes and improved stability and performance in all parts
+
+## 23.5
+ * Updated ASN.1 of RRC/NGAP/F1AP/E1AP to 3GPP Release 17.4
+ * Add UE capability transfer procedure
+ * Add support for srsUE
+ * CSI-RS in Downlink
+ * Add virtual RF driver to use with Amarisoft UE
+ * Expose further config parameters
+ * Other bug-fixes and improved stability and performance in all parts
+
+## 23.3 (initial public release)
+ * FDD/TDD supported, all FR1 bands
+ * 15/30 KHz subcarrier spacing
+ * All physical channels including PUCCH Format 1 and 2, excluding Sounding-RS
+ * Highly optimized LDPC and Polar encoder/decoder for ARM Neon and x86 AVX2/AVX512
+ * All RRC procedures excluding Mobility, Paging and Reestablishment
+ * All MAC procedures excluding power control
+ * Split 8 support using Ettus/NI USRPs

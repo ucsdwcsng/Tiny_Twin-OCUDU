@@ -1,0 +1,16 @@
+// Copyright (c) Microsoft Corporation. Licensed under the MIT license.
+//
+// EdgeRIC-on-Janus DL scheduling telemetry (Report path). One message per UE per
+// (sampled) slot, emitted from the mac_sched_dl_ctrl hook at compute_dl_prio.
+// The muApp uses cqi + dl_backlog_bytes to compute the Max-Weight priority and
+// echoes tti back on the control path for RANtime staleness gating.
+syntax = "proto2";
+
+message dl_sched_report {
+   required uint32 rnti             = 1;
+   required uint32 du_ue_index      = 2;
+   required uint32 tti              = 3;   // RANtime slot counter
+   required uint32 cqi              = 4;   // wideband CQI
+   required uint32 dl_backlog_bytes = 5;   // pending DL newTx bytes (backlog)
+   required uint32 cur_max_rbs      = 6;   // fair per-UE RB cap this slot (reference)
+}

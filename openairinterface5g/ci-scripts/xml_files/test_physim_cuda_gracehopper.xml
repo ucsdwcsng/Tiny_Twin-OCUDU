@@ -1,0 +1,22 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>physim-tab</htmlTabRef>
+  <htmlTabName>PhySim</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Build_Deploy_PhySim</class>
+    <desc>Build and Deploy Physims with CUDA Channel Simulation</desc>
+    <script>scripts/docker-build-and-deploy-physims-cuda.sh</script>
+    <node>localhost</node>
+    <ctest-opt>-R cuda.5g.physims</ctest-opt>
+  </testCase>
+
+</testCaseList>
+

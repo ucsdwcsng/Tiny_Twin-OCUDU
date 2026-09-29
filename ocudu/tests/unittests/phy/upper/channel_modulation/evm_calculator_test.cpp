@@ -1,0 +1,110 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/phy/upper/channel_modulation/channel_modulation_factories.h"
+#include "ocudu/support/math/complex_normal_random.h"
+#include "fmt/ostream.h"
+#include <gtest/gtest.h>
+#include <random>
+
+using EvmCalculatorTestParams = std::tuple<ocudu::modulation_scheme, float, unsigned>;
+
+namespace ocudu {
+
+static std::ostream& operator<<(std::ostream& os, const modulation_scheme& modulation)
+{
+  fmt::print(os, "{}", ocudu::to_string(modulation));
+  return os;
+}
+
+} // namespace ocudu
+
+using namespace ocudu;
+
+std::mt19937 rgen(0);
+
+class EvmCalculatorFixture : public ::testing::TestWithParam<EvmCalculatorTestParams>
+{
+protected:
+  std::unique_ptr<evm_calculator>      calculator;
+  std::unique_ptr<demodulation_mapper> demapper;
+  std::unique_ptr<modulation_mapper>   mapper;
+
+  void SetUp() override
+  {
+    std::shared_ptr<evm_calculator_factory> evm_calc_factory = create_evm_calculator_factory();
+    ASSERT_NE(evm_calc_factory, nullptr);
+
+    std::shared_ptr<demodulation_mapper_factory> demodulator_factory = create_demodulation_mapper_factory();
+    ASSERT_NE(demodulator_factory, nullptr);
+
+    std::shared_ptr<modulation_mapper_factory> modulator_factory = create_modulation_mapper_factory();
+    ASSERT_NE(modulator_factory, nullptr);
+
+    calculator = evm_calc_factory->create();
+    ASSERT_TRUE(calculator);
+
+    demapper = demodulator_factory->create();
+    ASSERT_TRUE(demapper);
+
+    mapper = modulator_factory->create();
+    ASSERT_TRUE(mapper);
+  }
+};
+
+TEST_P(EvmCalculatorFixture, AWGN)
+{
+  modulation_scheme modulation    = std::get<0>(GetParam());
+  float             noise_var     = std::get<1>(GetParam());
+  unsigned          nof_symbols   = std::get<2>(GetParam());
+  unsigned          nof_bits      = nof_symbols * get_bits_per_symbol(modulation);
+  float             expected_evm  = std::sqrt(noise_var);
+  float             max_evm_error = expected_evm / 10.0f;
+
+  complex_normal_distribution<cf_t> dist(0.0f, std::sqrt(noise_var));
+
+  // Fill buffer with random data.
+  dynamic_bit_buffer data(nof_bits);
+  for (unsigned i_byte = 0, i_byte_end = nof_bits / 8; i_byte != i_byte_end; ++i_byte) {
+    data.set_byte(rgen() & mask_lsb_ones<unsigned>(8), i_byte);
+  }
+  if (nof_bits % 8 != 0) {
+    data.insert((rgen() & mask_lsb_ones<unsigned>(nof_bits % 8)), 8 * (nof_bits / 8), nof_bits % 8);
+  }
+
+  // Create modulated data.
+  std::vector<cf_t> modulated(nof_symbols);
+  mapper->modulate(modulated, data, modulation);
+
+  // Add noise.
+  for (cf_t& symbol : modulated) {
+    symbol += dist(rgen);
+  }
+
+  // Fill noise variance.
+  std::vector<float> noise_vars(nof_symbols);
+  std::fill(noise_vars.begin(), noise_vars.end(), noise_var);
+
+  // Soft demapper.
+  std::vector<log_likelihood_ratio> soft_bits(nof_bits);
+  demapper->demodulate_soft(soft_bits, modulated, noise_vars, modulation);
+
+  // Calculate EVM.
+  float evm = calculator->calculate(soft_bits, modulated, modulation);
+
+  // Assert EVM is within a fifth of the noise variance.
+  ASSERT_NEAR(evm, expected_evm, max_evm_error);
+}
+
+// Creates test suite that combines all possible parameters. Denote zero_correlation_zone exceeds the maximum by one.
+INSTANTIATE_TEST_SUITE_P(ChannelModulation,
+                         EvmCalculatorFixture,
+                         ::testing::Combine(::testing::Values(modulation_scheme::BPSK,
+                                                              modulation_scheme::PI_2_BPSK,
+                                                              modulation_scheme::QPSK,
+                                                              modulation_scheme::QAM16,
+                                                              modulation_scheme::QAM64,
+                                                              modulation_scheme::QAM256),
+                                            ::testing::Values(0.001f, 0.0001f, 0.00001f),
+                                            ::testing::Values(100, 1000, 10000)));

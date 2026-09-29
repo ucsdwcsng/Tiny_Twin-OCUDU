@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/expected.h"
+#include "ocudu/du/du_cell_config.h"
+
+namespace ocudu {
+
+struct pucch_resource_builder_params;
+struct srs_builder_params;
+
+namespace config_helpers {
+
+/// \brief Compute the largest (internal) BWP PRB interval without PUCCH resources.
+///
+/// This function assumes that the PUCCH resources are located in 2 separate blocks, at both external sides of the BWP,
+/// i.e., 1 block on the left side (where indices is 0, 1, 2, ...) and 1 block on the right side (where indices are ...,
+/// N_BWP_RBs -3, N_BWP_RBs-2, N_BWP_RBs-1) of the BWP. The function computes the largest interval of PRBs that are not
+/// used by the PUCCH resources. The starting PRB of the interval is the first PRB that is not used by the PUCCH
+/// resources on the left side of the BWP, while and the ending PRB is the first PRB that is used by the PUCCH resources
+/// on the right side of the BWP.
+///
+/// \param user_params parameters passed by the user for the generation the PUCCH resource list.
+/// \param bwp_size size of the BWP in RBs.
+/// \return The largest (internal) BWP PRB interval without PUCCH resources.
+prb_interval find_largest_prb_interval_without_pucch(const pucch_resource_builder_params& user_params,
+                                                     unsigned                             bwp_size);
+
+/// \brief Compute the PRACH frequency start as a function of the PUCCH guardbands.
+///
+/// This function computes the PRACH frequency start so as it won't collide with the PUCCH resources. As per TS 38.331,
+/// PRACH frequency start is \c msg1-FrequencyStart.
+///
+/// \param user_params parameters passed by the user for the generation the PUCCH resource list.
+/// \param bwp_size size of the BWP in RBs.
+/// \param is_long_prach whether the PRACH uses long preambles.
+/// \return PRACH frequency start.
+unsigned
+compute_prach_frequency_start(const pucch_resource_builder_params& user_params, unsigned bwp_size, bool is_long_prach);
+
+/// \brief Compute the number of PUCCH resources that are used for SR and CSI.
+///
+/// If the user has defined a larger number of resources for SR and CSI than needed, this will returns the actual
+/// estimated number of resources that will be used by the GNB, constrained by the maximum PUCCH grants per slot.
+/// \param user_params parameters passed by the user for the generation the PUCCH resource list.
+/// \param max_pucch_grants_per_slot maximum number of PUCCH grants that can be allocated per slot in the cell.
+/// \param sr_period_msec SR period in milliseconds.
+/// \param csi_period_msec CSI period in milliseconds.
+void compute_nof_sr_csi_pucch_res(pucch_resource_builder_params& user_params,
+                                  unsigned                       max_pucch_grants_per_slot,
+                                  float                          sr_period_msec,
+                                  std::optional<unsigned>        csi_period_msec);
+
+bounded_integer<unsigned, 1, 14> compute_max_nof_pucch_symbols(const srs_builder_params& user_srs_params);
+
+} // namespace config_helpers
+} // namespace ocudu

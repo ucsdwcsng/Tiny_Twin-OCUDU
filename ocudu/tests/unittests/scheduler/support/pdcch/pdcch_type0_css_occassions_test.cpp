@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/adt/format.h"
+#include "ocudu/ran/pdcch/pdcch_type0_css_occasions.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+
+using test_params = std::tuple<unsigned, unsigned>;
+
+class pdcch_type0_css_occasions_fixture : public ::testing::TestWithParam<test_params>
+{};
+
+TEST_P(pdcch_type0_css_occasions_fixture, fr1)
+{
+  unsigned ss0_index        = std::get<0>(GetParam());
+  unsigned nof_symb_coreset = std::get<1>(GetParam());
+
+  pdcch_type0_css_occasion_pattern1_configuration config;
+  config.is_fr2           = false;
+  config.ss0_index        = ss0_index;
+  config.nof_symb_coreset = nof_symb_coreset;
+
+  pdcch_type0_css_occasion_pattern1_description occasion = pdcch_type0_css_occasions_get_pattern1(config);
+
+  // Assert offset.
+  if (ss0_index == 2 || ss0_index == 3 || ss0_index == 12 || ss0_index == 13) {
+    ASSERT_EQ(occasion.offset, 2);
+  } else if (ss0_index == 4 || ss0_index == 5 || ss0_index == 9 || ss0_index == 14 || ss0_index == 15) {
+    ASSERT_EQ(occasion.offset, 5);
+  } else if (ss0_index == 6 || ss0_index == 7) {
+    ASSERT_EQ(occasion.offset, 7);
+  } else {
+    ASSERT_EQ(occasion.offset, 0);
+  }
+  // Assert M
+  if ((ss0_index == 1) || (ss0_index == 3) || (ss0_index == 5) || (ss0_index == 7)) {
+    ASSERT_EQ(occasion.M, 0.5);
+  } else if ((ss0_index == 8) || (ss0_index == 9)) {
+    ASSERT_EQ(occasion.M, 2.0);
+  } else {
+    ASSERT_EQ(occasion.M, 1.0);
+  }
+  // Assert start symbol.
+  if (ss0_index == 1 || ss0_index == 3 || ss0_index == 5 || ss0_index == 7) {
+    ASSERT_EQ(occasion.start_symbol.size(), 2);
+    ASSERT_EQ(occasion.start_symbol[0], 0);
+    ASSERT_EQ(occasion.start_symbol[1], nof_symb_coreset);
+  } else if (ss0_index == 10 || ss0_index == 12 || ss0_index == 14) {
+    ASSERT_EQ(occasion.start_symbol.size(), 1);
+    ASSERT_EQ(occasion.start_symbol[0], 1);
+  } else if (ss0_index == 11 || ss0_index == 13 || ss0_index == 15) {
+    ASSERT_EQ(occasion.start_symbol.size(), 1);
+    ASSERT_EQ(occasion.start_symbol[0], 2);
+  } else {
+    ASSERT_EQ(occasion.start_symbol.size(), 1);
+    ASSERT_EQ(occasion.start_symbol[0], 0);
+  }
+}
+
+TEST_P(pdcch_type0_css_occasions_fixture, fr2)
+{
+  unsigned ss0_index        = std::get<0>(GetParam());
+  unsigned nof_symb_coreset = std::get<1>(GetParam());
+
+  pdcch_type0_css_occasion_pattern1_configuration config;
+  config.is_fr2           = true;
+  config.ss0_index        = ss0_index;
+  config.nof_symb_coreset = nof_symb_coreset;
+
+  if (ss0_index > 13) {
+#if ASSERTS_ENABLED
+    ASSERT_DEATH(
+        { pdcch_type0_css_occasions_get_pattern1(config); },
+        R"(SearchSpaceZero \([0-9]{1,}\) must be \[0\.\.13\] for FR2.)");
+#endif // ASSERTS_ENABLED
+    return;
+  }
+
+  pdcch_type0_css_occasion_pattern1_description occasion = pdcch_type0_css_occasions_get_pattern1(config);
+
+  // Assert offset.
+  if (ss0_index == 2 || ss0_index == 3 || ss0_index == 7) {
+    ASSERT_EQ(occasion.offset, 2.5);
+  } else if (ss0_index == 4 || ss0_index == 5 || ss0_index == 8 || ss0_index == 13) {
+    ASSERT_EQ(occasion.offset, 5);
+  } else if (ss0_index == 9 || ss0_index == 10 || ss0_index == 11) {
+    ASSERT_EQ(occasion.offset, 7.5);
+  } else {
+    ASSERT_EQ(occasion.offset, 0.0);
+  }
+  // Assert M
+  if (ss0_index == 0 || ss0_index == 2 || ss0_index == 4 || ss0_index == 9) {
+    ASSERT_EQ(occasion.M, 1.0);
+  } else if (ss0_index == 12 || ss0_index == 13) {
+    ASSERT_EQ(occasion.M, 2.0);
+  } else {
+    ASSERT_EQ(occasion.M, 0.5);
+  }
+  // Assert start symbol.
+  if (ss0_index == 1 || ss0_index == 3 || ss0_index == 5 || ss0_index == 10) {
+    ASSERT_EQ(occasion.start_symbol.size(), 2);
+    ASSERT_EQ(occasion.start_symbol[0], 0);
+    ASSERT_EQ(occasion.start_symbol[1], 7);
+  } else if (ss0_index == 6 || ss0_index == 7 || ss0_index == 8 || ss0_index == 11) {
+    ASSERT_EQ(occasion.start_symbol.size(), 2);
+    ASSERT_EQ(occasion.start_symbol[0], 0);
+    ASSERT_EQ(occasion.start_symbol[1], nof_symb_coreset);
+  } else {
+    ASSERT_EQ(occasion.start_symbol.size(), 1);
+    ASSERT_EQ(occasion.start_symbol[0], 0);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(pdcch_type0_css_occasions,
+                         pdcch_type0_css_occasions_fixture,
+                         ::testing::Combine(::testing::Range(0U, 15U), ::testing::Range(1U, 3U)));

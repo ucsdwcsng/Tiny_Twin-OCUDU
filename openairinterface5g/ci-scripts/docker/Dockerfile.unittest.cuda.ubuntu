@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS cuda-image
+FROM ran-base:develop AS ran-tests
+
+COPY --from=cuda-image /usr/local/cuda/ /usr/local/cuda/
+
+# Set the LD_LIBRARY_PATH to ensure the system can find the copied libraries.
+# This is crucial for applications that use CUDA.
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/targets/sbsa-linux/lib
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV C_INCLUDE_PATH=/usr/local/cuda/include
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+        libgtest-dev \
+        libyaml-cpp-dev
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+COPY . .
+
+WORKDIR /oai-ran/build
+RUN cmake -GNinja -DENABLE_TESTS=ON -DENABLE_CHANNEL_SIM_CUDA=ON .. && ninja tests

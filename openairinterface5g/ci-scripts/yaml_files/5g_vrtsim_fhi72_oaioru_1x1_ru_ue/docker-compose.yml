@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: MIT
+
+services:
+    dpdk-init-ru:
+        image: docker.io/library/oai-dpdk-init:latest
+        network_mode: host
+        container_name: dpdk-init-ru
+        entrypoint: "/tmp/setup_sriov.sh"
+        privileged: true
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ./setup_sriov_ru.sh:/tmp/setup_sriov.sh
+            - /lib/modules:/lib/modules
+            - /usr/lib/modules:/usr/lib/modules
+    oai-nr-oru:
+        image: ${REGISTRY-oaisoftwarealliance/}oai-nr-oru:${TAG:-develop}
+        cap_add:
+            - IPC_LOCK
+            - SYS_NICE
+        cap_drop:
+            - ALL
+        container_name: oai-nr-oru
+        environment:
+            TZ: Europe/Paris
+            USE_ADDITIONAL_OPTIONS: --device.name vrtsim --vrtsim.role server
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ../../conf_files/ru.band77.mu1.106prb.1x1.conf:/opt/nr-oru/etc/nr-oru.conf
+            - /dev/hugepages:/dev/hugepages
+            - tmp_data:/tmp/
+        cpuset: "2,3,4,5,6"
+        depends_on:
+           dpdk-init-ru:
+             condition: service_completed_successfully
+        healthcheck:
+           test: /bin/bash -c "ps aux | grep -v grep | grep -c nr-oru"
+           start_period: 15s
+           start_interval: 500ms
+           interval: 5s
+           timeout: 5s
+           retries: 10
+        ipc: host
+    oai-nr-ue:
+        image: ${REGISTRY-oaisoftwarealliance/}${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+        container_name: rfsim5g-oai-nr-ue
+        cap_drop:
+            - ALL
+        cap_add:
+            - NET_ADMIN  # for interface bringup
+            - NET_RAW    # for ping
+            - IPC_LOCK   # for memory locking
+        environment:
+            USE_ADDITIONAL_OPTIONS: -r 106 --numerology 1 --band 77 -C 4049760000 --ssb 516 --uicc0.imsi 208990100001100 --log_config.global_log_options level,nocolor,time --device.name vrtsim
+        devices:
+             - /dev/net/tun:/dev/net/tun
+        volumes:
+            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+            - tmp_data:/tmp/
+        cpuset: "7,8,9,10,11"
+        healthcheck:
+            test: /bin/bash -c "pgrep nr-uesoftmodem"
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+            start_interval: 500ms
+        ipc: host
+volumes:
+    tmp_data:

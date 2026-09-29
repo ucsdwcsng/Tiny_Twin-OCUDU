@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "sdap_session_logger.h"
+#include "ocudu/sdap/sdap.h"
+
+namespace ocudu {
+
+namespace ocuup {
+
+class sdap_entity_rx_impl : public sdap_rx_pdu_handler
+{
+public:
+  sdap_entity_rx_impl(uint32_t              ue_index,
+                      pdu_session_id_t      psi,
+                      qos_flow_id_t         qfi_,
+                      drb_id_t              drb_id_,
+                      sdap_rx_sdu_notifier& sdu_notifier_) :
+    logger("SDAP", {ue_index, psi, qfi_, drb_id_, "UL"}), qfi(qfi_), drb_id(drb_id_), sdu_notifier(sdu_notifier_)
+  {
+  }
+
+  void handle_pdu(byte_buffer pdu) final
+  {
+    // pass through with qfi
+    logger.log_debug("RX SDU. {} sdu_len={}", qfi, pdu.length());
+    sdu_notifier.on_new_sdu(std::move(pdu), qfi);
+  }
+
+  drb_id_t get_drb_id() const { return drb_id; }
+
+private:
+  sdap_session_trx_logger logger;
+  qos_flow_id_t           qfi;
+  drb_id_t                drb_id;
+  sdap_rx_sdu_notifier&   sdu_notifier;
+};
+
+} // namespace ocuup
+
+} // namespace ocudu

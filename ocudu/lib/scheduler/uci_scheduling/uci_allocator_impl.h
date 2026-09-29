@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../pucch_scheduling/pucch_allocator.h"
+#include "uci_allocator.h"
+#include "ocudu/adt/circular_vector.h"
+#include "ocudu/ocudulog/logger.h"
+
+namespace ocudu {
+
+/// Implementation of \ref uci_allocator interface.
+class uci_allocator_impl final : public uci_allocator
+{
+public:
+  explicit uci_allocator_impl(const cell_configuration& cell_cfg_, pucch_allocator& pucch_alloc_);
+
+  void slot_indication(slot_point sl_tx) override;
+
+  /// Called on cell deactivation.
+  void stop();
+
+  ~uci_allocator_impl() override;
+
+  std::optional<uci_allocation>
+  alloc_harq_ack(cell_resource_allocator& res_alloc,
+                 const ue_cell&           ue_cc,
+                 unsigned                 k0,
+                 span<const uint8_t>      k1_list,
+                 pucch_repetition_factor  max_rep_factor = pucch_repetition_factor::n1) override;
+
+  bool alloc_sr_opportunity(cell_slot_resource_allocator& slot_alloc,
+                            const ue_cell_configuration&  ue_cell_cfg) override;
+
+  bool alloc_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
+                             const ue_cell_configuration&  ue_cell_cfg) override;
+
+  void multiplex_uci_on_pusch(ul_sched_info&                pusch_grant,
+                              cell_slot_resource_allocator& slot_alloc,
+                              const ue_cell_configuration&  ue_cell_cfg,
+                              bool                          include_aperiodic_csi,
+                              bool                          configured_grant = false) override;
+
+  uint8_t get_scheduled_pdsch_counter_in_ue_uci(slot_point uci_slot, rnti_t crnti) override;
+
+  bool has_harq_ack_on_common_pucch_res(rnti_t rnti, slot_point sl_tx) override;
+
+  bool has_pucch_repetition(rnti_t rnti, slot_point sl_tx) override;
+
+private:
+  // \brief Information cached by the UCI scheduler relative to the UCIs scheduled in the cell resource grid. Store
+  // here any information that does not need to be stored in the PUCCH and PUSCH PDUs and does not need to be sent to
+  // the PHY.
+  struct slot_alloc_list {
+    struct ue_uci {
+      /// RNTI of this UCI.
+      rnti_t rnti = rnti_t::INVALID_RNTI;
+      /// Number of DL PDCCH(s) scheduled for which UCI falls in same slot.
+      unsigned scheduled_dl_pdcch_counter = 0;
+    };
+    static_vector<ue_uci, MAX_PUCCH_PDUS_PER_SLOT> ucis;
+  };
+
+  // \brief Fetches UCI alloc information for a given slot and UE. Returns nullptr if no UCI allocation was found.
+  // \return The UE UCI information for a given UCI slot and RNTI. If no UCI exists with the provided params,
+  // returns nullptr.
+  slot_alloc_list::ue_uci* get_uci_alloc(slot_point uci_slot, rnti_t rnti);
+
+  // \brief Fetches minimum distance in nof. slots to be maintained between PDSCH slot and its UCI HARQ ACK slot.
+  //
+  // This function is used in determining the k1 value to be applied when scheduling a PDSCH.
+  //
+  // \return The minimum distance in nof. slots to be maintained between PDSCH slot and its UCI HARQ ACK slot.
+  unsigned get_min_pdsch_to_ack_slot_distance(slot_point pdsch_slot, rnti_t rnti, unsigned min_k1, unsigned max_k1);
+
+  pucch_allocator& pucch_alloc;
+
+  ocudulog::basic_logger& logger;
+
+  // \brief Ring of UCI allocations indexed by slot.
+  circular_vector<slot_alloc_list, true> uci_alloc_grid;
+
+  const unsigned max_pucch_payload;
+};
+
+} // namespace ocudu

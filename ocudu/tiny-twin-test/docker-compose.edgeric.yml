@@ -1,0 +1,43 @@
+# EdgeRIC codelets and apps (Step 4) on top of the jrt-controller runtime (docker-compose.jrtc.yml). Layer it after the
+# jrtc file:
+#
+#   docker compose -f docker-compose.yml [-f docker-compose.<N>ue.yml] -f docker-compose.jrtc.yml \
+#                  -f docker-compose.edgeric.yml up -d --no-build
+#
+# The EdgeRIC codelets and apps live in <repo>/edgeric (mounted from here as ../../edgeric).
+# Build the codelets first: ../../edgeric/build_codelets.sh. Then load them from the jrtc container, e.g.
+#   docker exec jrtc bash -c 'source /jrtc/setup_jrtc_env.sh && jrtc-ctl load -c /apps/edgeric/dl_sched_deployment.yaml'
+#
+# The codelet paths in the codeletset YAMLs (${JBPF_CODELETS}/edgeric/...) are expanded by jrtc-ctl and then opened by
+# the jbpf proxy (verifier), the gNB's jbpf agent (codelet ELF, output serializer) and jrtc (serde, app modules), so
+# all of them mount the same directory at /codelets.
+
+services:
+  jrtc:
+    environment:
+      JRTC_APPS: /apps
+      JBPF_CODELETS: /codelets
+      # The dl_sched app turns per-UE weights into integer PRB caps out of this total. Its default (106) is for
+      # 20 MHz / 15 kHz SCS; the Tiny-Twin cell is 20 MHz / 30 kHz SCS = 51 PRBs.
+      EDGERIC_TOTAL_RBS: "51"
+    volumes:
+      - ../../edgeric/apps:/apps:ro
+      - ../../edgeric/codelets:/codelets:ro
+
+  jrtc-decoder:
+    environment:
+      JBPF_CODELETS: /codelets
+    volumes:
+      - ../../edgeric/codelets:/codelets:ro
+
+  jbpf-proxy:
+    environment:
+      JBPF_CODELETS: /codelets
+    volumes:
+      - ../../edgeric/codelets:/codelets:ro
+
+  gnb:
+    environment:
+      JBPF_CODELETS: /codelets
+    volumes:
+      - ../../edgeric/codelets:/codelets:ro

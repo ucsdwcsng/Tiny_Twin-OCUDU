@@ -1,0 +1,120 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "dpdk_ethernet_receiver.h"
+#include "ocudu/instrumentation/traces/ofh_traces.h"
+#include "ocudu/ofh/ethernet/dpdk/dpdk_ethernet_rx_buffer.h"
+#include "ocudu/ofh/ethernet/ethernet_frame_notifier.h"
+#include "ocudu/support/executors/task_executor.h"
+#include "ocudu/support/synchronization/sync_event.h"
+#include <rte_ethdev.h>
+#include <thread>
+
+using namespace ocudu;
+using namespace ether;
+
+namespace {
+
+class dummy_frame_notifier : public frame_notifier
+{
+  // See interface for documentation.
+  void on_new_frame(ether::unique_rx_buffer buffer) override {}
+};
+
+} // namespace
+
+/// This dummy object is passed to the constructor of the DPDK Ethernet receiver implementation as a placeholder for the
+/// actual frame notifier, which will be later set up through the \ref start() method.
+static dummy_frame_notifier dummy_notifier;
+
+dpdk_receiver_impl::dpdk_receiver_impl(task_executor&                     executor_,
+                                       std::shared_ptr<dpdk_port_context> port_ctx_,
+                                       ocudulog::basic_logger&            logger_,
+                                       bool                               are_metrics_enabled) :
+  logger(logger_),
+  executor(executor_),
+  notifier(&dummy_notifier),
+  port_ctx(std::move(port_ctx_)),
+  metrics_collector(are_metrics_enabled)
+{
+  ocudu_assert(port_ctx, "Invalid port context");
+}
+
+void dpdk_receiver_impl::start(frame_notifier& notifier_)
+{
+  logger.info("Starting the DPDK ethernet frame receiver");
+
+  stop_manager.reset();
+
+  notifier = &notifier_;
+
+  sync_event wait_event;
+  if (!executor.defer([this, token = wait_event.get_token()]() { receive_loop(); })) {
+    report_error("Unable to start the DPDK ethernet frame receiver on port '{}'", port_ctx->get_port_id());
+  }
+
+  // Block waiting for receiver executor to start.
+  wait_event.wait();
+
+  logger.info("Started the DPDK ethernet frame receiver on port '{}'", port_ctx->get_port_id());
+}
+
+void dpdk_receiver_impl::stop()
+{
+  logger.info("Requesting stop of the DPDK ethernet frame receiver on port '{}'", port_ctx->get_port_id());
+  stop_manager.stop();
+  logger.info("Stopped the DPDK ethernet frame receiver on port '{}'", port_ctx->get_port_id());
+}
+
+void dpdk_receiver_impl::receive_loop()
+{
+  auto token = stop_manager.get_token();
+  if (OCUDU_UNLIKELY(token.is_stop_requested())) {
+    return;
+  }
+
+  receive();
+
+  // Retry the task deferring when it fails.
+  // Note: token is captured by copy so that a failed defer (which destroys the passed task and its token copy) does not
+  // leave it in a moved-from state for the retries.
+  while (!executor.defer([this, token]() { receive_loop(); })) {
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+  }
+}
+
+void dpdk_receiver_impl::receive()
+{
+  std::array<::rte_mbuf*, MAX_BURST_SIZE> mbufs;
+
+  auto        meas       = metrics_collector.create_time_execution_measurer();
+  trace_point dpdk_rx_tp = ofh_tracer.now();
+
+  unsigned num_frames = ::rte_eth_rx_burst(port_ctx->get_dpdk_port_id(), 0, mbufs.data(), MAX_BURST_SIZE);
+  if (num_frames == 0) {
+    ofh_tracer << instant_trace_event("ofh_receiver_wait_data", instant_trace_event::cpu_scope::thread);
+    metrics_collector.update_stats(meas.stop());
+
+    std::this_thread::sleep_for(std::chrono::microseconds(5));
+    return;
+  }
+
+  if (!metrics_collector.disabled()) {
+    uint64_t nof_bytes_received = 0;
+    for (auto* mbuf : span<::rte_mbuf*>(mbufs.data(), num_frames)) {
+      nof_bytes_received += mbuf->data_len;
+    }
+    metrics_collector.update_stats(meas.stop(), nof_bytes_received, num_frames);
+  }
+
+  for (auto* mbuf : span<::rte_mbuf*>(mbufs.data(), num_frames)) {
+    ::rte_vlan_strip(mbuf);
+    notifier->on_new_frame(unique_rx_buffer(dpdk_rx_buffer_impl(mbuf)));
+  }
+  ofh_tracer << trace_event("ofh_dpdk_rx", dpdk_rx_tp);
+}
+
+receiver_metrics_collector* dpdk_receiver_impl::get_metrics_collector()
+{
+  return metrics_collector.disabled() ? nullptr : &metrics_collector;
+}

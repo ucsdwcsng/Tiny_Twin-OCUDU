@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# Example configuration file for AMF using SCTP Multihoming.
+#
+# Multiple remote/local addresses can be specified in addrs/bind_addrs part of config.
+# IPv4/IPv6 addresses and hostnames can be mixed - those will be resolved by getaddrinfo().
+# Configured remote/local addresses will be resolved, deduplicated and used as an input to sctp_connectx()/sctp_bindx() function.
+# Please note that those addressses are only advertised in INIT/INIT_ACK during SCTP association establishment,
+# final paths are dynamically determined by the SCTP stack and may be a subset of the configured ones.
+#
+# SCTP Multihoming can also be configured in the same way for E1/E2/F1-C/N2 interfaces.
+
+cu_cp:
+  amf:
+    addrs: # List of AMF addresses
+      - 127.0.1.100
+      - 2001:db8:53:1::2
+      - amf1.local
+    bind_addrs:  # List of bind addresses
+      - 127.0.10.2
+      - 2001:db8:53:1::1
+      - n2.gnb.local

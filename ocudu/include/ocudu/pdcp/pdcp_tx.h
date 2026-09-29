@@ -1,0 +1,197 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/pdcp/pdcp_config.h"
+#include "ocudu/security/security.h"
+
+/*
+ * This file will hold the interfaces and notifiers for the PDCP entity.
+ * They follow the following nomenclature:
+ *
+ *   pdcp_{tx/rx}_{lower/upper}_{[control/data]}_{interface/notifier}
+ *
+ * 1. TX/RX indicates whether the interface is intended for the
+ *    TX or RX side of the entity
+ * 2. Lower/Upper indicates whether the interface/notifier interacts
+ *    with the upper or lower layers.
+ * 3. Control/Data: indicates whether this interface is necessary for "control"
+ *    purposes (e.g., notifying the RRC of an integrity failure, or that we are
+ *    near max HFN) or "data" purposes (e.g. handling SDUs).
+ *    This distinction is only necessary when interfacing with the upper layers,
+ *    and as such, we omit it in the interfaces with the lower layers.
+ * 4. Interface/Notifier: whether this is an interface the PDCP entity will
+ *    inherit or if a notifier that the PDCP will keep as a member.
+ *
+ */
+
+namespace ocudu {
+
+/// This interface represents the data exit point of the transmitting side of a PDCP entity.
+/// The PDCP will push PDUs to the lower layers using this interface.
+/// The PDCP will also use this interface to order the lower layer to discard PDUs if necessary.
+class pdcp_tx_lower_notifier
+{
+public:
+  pdcp_tx_lower_notifier()                                         = default;
+  virtual ~pdcp_tx_lower_notifier()                                = default;
+  pdcp_tx_lower_notifier(const pdcp_tx_lower_notifier&)            = delete;
+  pdcp_tx_lower_notifier& operator=(const pdcp_tx_lower_notifier&) = delete;
+  pdcp_tx_lower_notifier(pdcp_tx_lower_notifier&&)                 = delete;
+  pdcp_tx_lower_notifier& operator=(pdcp_tx_lower_notifier&&)      = delete;
+
+  virtual void on_new_pdu(byte_buffer pdu, bool is_retx) = 0; ///< Pass PDCP PDU to the lower layers.
+  virtual void on_discard_pdu(uint32_t pdcp_sn)          = 0; ///< Order lower layers to discard PDU
+};
+
+/// This interface represents the notification entry point of the transmitting side of a PDCP entity.
+/// The lower layers will use this interface to inform the PDCP Tx about transmitted and successfully delivered PDUs.
+/// The PDCP uses this information to stop the discard timers of PDUs that are associated with those notifications:
+///
+/// - RLC AM: stop discard timer for successfully delivered PDUs.
+/// - RLC UM: stop discard timer for transmitted PDUs.
+class pdcp_tx_lower_interface
+{
+public:
+  pdcp_tx_lower_interface()                                          = default;
+  virtual ~pdcp_tx_lower_interface()                                 = default;
+  pdcp_tx_lower_interface(const pdcp_tx_lower_interface&)            = delete;
+  pdcp_tx_lower_interface& operator=(const pdcp_tx_lower_interface&) = delete;
+  pdcp_tx_lower_interface(pdcp_tx_lower_interface&&)                 = delete;
+  pdcp_tx_lower_interface& operator=(pdcp_tx_lower_interface&&)      = delete;
+
+  /// \brief Handle desired buffer size from NR-U.
+  /// This informs the PDCP of how many bytes it can TX without overflowing the RLC SDU queue.
+  ///
+  /// In the case of RLC UM, this allows the PDCP to transmit up to "desired_buffer_size" bytes
+  /// starting from "Highest transmitted NR PDCP Sequence Number".
+  /// In the case of RLC AM, this allows the PDCP to transmit up to "desired_buffer_size" bytes
+  /// starting from "Highest delivered NR PDCP Sequence Number".
+  ///
+  /// For more details, see TS 38.425, section 5.4.2.
+  virtual void handle_desired_buffer_size_notification(uint32_t desired_buffer_size) = 0;
+
+  /// \brief Informs the PDCP entity about the highest PDCP PDU sequence number of the PDCP PDU that was transmitted by
+  /// the lower layers (i.e. by the RLC).
+  ///
+  /// In case of RLC AM, the PDCP will ignore this notification.
+  /// In case of RLC UM, the PDCP will stop the discard timers for all PDUs up to highest_sn.
+  ///
+  /// \param highest_sn Highest transmitted PDCP PDU sequence number.
+  virtual void handle_transmit_notification(uint32_t highest_sn) = 0;
+
+  /// \brief Informs the PDCP about the highest PDCP PDU sequence number of the PDCP PDU that was successfully
+  /// delivered in sequence towards the UE.
+  ///
+  /// In case of RLC AM, the PDCP will stop the discard timers for all PDUs up to highest_sn.
+  /// In case of RLC UM, the PDCP will ignore this notification.
+  ///
+  /// \param highest_sn Highest in a sequence delivered PDCP PDU sequence number.
+  virtual void handle_delivery_notification(uint32_t highest_sn) = 0;
+
+  /// \brief Informs the PDCP entity about the highest PDCP PDU sequence number of the PDCP PDU that was retransmitted
+  /// by the lower layers (i.e. by the RLC AM).
+  ///
+  /// This notification is only applicable for RLC AM.
+  ///
+  /// \param highest_sn Highest retransmitted PDCP PDU sequence number.
+  virtual void handle_retransmit_notification(uint32_t highest_sn) = 0;
+
+  /// \brief Informs the PDCP about the highest PDCP PDU sequence number of the retransmitted PDCP PDU that was
+  /// successfully delivered in sequence towards the UE.
+  ///
+  /// This notification is only applicable for RLC AM.
+  ///
+  /// \param highest_sn Highest in a sequence delivered retransmitted PDCP PDU sequence number.
+  virtual void handle_delivery_retransmitted_notification(uint32_t highest_sn) = 0;
+};
+
+/// This interface represents the data entry point of the transmitting side of a PDCP entity.
+/// The upper-layers will use this call to pass PDUs into the TX entity.
+class pdcp_tx_upper_data_interface
+{
+public:
+  pdcp_tx_upper_data_interface()                                               = default;
+  virtual ~pdcp_tx_upper_data_interface()                                      = default;
+  pdcp_tx_upper_data_interface(const pdcp_tx_upper_data_interface&)            = delete;
+  pdcp_tx_upper_data_interface& operator=(const pdcp_tx_upper_data_interface&) = delete;
+  pdcp_tx_upper_data_interface(pdcp_tx_upper_data_interface&&)                 = delete;
+  pdcp_tx_upper_data_interface& operator=(pdcp_tx_upper_data_interface&&)      = delete;
+
+  /// Handle the incoming SDU.
+  virtual void handle_sdu(byte_buffer sdu) = 0;
+};
+
+/// This interface represents the control SAP of the transmitting side of a PDCP entity.
+/// The RRC will use this interface to configure security keys and enable/disable
+/// integrity and ciphering.
+class pdcp_tx_upper_control_interface
+{
+public:
+  pdcp_tx_upper_control_interface()                                                  = default;
+  virtual ~pdcp_tx_upper_control_interface()                                         = default;
+  pdcp_tx_upper_control_interface(const pdcp_tx_upper_control_interface&)            = delete;
+  pdcp_tx_upper_control_interface& operator=(const pdcp_tx_upper_control_interface&) = delete;
+  pdcp_tx_upper_control_interface(pdcp_tx_upper_control_interface&&)                 = delete;
+  pdcp_tx_upper_control_interface& operator=(pdcp_tx_upper_control_interface&&)      = delete;
+
+  /// Setup security
+  virtual void configure_security(security::sec_128_as_config sec_cfg,
+                                  security::integrity_enabled integrity_enabled_,
+                                  security::ciphering_enabled ciphering_enabled_) = 0;
+
+  /// Trigger data recovery
+  virtual void data_recovery() = 0;
+
+  /// Trigger re-establishment
+  virtual void reestablish(security::sec_128_as_config sec_cfg) = 0;
+
+  /// Tell the PDCP to buffer SDUs. Useful, e.g., for waiting for the crypto
+  /// processing to be finished before changing the security keys of an active DRB.
+  virtual void begin_buffering() = 0;
+
+  /// Tell the PDCP to stop buffering SDUs. The PDCP will flush the currently buffered SDUs.
+  virtual void end_buffering() = 0;
+
+  virtual bool suspend() = 0;
+  virtual bool resume()  = 0;
+
+  /// Get the TX count for status transfer
+  virtual pdcp_count_info get_count() const = 0;
+
+  /// Set the TX count for status transfer
+  virtual void set_count(pdcp_count_info count_info) = 0;
+
+  /// Tell the PDCP entity to notify when it is finished with processing
+  /// the currently in-flight PDUs. No further PDUs should be push after calling
+  /// this function until after calling `restart_pdu_processing()`.
+  virtual void notify_pdu_processing_stopped() = 0;
+
+  /// Tell the PDCP entity that reconfiguration is finished, and it is safe to
+  /// have in-flight PDUs again. Should not be called without previously calling
+  /// `notify_pdu_processing_stopped()`
+  virtual void restart_pdu_processing() = 0;
+};
+
+/// This interface represents the control upper layer that the
+/// TX PDCP bearer must notify in case of reaching max HFN,
+/// so that keys can be re-negotiated. Other protocol failures
+/// will also be notified through this interface.
+class pdcp_tx_upper_control_notifier
+{
+public:
+  pdcp_tx_upper_control_notifier()                                                 = default;
+  virtual ~pdcp_tx_upper_control_notifier()                                        = default;
+  pdcp_tx_upper_control_notifier(const pdcp_tx_upper_control_notifier&)            = delete;
+  pdcp_tx_upper_control_notifier& operator=(const pdcp_tx_upper_control_notifier&) = delete;
+  pdcp_tx_upper_control_notifier(pdcp_tx_upper_control_notifier&&)                 = delete;
+  pdcp_tx_upper_control_notifier& operator=(pdcp_tx_upper_control_notifier&&)      = delete;
+
+  virtual void on_protocol_failure()  = 0;
+  virtual void on_max_count_reached() = 0;
+  virtual void on_resume_required()   = 0;
+};
+} // namespace ocudu

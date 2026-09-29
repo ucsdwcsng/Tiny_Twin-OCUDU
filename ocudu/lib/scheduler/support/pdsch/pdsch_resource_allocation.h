@@ -1,0 +1,65 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/pdcch/dci_format.h"
+#include "ocudu/ran/pdcch/search_space.h"
+#include "ocudu/scheduler/config/bwp_configuration.h"
+
+namespace ocudu::pdsch_helper {
+
+/// \brief Determine CRB limits for PDSCH grant, based on BWP config, SearchSpace type and DCI format as per
+/// TS38.214, 5.1.2.2.2. and TS 38.211, 7.3.1.6.
+///
+/// \param dci_fmt DL DCI format.
+/// \param init_dl_bwp Initial DL BWP configuration.
+/// \param active_dl_bwp Active DL BWP configuration.
+/// \param ss_cfg SearchSpace configuration.
+/// \param cs_cfg CORESET configuration corresponding to SearchSpace.
+/// \return Calculated CRB limits.
+inline crb_interval get_ra_crb_limits(dci_dl_format                     dci_fmt,
+                                      const bwp_downlink_common&        init_dl_bwp,
+                                      const bwp_configuration&          active_dl_bwp,
+                                      const search_space_configuration& ss_cfg,
+                                      const coreset_configuration&      cs_cfg)
+{
+  crb_interval crbs = active_dl_bwp.crbs;
+
+  if (dci_fmt == dci_dl_format::f1_0 and ss_cfg.is_common_search_space()) {
+    // See TS 38.211, 7.3.1.6 Mapping from virtual to physical resource blocks and TS38.214, 5.1.2.2. Resource
+    // Allocation in frequency domain.
+    crbs = {cs_cfg.get_coreset_start_crb(), crbs.stop()};
+
+    // See TS 38.214, 5.1.2.2.2, Downlink resource allocation type 1.
+    if (init_dl_bwp.pdcch_common.coreset0.has_value()) {
+      crbs.resize(std::min(crbs.length(), init_dl_bwp.pdcch_common.coreset0->coreset0_crbs().length()));
+    } else {
+      crbs.resize(std::min(crbs.length(), init_dl_bwp.generic_params.crbs.length()));
+    }
+  }
+  return crbs;
+}
+
+/// \brief Determine CRB limits for PDSCH grant, for the special case of non UE-dedicated allocations (e.g. SIB, RAR,
+/// SRB0).
+///
+/// \param[in] init_dl_bwp Initial DL BWP configuration.
+/// \param[in] ss_id SearchSpace ID.
+/// \return Calculated CRB limits.
+inline crb_interval get_ra_crb_limits_common(const bwp_downlink_common& init_dl_bwp, search_space_id ss_id)
+{
+  const search_space_configuration& ss_cfg = init_dl_bwp.pdcch_common.search_spaces.at(ss_id);
+  const coreset_configuration&      cs_cfg = ss_cfg.get_coreset_id() == to_coreset_id(0)
+                                                 ? init_dl_bwp.pdcch_common.coreset0.value()
+                                                 : init_dl_bwp.pdcch_common.common_coreset.value();
+  ocudu_assert(
+      ss_cfg.is_common_search_space() and
+          std::get<search_space_configuration::common_dci_format>(ss_cfg.get_monitored_dci_formats()).f0_0_and_f1_0,
+      "Invalid SearchSpace type");
+
+  return get_ra_crb_limits(dci_dl_format::f1_0, init_dl_bwp, init_dl_bwp.generic_params, ss_cfg, cs_cfg);
+}
+
+} // namespace ocudu::pdsch_helper

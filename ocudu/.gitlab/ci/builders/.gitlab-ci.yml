@@ -1,0 +1,771 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+include:
+  - local: .gitlab/ci/builders/version.yml
+  - local: .gitlab/ci-shared/python.yml
+  - local: .gitlab/ci-shared/docker.yml
+  - local: .gitlab/ci-shared/version_check.yml
+
+################################################################################
+# Stages
+################################################################################
+stages:
+  - ci
+  - dependencies
+  - publish
+  - alt registries
+  - manifest
+
+################################################################################
+## CI
+################################################################################
+tox python in builder:
+  stage: ci
+  extends: .tox
+  rules:
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/builders/**/*.py
+  variables:
+    PY_DIR: .gitlab/ci/builders
+
+builder version increased:
+  stage: ci
+  extends: .version increased
+  rules:
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/builders/**/*
+          - docker/scripts/**/*
+  variables:
+    FILE_PATH: .gitlab/ci/builders/version.yml
+    VARIABLE_NAME: DOCKER_BUILDER_VERSION
+
+################################################################################
+# ROHC builder
+################################################################################
+.ubuntu-rohc-builder:
+  stage: dependencies
+  image: ubuntu:${os_version}
+  rules:
+    - if: $ON_MR
+  variables:
+    os_version: ""
+    arch_name: ""
+    target_arch: ""
+    GIT_STRATEGY: none
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - TZ=Europe/Madrid && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+    # Download existing package in the registry, if exists
+    - |
+      download_from_registry() {
+        DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends curl apt-transport-https ca-certificates xz-utils
+
+        cd ${CI_PROJECT_DIR}
+        http_code=$(curl -w "%{http_code}" --header "JOB-TOKEN: $CI_JOB_TOKEN" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/rohc/ubuntu-${os_version}-${arch_name}/rohc.tar.gz" -o output.tar.gz)
+        if [[ $http_code == "200" ]]; then
+          tar -xf output.tar.gz
+          return 0
+        else
+          return 1
+        fi
+      }
+
+    # Install dependencies and compile
+    - |
+      build_rohc() {
+        docker/scripts/install_rohc_dependencies.sh build
+        docker/scripts/build_rohc.sh ${target_arch} ${CPU_JOBS}
+        mkdir -p ${CI_PROJECT_DIR}/.gitlab/ci/builders
+        cp -r /opt/rohc ${CI_PROJECT_DIR}/.gitlab/ci/builders
+      }
+
+    # Publish compiled version to the registry
+    - |
+      publish_to_registry() {
+        cd ${CI_PROJECT_DIR}
+        tar -czf rohc.tar.gz .gitlab/ci/builders/rohc
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file rohc.tar.gz "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/rohc/ubuntu-${os_version}-${arch_name}/rohc.tar.gz"
+      }
+  script:
+    - |
+      if download_from_registry; then
+        echo "Reusing existing package"
+      else
+        echo "Not found on the package registry. It will be compiled and published"
+        build_rohc
+        publish_to_registry
+      fi
+  artifacts:
+    paths:
+      - .gitlab/ci/builders/rohc
+    expire_in: 8 hours
+  parallel:
+    matrix:
+      - os_version: "22.04"
+      - os_version: "24.04"
+      - os_version: "25.10"
+      - os_version: "26.04"
+
+ubuntu-rohc-builder avx2:
+  extends: .ubuntu-rohc-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    arch_name: amd64
+    target_arch: x86-64-v3
+
+ubuntu-rohc-builder arm64:
+  extends: .ubuntu-rohc-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-arm64
+  variables:
+    arch_name: arm64
+    target_arch: neoverse-n1+crc+crypto+ssbs
+
+################################################################################
+# UHD builder
+################################################################################
+.ubuntu-uhd-builder:
+  stage: dependencies
+  image: ubuntu:${os_version}
+  rules:
+    - if: $ON_MR
+  variables:
+    os_version: ""
+    arch_name: ""
+    uhd_version: ""
+    target_arch: ""
+    GIT_STRATEGY: none
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - TZ=Europe/Madrid && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+    # Download existing package in the registry, if exists
+    - |
+      download_from_registry() {
+        DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends curl apt-transport-https ca-certificates xz-utils
+
+        cd ${CI_PROJECT_DIR}
+        http_code=$(curl -w "%{http_code}" --header "JOB-TOKEN: $CI_JOB_TOKEN" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/uhd/ubuntu-${os_version}-${arch_name}-${uhd_version}/uhd.tar.gz" -o output.tar.gz)
+        if [[ $http_code == "200" ]]; then
+          tar -xf output.tar.gz
+          return 0
+        else
+          return 1
+        fi
+      }
+
+    # Install dependencies and compile
+    - |
+      build_uhd() {
+        docker/scripts/install_uhd_dependencies.sh build
+        docker/scripts/build_uhd.sh ${uhd_version} ${target_arch} ${CPU_JOBS}
+        mkdir -p ${CI_PROJECT_DIR}/.gitlab/ci/builders/uhd
+        cp -r /opt/uhd/${uhd_version} ${CI_PROJECT_DIR}/.gitlab/ci/builders/uhd/${uhd_version}
+      }
+
+    # Publish compiled version to the registry
+    - |
+      publish_to_registry() {
+        cd ${CI_PROJECT_DIR}
+        tar -czf uhd.tar.gz .gitlab/ci/builders/uhd/${uhd_version}
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file uhd.tar.gz "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/uhd/ubuntu-${os_version}-${arch_name}-${uhd_version}/uhd.tar.gz"
+      }
+  script:
+    - |
+      if download_from_registry; then
+        echo "Reusing existing package"
+      else
+        echo "Not found on the package registry. It will be compiled and published"
+        build_uhd
+        publish_to_registry
+      fi
+  artifacts:
+    paths:
+      - .gitlab/ci/builders/uhd
+    expire_in: 8 hours
+  parallel:
+    matrix:
+      - os_version: "22.04"
+        uhd_version:
+          - "4.9.0.0"
+          - "4.8.0.0"
+          - "4.7.0.0"
+          - "4.6.0.0"
+          - "4.4.0.0"
+          - "4.3.0.0"
+          # "4.1.0.5" default
+      - os_version: "24.04"
+        uhd_version: ["4.9.0.0", "4.8.0.0", "4.7.0.0"] # "4.6.0.0" default
+      - os_version: "25.10"
+        uhd_version: [] # "4.8.0.0" default
+      - os_version: "26.04"
+        uhd_version: [] # "4.9.0.1" default
+
+ubuntu-uhd-builder avx2:
+  extends: .ubuntu-uhd-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    arch_name: amd64
+    target_arch: -march=x86-64-v3
+
+ubuntu-uhd-builder arm64:
+  extends: .ubuntu-uhd-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-arm64
+  variables:
+    arch_name: arm64
+    target_arch: -mcpu=neoverse-n1+crc+crypto+ssbs
+
+################################################################################
+# DPDK builder
+################################################################################
+.ubuntu-dpdk-builder:
+  stage: dependencies
+  image: ubuntu:${os_version}
+  rules:
+    - if: $ON_MR
+  variables:
+    os_version: ""
+    arch_name: ""
+    dpdk_version: ""
+    extra_arch_name: ""
+    target_arch: ""
+    GIT_STRATEGY: none
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - TZ=Europe/Madrid && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+    # Download existing package in the registry, if exists
+    - |
+      download_from_registry() {
+        DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends curl apt-transport-https ca-certificates xz-utils
+
+        cd ${CI_PROJECT_DIR}
+        http_code=$(curl -w "%{http_code}" --header "JOB-TOKEN: $CI_JOB_TOKEN" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/dpdk/ubuntu-${os_version}-${arch_name}-${dpdk_version}${extra_arch_name}/dpdk.tar.gz" -o output.tar.gz)
+        if [[ $http_code == "200" ]]; then
+          tar -xf output.tar.gz
+          return 0
+        else
+          return 1
+        fi
+      }
+
+    # Install dependencies and compile
+    - |
+      build_dpdk() {
+        unset PIP_EXTRA_INDEX_URL
+        unset PIP_INDEX_URL
+        docker/scripts/install_dpdk_dependencies.sh build
+        docker/scripts/build_dpdk.sh ${dpdk_version} ${target_arch} ${CPU_JOBS}
+        mkdir -p ${CI_PROJECT_DIR}/.gitlab/ci/builders/dpdk
+        cp -r /opt/dpdk/${dpdk_version} ${CI_PROJECT_DIR}/.gitlab/ci/builders/dpdk/${dpdk_version}${extra_arch_name}
+      }
+
+    # Publish compiled version to the registry
+    - |
+      publish_to_registry() {
+        cd ${CI_PROJECT_DIR}
+        tar -czf dpdk.tar.gz .gitlab/ci/builders/dpdk/${dpdk_version}${extra_arch_name}
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file dpdk.tar.gz "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/dpdk/ubuntu-${os_version}-${arch_name}-${dpdk_version}${extra_arch_name}/dpdk.tar.gz"
+      }
+  script:
+    - |
+      if download_from_registry; then
+        echo "Reusing existing package"
+      else
+        echo "Not found on the package registry. It will be compiled and published"
+        build_dpdk
+        publish_to_registry
+      fi
+  artifacts:
+    paths:
+      - .gitlab/ci/builders/dpdk
+    expire_in: 8 hours
+  parallel:
+    matrix:
+      - &dpdk_2204_no_isa_matrix
+        os_version: "22.04"
+        dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+      - &dpdk_2204_matrix
+        os_version: "22.04"
+        dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+      - &dpdk_2404_matrix
+        os_version: "24.04"
+        dpdk_version: ["23.11.4", "24.11.2", "25.11"]
+      - &dpdk_2510_matrix
+        os_version: "25.10"
+        dpdk_version: ["24.11.2", "25.11"]
+      - &dpdk_2604_matrix
+        os_version: "26.04"
+        dpdk_version: ["25.11"]
+
+ubuntu-dpdk-builder no isa:
+  extends: .ubuntu-dpdk-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    arch_name: amd64
+    target_arch: -Dcpu_instruction_set=x86-64
+  parallel:
+    matrix:
+      - *dpdk_2204_no_isa_matrix
+
+ubuntu-dpdk-builder avx2:
+  extends: .ubuntu-dpdk-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    arch_name: amd64
+    extra_arch_name: _avx2
+    target_arch: -Dcpu_instruction_set=x86-64-v3
+  parallel:
+    matrix:
+      - *dpdk_2204_matrix
+      - *dpdk_2404_matrix
+      - *dpdk_2510_matrix
+      - *dpdk_2604_matrix
+
+ubuntu-dpdk-builder avx512:
+  extends: .ubuntu-dpdk-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    arch_name: amd64
+    extra_arch_name: _avx512
+    target_arch: -Dcpu_instruction_set=x86-64-v4
+  parallel:
+    matrix:
+      - *dpdk_2204_matrix
+      - *dpdk_2404_matrix
+      - *dpdk_2510_matrix
+      - *dpdk_2604_matrix
+
+ubuntu-dpdk-builder arm64:
+  extends: .ubuntu-dpdk-builder
+  tags:
+    - ${OCUDU_RUNNER_TAG}-arm64
+  variables:
+    arch_name: arm64
+    target_arch: -Dplatform=n1sdp
+
+################################################################################
+# Common
+################################################################################
+.image-build-publish:
+  extends: .docker-builder
+  stage: publish
+  variables:
+    OS_FAMILY: none
+    OS_NAME: none
+    OS_VERSION: none
+    MULTI_ARCH_BUILD: "true"
+    MODE: publish
+  tags:
+    - $OCUDU_RUNNER_TAG-${PLATFORM}
+  timeout: 2 hours
+  rules:
+    - if: $ON_MR
+  before_script:
+    - |
+      export NAME=builder-$OS_NAME-$OS_VERSION
+      export VERSION=${DOCKER_BUILDER_VERSION}
+      export CONTEXT=.gitlab/ci/builders
+      export DOCKERFILE=$CONTEXT/$OS_FAMILY
+      export BUILD_ARGS="OS_NAME=${OS_NAME};VERSION=${OS_VERSION};TAG=${VERSION}}"
+    - |
+      mkdir -p ${CI_PROJECT_DIR}/${CONTEXT}/lib
+      DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends curl apt-transport-https ca-certificates xz-utils
+    - cp -r ${CI_PROJECT_DIR}/docker/scripts/. ${CI_PROJECT_DIR}/${CONTEXT}
+    - mkdir -p $CONTEXT/lib $CONTEXT/rohc $CONTEXT/uhd $CONTEXT/dpdk
+    - ls -lah $CONTEXT $CONTEXT/lib $CONTEXT/rohc $CONTEXT/uhd $CONTEXT/dpdk
+  needs:
+    - builder version increased
+
+.manifest:
+  extends: .docker manifest
+  stage: manifest
+  variables:
+    OS_NAME: none
+    OS_VERSION: none
+    VERSION: $DOCKER_BUILDER_VERSION
+  before_script:
+    - |
+      export NAME=builder-${OS_NAME}-${OS_VERSION}
+
+################################################################################
+# Codechecker
+################################################################################
+image-build-publish [codechecker]:
+  extends: .image-build-publish
+  stage: publish
+  variables:
+    MULTI_ARCH_BUILD: ""
+    PLATFORM: amd64
+    MODE: publish
+  rules:
+    - if: $ON_MR
+  before_script:
+    - |
+      export NAME=codechecker
+      export VERSION=$DOCKER_BUILDER_VERSION
+      export CONTEXT=.gitlab/ci/builders
+      export DOCKERFILE=$CONTEXT/codechecker
+      export BUILD_ARGS=""
+    - |
+      cp -r ${CI_PROJECT_DIR}/docker/scripts/. ${CI_PROJECT_DIR}/${CONTEXT}
+
+################################################################################
+# Ubuntu 22.04
+################################################################################
+image-build-publish [ubuntu, 22.04, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "22.04"
+    PLATFORM: amd64
+  needs:
+    - job: ubuntu-rohc-builder avx2
+      parallel:
+        matrix:
+          - os_version: "22.04"
+    - job: ubuntu-uhd-builder avx2
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            uhd_version:
+              ["4.9.0.0", "4.8.0.0", "4.7.0.0", "4.6.0.0", "4.4.0.0", "4.3.0.0"]
+    - job: ubuntu-dpdk-builder no isa
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+    - job: ubuntu-dpdk-builder avx2
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+    - job: ubuntu-dpdk-builder avx512
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+
+image-build-publish [ubuntu, 22.04, arm64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "22.04"
+    PLATFORM: arm64
+  needs:
+    - job: ubuntu-rohc-builder arm64
+      parallel:
+        matrix:
+          - os_version: "22.04"
+    - job: ubuntu-uhd-builder arm64
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            uhd_version:
+              ["4.9.0.0", "4.8.0.0", "4.7.0.0", "4.6.0.0", "4.4.0.0", "4.3.0.0"]
+    - job: ubuntu-dpdk-builder arm64
+      parallel:
+        matrix:
+          - os_version: "22.04"
+            dpdk_version: ["22.11.8", "23.11.4", "24.11.2", "25.11"]
+
+manifest [ubuntu, 22.04]:
+  extends: .manifest
+  variables:
+    OS_NAME: ubuntu
+    OS_VERSION: "22.04"
+  needs:
+    - job: image-build-publish [ubuntu, 22.04, amd64]
+      optional: false
+    - job: image-build-publish [ubuntu, 22.04, arm64]
+      optional: false
+
+################################################################################
+# Ubuntu 24.04
+################################################################################
+image-build-publish [ubuntu, 24.04, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "24.04"
+    PLATFORM: amd64
+  needs:
+    - job: ubuntu-rohc-builder avx2
+      parallel:
+        matrix:
+          - os_version: "24.04"
+    - job: ubuntu-uhd-builder avx2
+      parallel:
+        matrix:
+          - os_version: "24.04"
+            uhd_version: ["4.9.0.0", "4.8.0.0", "4.7.0.0"] # "4.6.0.0" default
+    - job: ubuntu-dpdk-builder avx2
+      parallel:
+        matrix:
+          - os_version: "24.04"
+            dpdk_version: ["23.11.4", "24.11.2", "25.11"]
+    - job: ubuntu-dpdk-builder avx512
+      parallel:
+        matrix:
+          - os_version: "24.04"
+            dpdk_version: ["23.11.4", "24.11.2", "25.11"]
+
+image-build-publish [ubuntu, 24.04, arm64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "24.04"
+    PLATFORM: arm64
+  needs:
+    - job: ubuntu-rohc-builder arm64
+      parallel:
+        matrix:
+          - os_version: "24.04"
+    - job: ubuntu-uhd-builder arm64
+      parallel:
+        matrix:
+          - os_version: "24.04"
+            uhd_version: ["4.9.0.0", "4.8.0.0", "4.7.0.0"] # "4.6.0.0" default
+    - job: ubuntu-dpdk-builder arm64
+      parallel:
+        matrix:
+          - os_version: "24.04"
+            dpdk_version: ["23.11.4", "24.11.2", "25.11"]
+
+manifest [ubuntu, 24.04]:
+  extends: .manifest
+  variables:
+    OS_NAME: ubuntu
+    OS_VERSION: "24.04"
+  needs:
+    - job: image-build-publish [ubuntu, 24.04, amd64]
+      optional: false
+    - job: image-build-publish [ubuntu, 24.04, arm64]
+      optional: false
+
+################################################################################
+# Ubuntu 25.10
+################################################################################
+image-build-publish [ubuntu, 25.10, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "25.10"
+    PLATFORM: amd64
+  needs:
+    - job: ubuntu-rohc-builder avx2
+      parallel:
+        matrix:
+          - os_version: "25.10"
+    - job: ubuntu-uhd-builder avx2
+      parallel:
+        matrix:
+          - os_version: "25.10"
+            uhd_version: [] # "4.8.0.0" default
+    - job: ubuntu-dpdk-builder avx2
+      parallel:
+        matrix:
+          - os_version: "25.10"
+            dpdk_version: ["24.11.2", "25.11"]
+    - job: ubuntu-dpdk-builder avx512
+      parallel:
+        matrix:
+          - os_version: "25.10"
+            dpdk_version: ["24.11.2", "25.11"]
+
+image-build-publish [ubuntu, 25.10, arm64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "25.10"
+    PLATFORM: arm64
+  needs:
+    - job: ubuntu-rohc-builder arm64
+      parallel:
+        matrix:
+          - os_version: "25.10"
+    - job: ubuntu-uhd-builder arm64
+      parallel:
+        matrix:
+          - os_version: "25.10"
+            uhd_version: [] # "4.8.0.0" default
+    - job: ubuntu-dpdk-builder arm64
+      parallel:
+        matrix:
+          - os_version: "25.10"
+            dpdk_version: ["24.11.2", "25.11"]
+
+manifest [ubuntu, 25.10]:
+  extends: .manifest
+  variables:
+    OS_NAME: ubuntu
+    OS_VERSION: "25.10"
+  needs:
+    - job: image-build-publish [ubuntu, 25.10, amd64]
+      optional: false
+    - job: image-build-publish [ubuntu, 25.10, arm64]
+      optional: false
+
+################################################################################
+# Ubuntu 26.04
+################################################################################
+image-build-publish [ubuntu, 26.04, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "26.04"
+    PLATFORM: amd64
+  needs:
+    - job: ubuntu-rohc-builder avx2
+      parallel:
+        matrix:
+          - os_version: "26.04"
+    - job: ubuntu-uhd-builder avx2
+      parallel:
+        matrix:
+          - os_version: "26.04"
+            uhd_version: [] # "4.9.0.1" default
+    - job: ubuntu-dpdk-builder avx2
+      parallel:
+        matrix:
+          - os_version: "26.04"
+            dpdk_version: ["25.11"]
+    - job: ubuntu-dpdk-builder avx512
+      parallel:
+        matrix:
+          - os_version: "26.04"
+            dpdk_version: ["25.11"]
+
+image-build-publish [ubuntu, 26.04, arm64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: ubuntu
+    OS_VERSION: "26.04"
+    PLATFORM: arm64
+  needs:
+    - job: ubuntu-rohc-builder arm64
+      parallel:
+        matrix:
+          - os_version: "26.04"
+    - job: ubuntu-uhd-builder arm64
+      parallel:
+        matrix:
+          - os_version: "26.04"
+            uhd_version: [] # "4.9.0.1" default
+    - job: ubuntu-dpdk-builder arm64
+      parallel:
+        matrix:
+          - os_version: "26.04"
+            dpdk_version: ["25.11"]
+
+manifest [ubuntu, 26.04]:
+  extends: .manifest
+  variables:
+    OS_NAME: ubuntu
+    OS_VERSION: "26.04"
+  needs:
+    - job: image-build-publish [ubuntu, 26.04, amd64]
+      optional: false
+    - job: image-build-publish [ubuntu, 26.04, arm64]
+      optional: false
+
+################################################################################
+# Debian
+################################################################################
+image-build-publish [debian]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: debian
+    OS_NAME: debian
+    PLATFORM: amd64
+  parallel:
+    matrix:
+      - OS_VERSION: "12"
+        PLATFORM: [amd64, arm64]
+      - OS_VERSION: "13"
+        PLATFORM: [amd64, arm64]
+
+manifest [debian, 12]:
+  extends: .manifest
+  variables:
+    OS_NAME: debian
+    OS_VERSION: "12"
+  needs:
+    - job: image-build-publish [debian]
+      optional: false
+
+manifest [debian, 13]:
+  extends: .manifest
+  variables:
+    OS_NAME: debian
+    OS_VERSION: "13"
+  needs:
+    - job: image-build-publish [debian]
+      optional: false
+
+################################################################################
+# Archlinux
+################################################################################
+image-build-publish [archlinux, latest, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: archlinux
+    OS_NAME: archlinux
+    OS_VERSION: latest
+    PLATFORM: amd64
+    MULTI_ARCH_BUILD: ""
+
+################################################################################
+# Fedora
+################################################################################
+image-build-publish [fedora, 44, amd64]:
+  extends:
+    - .image-build-publish
+  variables:
+    OS_FAMILY: fedora
+    OS_NAME: fedora
+    OS_VERSION: "44"
+    PLATFORM: amd64
+    MULTI_ARCH_BUILD: ""

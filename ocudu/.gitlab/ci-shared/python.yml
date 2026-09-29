@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+.parallel-python-versions:
+  parallel: &matrix-python-version
+    matrix:
+      - PYTHON_VERSION: ["3.9", "3.14"] # Minimum supported and latest
+
+.python_base:
+  image: python:${PYTHON_VERSION}-alpine # sh entrypoint
+  variables:
+    PYTHON_VERSION: "3.14"
+    TWINE_USERNAME: "gitlab-ci-token"
+    TWINE_PASSWORD: "$CI_JOB_TOKEN"
+    TWINE_REPO: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi"
+
+.python_publish:
+  extends: .python_base
+  rules:
+    - if: $ON_DEFAULT_BRANCH
+    - if: $ON_MR
+      when: manual
+      allow_failure: true
+
+# Tools
+
+.tox:
+  extends: .python_base
+  rules:
+    - if: $ON_MR
+  script:
+    - &setup_env_variables |
+      export PIP_EXTRA_INDEX_URL="https://${TWINE_USERNAME}:${TWINE_PASSWORD}@${TWINE_REPO#https://}/simple"
+    - mkdir -p $CI_PROJECT_DIR/.apk-cache && apk add --cache-dir $CI_PROJECT_DIR/.apk-cache git
+    - pip install 'tox<5'
+    - cd $PY_DIR
+    - tox -p auto
+    - git diff > $CI_PROJECT_DIR/ci.patch
+    - git diff --color=always --exit-code
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip-cache
+  cache:
+    key: tox-${PYTHON_VERSION}
+    paths:
+      - "**/.tox/"
+      - .pip-cache/
+      - .apk-cache/
+  artifacts:
+    paths:
+      - ci.patch
+    when: on_failure
+    expire_in: 1 week
+  parallel: *matrix-python-version
+
+.publish deps:
+  extends: .python_publish
+  script:
+    - *setup_env_variables
+    - pip install twine
+    - cd $PY_DIR
+    - pip install .
+    - find /root/.cache/pip/ -iname "*.whl" -exec python -m twine upload --verbose --disable-progress-bar --repository-url ${TWINE_REPO} {} \;
+  parallel: *matrix-python-version
+
+.publish wheel:
+  # cibuildwheel is a tool that builds your wheel for multiple platforms
+  # and python versions using pypa docker images
+  # Doc: https://cibuildwheel.readthedocs.io/en/stable/
+  # Gitlab Integration: https://cibuildwheel.readthedocs.io/en/stable/setup/#gitlab-ci
+  extends: .python_publish
+  image: docker:29.6.1-dind
+  variables:
+    CIBW_ENVIRONMENT_PASS_LINUX: ""
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - |
+      export DOCKER_HOST=unix:///var/run/docker.sock
+      dockerd-entrypoint.sh --host=${DOCKER_HOST} --tls=false 2>&1 &
+    - |
+      i=0
+      while ! docker info >/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -ge 60 ]; then
+          echo "ERROR: dockerd not ready after 60s"
+          exit 1
+        fi
+        sleep 1
+      done
+  script:
+    - *setup_env_variables
+    # Install tools
+    - apk add --no-cache python3 py3-pip py3-virtualenv curl ca-certificates bash
+    - python3 -m venv /tmp/publish-venv
+    - . /tmp/publish-venv/bin/activate
+    - python3 -m pip install --no-cache-dir --upgrade pip
+    - python3 -m pip install --no-cache-dir cibuildwheel build twine
+    # Build sdist and check if already uploaded to the repo
+    - cd $PY_DIR
+    - python3 -m build --sdist
+    - |
+      file=$(ls dist/*.tar.gz)
+      file="${file#*/}"
+      file="${file/.tar.gz/}"
+      VERSION="${file#*-}"
+      PY_LIB_NAME="${file%%-*}"
+    # Exit 0 if already exists
+    - (pip index versions ${PY_LIB_NAME} --extra-index-url ${PIP_EXTRA_INDEX_URL} | grep "$VERSION") && exit 0 || true
+    # If it's a new package/version, setup cibuildwheel and run it. If it's a pure python wheel, run build instead.
+    - cibuildwheel --platform linux --output-dir dist || python3 -m build --wheel
+    # Upload generated wheels & sdist
+    - twine upload --verbose --disable-progress-bar --repository-url ${TWINE_REPO} dist/*

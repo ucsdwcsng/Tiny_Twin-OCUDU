@@ -1,0 +1,121 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/adt/span.h"
+#include "ocudu/support/ocudu_assert.h"
+#include <arpa/inet.h>
+#include <cstdint>
+
+namespace ocudu {
+namespace ofh {
+
+/// This class deserializes data from the configured memory buffer in network order and returns it in host endianness.
+class network_order_binary_deserializer
+{
+public:
+  explicit network_order_binary_deserializer(span<const uint8_t> buffer) : ptr(buffer.data()), size(buffer.size())
+  {
+    ocudu_assert(ptr, "Invalid pointer to buffer");
+  }
+
+  /// \brief Deserializes a T from the buffer and advances the position by sizeof(T) bytes.
+  ///
+  /// \note This function only accepts POD types.
+  template <typename T>
+  T read()
+  {
+    static_assert(std::is_pod<T>::value, "Unsupported data type");
+
+    switch (sizeof(T)) {
+      case 1:
+        return read_one_byte();
+      case 2:
+        return read_two_bytes();
+      case 4:
+        return read_four_bytes();
+      default:
+        ocudu_assert(0, "Deserializer does not support this data");
+    }
+    return T();
+  }
+
+  /// Deserializes a fixed amount of elements given by the size of the input span and advances the position by sizeof(T)
+  /// bytes for each element.
+  template <typename T>
+  void read(span<T> s)
+  {
+    for (auto& element : s) {
+      element = read<T>();
+    }
+  }
+
+  /// Deserializes a fixed amount of bytes given by the size of the input span and advances the position by the span
+  /// size.
+  void read(span<uint8_t> s)
+  {
+    std::memcpy(s.data(), ptr, s.size() * sizeof(uint8_t));
+    advance(s.size() * sizeof(uint8_t));
+  }
+
+  /// Advances the offset by the given amount.
+  void advance(unsigned x)
+  {
+    ptr += x;
+    offset += x;
+  }
+
+  /// Returns a view over the given number of bytes and advances the offset by this amount.
+  span<const uint8_t> get_view_and_advance(unsigned x)
+  {
+    span<const uint8_t> view(ptr, x);
+    advance(x);
+    return view;
+  }
+
+  /// Returns the current offset.
+  unsigned get_offset() const { return offset; }
+
+  /// Returns the number of unconsumed bytes of the buffer.
+  unsigned remaining_bytes() const { return size - offset; }
+
+private:
+  /// Deserializes one byte and advances the position by one byte.
+  uint8_t read_one_byte()
+  {
+    uint8_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    advance(sizeof(value));
+
+    return value;
+  }
+
+  /// Deserializes two bytes and advances the position by two bytes.
+  uint16_t read_two_bytes()
+  {
+    uint16_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    advance(sizeof(value));
+
+    return ntohs(value);
+  }
+
+  /// Deserializes four bytes and advances the position by four bytes.
+  uint32_t read_four_bytes()
+  {
+    uint32_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    advance(sizeof(value));
+
+    return ntohl(value);
+  }
+
+private:
+  const uint8_t* ptr;
+  const unsigned size;
+  unsigned       offset = 0;
+};
+
+} // namespace ofh
+} // namespace ocudu

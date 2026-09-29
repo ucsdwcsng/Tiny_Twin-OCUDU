@@ -1,0 +1,67 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/adt/byte_buffer_chain.h"
+#include "ocudu/ran/du_types.h"
+#include "ocudu/ran/rb_id.h"
+
+/*
+ * This file will hold the interfaces and notifiers for the RLC entity.
+ * They follow the following nomenclature:
+ *
+ *   rlc_{tx/rx}_{lower/upper}_layer_{[control/data]}_{interface/notifier}
+ *
+ * 1. TX/RX indicates whether the interface is intended for the
+ *    TX or RX side of the entity
+ * 2. Lower/Upper indicates whether the interface/notifier interacts
+ *    with the upper or lower layers.
+ * 3. Control/Data: indicates whether this interface is necessary for "control"
+ *    purposes (e.g., notifying the RRC of protocol error) or "data" purposes
+ *    (e.g. handling PDUs).
+ *    This distinction is only necessary when interfacing with the upper layers,
+ *    and as such, we omit it in the interfaces with the lower layers.
+ * 4. Interface/Notifier: whether this is an interface the RLC entity will
+ *    inherit or a notifier that the RLC will keep as a member.
+ *
+ */
+
+namespace ocudu {
+
+/***************************************
+ * Interfaces/notifiers for upper layers
+ ***************************************/
+/// This interface represents the data entry point of the receiving side of a RLC entity.
+/// The lower-layers will use this class to pass PDUs into the RLC.
+class rlc_rx_lower_layer_interface
+{
+public:
+  rlc_rx_lower_layer_interface()                                               = default;
+  virtual ~rlc_rx_lower_layer_interface()                                      = default;
+  rlc_rx_lower_layer_interface(const rlc_rx_lower_layer_interface&)            = delete;
+  rlc_rx_lower_layer_interface& operator=(const rlc_rx_lower_layer_interface&) = delete;
+  rlc_rx_lower_layer_interface(rlc_rx_lower_layer_interface&&)                 = delete;
+  rlc_rx_lower_layer_interface& operator=(rlc_rx_lower_layer_interface&&)      = delete;
+
+  /// Handle the incoming PDU.
+  virtual void handle_pdu(byte_buffer_slice pdu) = 0;
+};
+
+/***************************************
+ * Interfaces/notifiers for lower layers
+ ***************************************/
+/// This interface represents the data exit point of the receiving side of a RLC entity.
+/// The RLC will use this class to pass SDUs to the upper-layers.
+class rlc_rx_upper_layer_data_notifier
+{
+public:
+  virtual ~rlc_rx_upper_layer_data_notifier() = default;
+
+  /// This method is called to pass the SDU to the upper layers
+  virtual void on_new_sdu(byte_buffer_chain pdu) = 0;
+};
+
+} // namespace ocudu

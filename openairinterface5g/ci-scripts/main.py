@@ -1,0 +1,473 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+# Python for CI of OAI-eNB + COTS-UE
+#
+#   Required Python Version
+#     Python 3.x
+#
+#   Required Python Package
+#     pexpect
+#---------------------------------------------------------------------
+
+
+
+#-----------------------------------------------------------
+# Import Components
+#-----------------------------------------------------------
+
+import constants as CONST
+
+
+import cls_oaicitest		 #main class for OAI CI test framework
+import cls_containerize	 #class Containerize for all container-based operations on RAN/UE objects
+import cls_static_code_analysis as SCA
+import cls_cluster		 # class for building/deploying on cluster
+import cls_native        # class for all native/source-based operations
+from cls_ci_helper import TestCaseCtx
+
+import ran
+import cls_cmd
+import cls_oai_html
+
+
+#-----------------------------------------------------------
+# Import Libs
+#-----------------------------------------------------------
+import sys		# arg
+import re		# reg
+import time		# sleep
+import os
+import subprocess
+import lxml.etree as ET
+import logging
+import signal
+import traceback
+
+
+#-----------------------------------------------------------
+# General Functions
+#-----------------------------------------------------------
+
+def ExecuteActionWithParam(action, test, ctx, node, oc):
+	global HTML
+	global CONTAINERS
+	if action == 'Build_eNB' or action == 'Build_Image' or action == "Build_Cluster_Image" or action == "Build_Run_Tests":
+		args = test.findtext('Build_eNB_args')
+		CONTAINERS.imageKind=test.findtext('kind')
+		dockerfile = test.findtext('dockerfile') or ''
+		runtime_opt = test.findtext('runtime-opt') or ''
+		ctest_opt = test.findtext('ctest-opt') or ''
+		if action == 'Build_eNB':
+			success = cls_native.Native.Build(ctx, node, HTML, ctx.g.workspace, args)
+		elif action == 'Build_Image':
+			success = CONTAINERS.BuildImage(ctx, node, HTML)
+		elif action == 'Build_Cluster_Image':
+			success = cls_cluster.Cluster.BuildClusterImage(ctx, oc, node, HTML)
+		elif action == 'Build_Run_Tests':
+			success = CONTAINERS.BuildRunTests(ctx, node, dockerfile, runtime_opt, ctest_opt, HTML)
+
+	elif action == 'Initialize_eNB':
+		args = test.findtext('Initialize_eNB_args')
+		cmd_prefix = test.findtext('cmd_prefix')
+		success = ran.RAN.InitializeeNB(ctx, node, HTML, args, cmd_prefix)
+
+	elif action == 'Terminate_eNB':
+		services = []
+		analysis = test.find("analysis")
+		if analysis is not None:
+			# services: multiple services to analyse, separated by whitespace
+			services = analysis.findtext("services", default="").split()
+			# service: individual services to analyze, in case they have whitespace
+			services = services + [s.text for s in analysis.findall("service")]
+		success = ran.RAN.TerminateeNB(ctx, node, HTML, services)
+
+	elif action == 'Initialize_UE' or action == 'Attach_UE' or action == 'Detach_UE' or action == 'Terminate_UE' or action == 'CheckStatusUE' or action == 'DataEnable_UE' or action == 'DataDisable_UE':
+		CiTestObj.ue_ids = test.findtext('id').split(' ')
+		if action == 'Initialize_UE':
+			success = CiTestObj.InitializeUE(node, HTML)
+		elif action == 'Attach_UE':
+			success = CiTestObj.AttachUE(node, HTML)
+		elif action == 'Detach_UE':
+			success = CiTestObj.DetachUE(node, HTML)
+		elif action == 'Terminate_UE':
+			success = CiTestObj.TerminateUE(ctx, node, HTML)
+		elif action == 'CheckStatusUE':
+			success = CiTestObj.CheckStatusUE(node, HTML)
+		elif action == 'DataEnable_UE':
+			success = CiTestObj.DataEnableUE(node, HTML)
+		elif action == 'DataDisable_UE':
+			success = CiTestObj.DataDisableUE(node, HTML)
+
+	elif action == 'Ping':
+		CiTestObj.ping_args = test.findtext('ping_args')
+		CiTestObj.ping_packetloss_threshold = test.findtext('ping_packetloss_threshold')
+		CiTestObj.ue_ids = test.findtext('id').split(' ')
+		CiTestObj.svr_id = test.findtext('svr_id')
+		if test.findtext('svr_node'):
+			CiTestObj.svr_node = test.findtext('svr_node') if not force_local else 'localhost'
+		ping_rttavg_threshold = test.findtext('ping_rttavg_threshold') or ''
+		success = CiTestObj.Ping(ctx, node, HTML)
+
+	elif action == 'Iperf' or action == 'Iperf2_Unidir':
+		CiTestObj.iperf_args = test.findtext('iperf_args')
+		CiTestObj.ue_ids = test.findtext('id').split(' ')
+		CiTestObj.svr_id = test.findtext('svr_id')
+		if test.findtext('svr_node'):
+			CiTestObj.svr_node = test.findtext('svr_node') if not force_local else 'localhost'
+		CiTestObj.iperf_packetloss_threshold = test.findtext('iperf_packetloss_threshold')
+		CiTestObj.iperf_bitrate_threshold = test.findtext('iperf_bitrate_threshold') or '90'
+		CiTestObj.iperf_profile = test.findtext('iperf_profile') or 'balanced'
+		CiTestObj.iperf_tcp_rate_target = test.findtext('iperf_tcp_rate_target') or None
+		if CiTestObj.iperf_profile != 'balanced' and CiTestObj.iperf_profile != 'unbalanced' and CiTestObj.iperf_profile != 'single-ue':
+			logging.error(f'test-case has wrong profile {CiTestObj.iperf_profile}, forcing balanced')
+			CiTestObj.iperf_profile = 'balanced'
+		if action == 'Iperf':
+			success = CiTestObj.Iperf(ctx, node, HTML)
+		elif action == 'Iperf2_Unidir':
+			success = CiTestObj.Iperf2_Unidir(ctx, node, HTML)
+
+	elif action == 'IdleSleep':
+		st = test.findtext('idle_sleep_time_in_sec') or "5"
+		success = cls_oaicitest.IdleSleep(HTML, int(st))
+
+	elif action == 'Deploy_Run_OC_PhySim':
+		oc_release = test.findtext('oc_release')
+		script = "scripts/oc-deploy-physims.sh"
+		image_tag = ctx.g.branch
+		options = f"oaicicd-core-for-ci-ran {oc_release} {image_tag} {ctx.g.workspace}"
+		workdir = ctx.g.workspace
+		success = cls_oaicitest.Deploy_Physim(ctx, HTML, node, workdir, script, options)
+
+	elif action == 'Build_Deploy_PhySim':
+		ctest_opt = test.findtext('ctest-opt') or ''
+		script = test.findtext('script')
+		options = f"{ctx.g.workspace} {ctest_opt}"
+		workdir = ctx.g.workspace
+		success = cls_oaicitest.Deploy_Physim(ctx, HTML, node, workdir, script, options)
+
+	elif action == 'DeployCoreNetwork' or action == 'UndeployCoreNetwork':
+		cn_id = test.findtext('cn_id')
+		core_op = getattr(cls_oaicitest.OaiCiTest, action)
+		success = core_op(cn_id, ctx, HTML)
+
+	elif action == 'DeployWithScript' or action == 'UndeployWithScript':
+		script = test.findtext('script')
+		options = test.findtext('options')
+		if action == 'DeployWithScript':
+			deploymentTag = ctx.g.branch
+			success = cls_oaicitest.DeployWithScript(HTML, node, script, options, deploymentTag)
+		elif action == 'UndeployWithScript':
+			success = cls_oaicitest.UndeployWithScript(HTML, ctx, node, script, options)
+
+	elif action == 'Deploy_Object' or action == 'Undeploy_Object' or action == "Create_Workspace" or action == "Stop_Object":
+		CONTAINERS.yamlPath = test.findtext('yaml_path')
+		CONTAINERS.services = test.findtext('services')
+		CONTAINERS.num_attempts = int(test.findtext('num_attempts') or 1)
+		CONTAINERS.deploymentTag = ctx.g.branch
+		if action == 'Deploy_Object':
+			success = CONTAINERS.DeployObject(ctx, node, HTML)
+		elif action == 'Stop_Object':
+			success = CONTAINERS.StopObject(ctx, node, HTML)
+		elif action == 'Undeploy_Object':
+			analysis = test.find("analysis")
+			services = []
+			if analysis is not None:
+				# services: multiple services to analyse, separated by whitespace
+				services = analysis.findtext("services", default="").split()
+				# service: individual services to analyze, in case they have whitespace
+				services = services + [s.text for s in analysis.findall("service")]
+			success = CONTAINERS.UndeployObject(ctx, node, HTML, services)
+		elif action == 'Create_Workspace':
+			if force_local:
+				# Do not create a working directory when running locally. Current repo directory will be used
+				return True
+			success = cls_containerize.Containerize.Create_Workspace(ctx, node, HTML)
+
+	elif action == 'LicenceAndFormattingCheck':
+		success = SCA.StaticCodeAnalysis.LicenceAndFormattingCheck(ctx, node, HTML)
+
+	elif action == 'Push_Local_Registry':
+		tag_prefix = test.findtext('tag_prefix') or ""
+		success = cls_containerize.Containerize.Push_Image_to_Local_Registry(ctx, node, HTML, tag_prefix)
+
+	elif action == 'Pull_Local_Registry' or action == 'Clean_Test_Server_Images':
+		if force_local:
+			# Do not pull or remove images when running locally. User is supposed to handle image creation & cleanup
+			return True
+		tag_prefix = test.findtext('tag_prefix') or ""
+		images = test.findtext('images').split()
+		# hack: for FlexRIC, we need to overwrite the tag to use
+		tag = None
+		if len(images) == 1 and images[0] == "oai-flexric":
+			tag = CONTAINERS.flexricTag
+		if action == "Pull_Local_Registry":
+			success = cls_containerize.Containerize.Pull_Image_from_Registry(ctx, HTML, node, images, tag=tag, tag_prefix=tag_prefix)
+		if action == "Clean_Test_Server_Images":
+			success = cls_containerize.Containerize.Clean_Test_Server_Images(ctx, HTML, node, images, tag=tag)
+
+	elif action == 'Custom_Command':
+		command = test.findtext('command')
+		# Allow referencing repository workspace path in XML via %%workspace%%
+		command = command.replace("%%workspace%%", ctx.g.workspace)
+		success = cls_oaicitest.Custom_Command(HTML, node, command)
+
+	elif action == 'Custom_Script':
+		script = test.findtext('script')
+		args = test.findtext('args')
+		# Allow referencing repository workspace path in XML via %%workspace%%
+		script = script.replace("%%workspace%%", ctx.g.workspace)
+		success = cls_oaicitest.Custom_Script(HTML, node, script, args)
+
+	elif action == 'Pull_Cluster_Image':
+		tag_prefix = test.findtext('tag_prefix') or ""
+		images = test.findtext('images').split()
+		success = cls_cluster.Cluster.PullClusterImage(ctx, oc, HTML, node, images, tag_prefix=tag_prefix)
+
+	elif action == 'AnalyzeRTStats':
+		yaml = test.findtext('stats_cfg')
+		success = ran.RAN.AnalyzeRTStats(HTML, node, ctx, yaml)
+
+	elif action == 'AnalyzeRTStats_Object':
+		yaml = test.findtext('stats_cfg')
+		service = test.findtext('service')
+		stats_files = (test.findtext('stats_file') or '').split()
+		success = CONTAINERS.AnalyzeRTStatsObject(HTML, node, ctx, yaml, service, stats_files)
+
+	else:
+		logging.warning(f"unknown action {action}, CI run marked as failure")
+		success = False
+
+	return success
+
+test_runner_abort = False
+def receive_signal(signum, frame):
+    global test_runner_abort
+    if not test_runner_abort:
+        logging.warning("received signal, canceling steps")
+        logging.info("send signal again to exit immediately")
+        test_runner_abort = True
+    else:
+        logging.warning("received signal again, exiting")
+        sys.exit(1)
+
+def ShowTestID(ctx, desc, file, line):
+    logging.info(f'\u001B[1m----------------------------------------\u001B[0m')
+    logging.info(f'\u001B[1m Test #{ctx.test_idx} ({file}:{line})   \u001B[0m')
+    logging.info(f'\u001B[1m {desc}                                 \u001B[0m')
+    logging.info(f'\u001B[1m----------------------------------------\u001B[0m')
+
+def run_tests(g_ctx, logPath, HTML, all_tests):
+	task_set_succeeded = True
+	for index, test in enumerate(all_tests, start=1):
+		if test_runner_abort:
+			task_set_succeeded = False
+		test_case_idx = f"{index:06d}"
+		ctx = TestCaseCtx(int(test_case_idx), logPath, g_ctx)
+		desc = test.findtext('desc')
+		node = test.findtext('node') if not force_local else 'localhost'
+		always_exec = test.findtext('always_exec') in ['True', 'true', 'Yes', 'yes']
+		may_fail = test.findtext('may_fail') in ['True', 'true', 'Yes', 'yes']
+		HTML.testCaseIdx = test_case_idx
+		HTML.desc = desc
+		action = test.findtext('class')
+		file = os.path.basename(xml_test_file)
+		line = test.find('class').sourceline
+		ShowTestID(ctx, desc, file, line)
+		if not task_set_succeeded and not always_exec:
+			msg = f"skipping test due to prior error"
+			logging.warning(msg)
+			HTML.CreateHtmlTestRowQueue(msg, "SKIP", [])
+			continue
+		try:
+			test_succeeded = ExecuteActionWithParam(action, test, ctx, node, oc)
+			if not test_succeeded and may_fail:
+				logging.warning(f"test ID {test_case_idx} action {action} may or may not fail, proceeding despite error")
+			elif not test_succeeded:
+				logging.error(f"test ID {test_case_idx} action {action} failed ({test_succeeded}), skipping next tests")
+				task_set_succeeded = False
+		except Exception as e:
+			s = traceback.format_exc()
+			logging.error(f'while running CI, an exception occurred:\n{s}')
+			HTML.CreateHtmlTestRowQueue("N/A", 'KO', [f"CI test code encountered an exception:\n{s}"])
+			task_set_succeeded = False
+			continue
+	return task_set_succeeded
+
+#-----------------------------------------------------------
+# MAIN PART
+#-----------------------------------------------------------
+
+mode = ''
+
+CiTestObj = cls_oaicitest.OaiCiTest()
+ 
+HTML = cls_oai_html.HTMLManagement()
+CONTAINERS = cls_containerize.Containerize()
+
+#-----------------------------------------------------------
+# Parsing Command Line Arguments
+#-----------------------------------------------------------
+
+import args_parse
+# Force local execution, move all execution targets to localhost
+force_local = False
+mode, force_local, date_fmt, final_status, g_ctx, oc = args_parse.ArgsParse(sys.argv,HTML,CONTAINERS)
+fmt = "%(levelname)8s: %(message)s"
+if date_fmt:
+    fmt = "[%(asctime)s] %(levelname)s %(message)s"
+logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, format=fmt, datefmt=date_fmt,)
+
+
+#-----------------------------------------------------------
+# mode amd XML class (action) analysis
+#-----------------------------------------------------------
+cwd = os.getcwd()
+
+if re.match('^InitiateHtml$', mode, re.IGNORECASE):
+	count = 0
+	foundCount = 0
+	while (count < HTML.nbTestXMLfiles):
+		xml_test_file = sys.path[0] + "/" + HTML.testXMLfiles[count]
+		if (os.path.isfile(xml_test_file)):
+			try:
+				xmlTree = ET.parse(xml_test_file)
+			except Exception as e:
+				print(f"Error: {e} while parsing file: {xml_test_file}.")
+			xmlRoot = xmlTree.getroot()
+			HTML.htmlTabRefs.append(xmlRoot.findtext('htmlTabRef',default='test-tab-' + str(count)))
+			HTML.htmlTabNames.append(xmlRoot.findtext('htmlTabName',default='test-tab-' + str(count)))
+			HTML.htmlTabIcons.append(xmlRoot.findtext('htmlTabIcon',default='info-sign'))
+			foundCount += 1
+		count += 1
+	if foundCount != HTML.nbTestXMLfiles:
+		HTML.nbTestXMLfiles=foundCount
+	
+	HTML.CreateHtmlHeader(g_ctx.repository, g_ctx.branch)
+elif re.match('^FinalizeHtml$', mode, re.IGNORECASE):
+	logging.info('\u001B[1m----------------------------------------\u001B[0m')
+	logging.info('\u001B[1m  Creating HTML footer \u001B[0m')
+	logging.info('\u001B[1m----------------------------------------\u001B[0m')
+
+	HTML.CreateHtmlFooter(final_status)
+elif re.match('^TesteNB$', mode, re.IGNORECASE):
+	logging.info('\u001B[1m----------------------------------------\u001B[0m')
+	logging.info('\u001B[1m  Starting Scenario: ' + HTML.testXMLfiles[0] + '\u001B[0m')
+	logging.info('\u001B[1m----------------------------------------\u001B[0m')
+	if g_ctx.repository == '' or g_ctx.branch == '' or g_ctx.workspace == '':
+		sys.exit(f'Insufficient Parameters: {g_ctx.repository=}, {g_ctx.branch=}, {g_ctx.workspace=}')
+	if HTML.nbTestXMLfiles != 1:
+		sys.exit(f'Only one XML file per TesteNB call supported')
+	#read test_case_list.xml file
+	# if no parameters for XML file, use default value
+	if (HTML.nbTestXMLfiles != 1):
+		xml_test_file = cwd + "/test_case_list.xml"
+	else:
+		xml_test_file = cwd + "/" + HTML.testXMLfiles[0]
+
+	signal.signal(signal.SIGINT, receive_signal)
+
+	# directory where all log artifacts will be placed
+	logPath = f"{cwd}/../cmake_targets/log/{xml_test_file.split('/')[-1]}.d"
+	# we run from within ci-scripts, but the logPath is absolute, so replace
+	# the ci-scripts/..; if it does not exist, nothing will happen
+	logPath = logPath.replace(r'/ci-scripts/..', '')
+	logging.info(f"placing all artifacts for this run in {logPath}/")
+	with cls_cmd.LocalCmd() as c:
+		c.run(f"rm -rf {logPath}")
+		c.run(f"mkdir -p {logPath}")
+
+	xmlTree = ET.parse(xml_test_file)
+	xmlRoot = xmlTree.getroot()
+	all_tests=xmlRoot.findall('testCase')
+
+	HTML.htmlTabRefs.append(xmlRoot.findtext('htmlTabRef',default='test-tab-0'))
+	HTML.htmlTabNames.append(xmlRoot.findtext('htmlTabName',default='Test-0'))
+	HTML.CreateHtmlTabHeader()
+	HTML.startTime=int(round(time.time() * 1000))
+
+	success = run_tests(g_ctx, logPath, HTML, all_tests)
+
+	if not success:
+		logging.error('\u001B[1;37;41mScenario failed\u001B[0m')
+		HTML.CreateHtmlTabFooter(False)
+		sys.exit('Failed Scenario')
+	else:
+		logging.info('\u001B[1;37;42mScenario passed\u001B[0m')
+		HTML.CreateHtmlTabFooter(True)
+elif mode == "all-in-one":
+	if g_ctx.repository == '' or g_ctx.branch == '' or g_ctx.workspace == '':
+		sys.exit(f'Insufficient Parameters: {g_ctx.repository=}, {g_ctx.branch=}, {g_ctx.workspace=}')
+	count = 0
+	foundCount = 0
+	while (count < HTML.nbTestXMLfiles):
+		xml_test_file = sys.path[0] + "/" + HTML.testXMLfiles[count]
+		if (os.path.isfile(xml_test_file)):
+			try:
+				xmlTree = ET.parse(xml_test_file)
+			except Exception as e:
+				print(f"Error: {e} while parsing file: {xml_test_file}.")
+			xmlRoot = xmlTree.getroot()
+			HTML.htmlTabRefs.append(xmlRoot.findtext('htmlTabRef'))
+			HTML.htmlTabNames.append(xmlRoot.findtext('htmlTabName'))
+			HTML.htmlTabIcons.append(xmlRoot.findtext('htmlTabIcon'))
+			foundCount += 1
+		count += 1
+	if foundCount != HTML.nbTestXMLfiles:
+		HTML.nbTestXMLfiles=foundCount
+
+	HTML.CreateHtmlHeader(g_ctx.repository, g_ctx.branch)
+
+	signal.signal(signal.SIGINT, receive_signal)
+
+	xmls = HTML.testXMLfiles
+
+	final_status = True
+	for xml in xmls:
+		logging.info('\u001B[1m----------------------------------------\u001B[0m')
+		logging.info(f'\u001B[1m  Starting Scenario: {xml}\u001B[0m')
+		logging.info('\u001B[1m----------------------------------------\u001B[0m')
+
+		xml_test_file = f"{cwd}/{xml}"
+
+		# directory where all log artifacts will be placed
+		logPath = f"{cwd}/../cmake_targets/log/{xml}.d"
+		# we run from within ci-scripts, but the logPath is absolute, so replace
+		# the ci-scripts/..; if it does not exist, nothing will happen
+		logPath = logPath.replace(r'/ci-scripts/..', '')
+		logging.info(f"placing all artifacts for this run in {logPath}/")
+		with cls_cmd.LocalCmd() as c:
+			c.run(f"rm -rf {logPath}")
+			c.run(f"mkdir -p {logPath}")
+
+		xmlTree = ET.parse(xml_test_file)
+		xmlRoot = xmlTree.getroot()
+		all_tests = xmlRoot.findall('testCase')
+
+		HTML.testXMLfiles = [xml]
+		HTML.nbTestXMLfiles = 1
+		HTML.htmlTabRefs = [xmlRoot.findtext('htmlTabRef')]
+		HTML.htmlTabNames = [xmlRoot.findtext('htmlTabName')]
+		HTML.htmlTabIcons = [xmlRoot.findtext('htmlTabIcon')]
+
+		# reset that we created a header (this "logic" makes no sense and will
+		# be removed once we removed the different modes)
+		HTML.htmlHeaderCreated = False
+		HTML.CreateHtmlTabHeader()
+		HTML.startTime=int(round(time.time() * 1000))
+
+		success = run_tests(g_ctx, logPath, HTML, all_tests)
+
+		HTML.htmlFooterCreated = False
+		if not success:
+			logging.error('\u001B[1;37;41mScenario failed\u001B[0m')
+			HTML.CreateHtmlTabFooter(False)
+			final_status = False
+		else:
+			logging.info('\u001B[1;37;42mScenario passed\u001B[0m')
+			HTML.CreateHtmlTabFooter(True)
+
+	HTML.CreateHtmlFooter(final_status)
+else:
+	sys.exit(f'Invalid mode {mode}')
+sys.exit(0)

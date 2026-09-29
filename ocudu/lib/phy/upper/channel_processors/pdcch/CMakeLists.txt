@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+# Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+
+add_library(ocudu_pdcch_processor STATIC
+        factories.cpp
+        pdcch_encoder_impl.cpp
+        pdcch_modulator_impl.cpp
+        pdcch_processor_impl.cpp
+        pdcch_processor_validator_impl.cpp)
+target_link_libraries(ocudu_pdcch_processor ocudu_ran ocuduvec)

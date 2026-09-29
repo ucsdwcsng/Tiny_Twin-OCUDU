@@ -1,0 +1,81 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/support/re_buffer.h"
+#include "ocudu/phy/support/resource_grid_writer.h"
+#include "ocudu/phy/upper/channel_modulation/modulation_mapper.h"
+#include "ocudu/phy/upper/channel_processors/pdcch/pdcch_modulator.h"
+#include "ocudu/phy/upper/sequence_generators/pseudo_random_generator.h"
+
+namespace ocudu {
+
+class resource_grid_mapper;
+
+/// PDCCH modulator implementation.
+class pdcch_modulator_impl : public pdcch_modulator
+{
+private:
+  /// Defines the maximum number of resource blocks used in a transmission. It considers the maximum aggregation level
+  /// of 16 and a REG size of 6 RB.
+  static constexpr unsigned MAX_RB_PER_PDCCH = 16 * 6;
+
+  /// Defines the number of resource elements available for PDCCH in a resource block.
+  static constexpr unsigned NOF_RE_PER_RB = NOF_SUBCARRIERS_PER_RB - 3;
+
+  /// Defines the maximum number of resource elements that can be utilised for a PDCCH transmission.
+  static constexpr unsigned MAX_RE = NOF_RE_PER_RB * MAX_RB_PER_PDCCH;
+
+  /// Defines the maximum number of bits that can be utilised for a PDCCH transmission.
+  static constexpr unsigned MAX_BITS = MAX_RE * get_bits_per_symbol(modulation_scheme::QPSK);
+
+  /// Provides an implementation of the modulator.
+  std::unique_ptr<modulation_mapper> modulator;
+
+  /// Provides an implementation of the pseudo-random generator.
+  std::unique_ptr<pseudo_random_generator> scrambler;
+
+  /// Provides an implementation of the resource grid mapper.
+  std::unique_ptr<resource_grid_mapper> mapper;
+
+  /// \brief Scrambles a codeword. Implements TS38.211 Section 7.3.2.3 Scrambling.
+  ///
+  /// \param[out] b_hat Output bits after scrambling.
+  /// \param[in] b Inputs bits to scramble.
+  /// \param[in] config Provides the scrambler configuration.
+  void scramble(span<uint8_t> b_hat, span<const uint8_t> b, const config_t& config);
+
+  /// \brief Modulates a codeword. Implements TS38.211 Section 7.3.2.4 PDCCH modulation.
+  ///
+  /// \param[out] d_pdcch Output symbols.
+  /// \param[in] b_hat Inputs bits to perform the modulation mapping.
+  /// \param[in] scaling Indicates the signal scaling if the value is valid (not 0, NAN nor INF).
+  void modulate(span<cf_t> d_pdcch, span<const uint8_t> b_hat, float scaling);
+
+  /// \brief Maps the modulated symbols to resource elements in the grid. Implements TS38.211 Section 7.3.2.5 Mapping
+  /// to physical resources.
+  ///
+  /// \param[out] grid   Provides the destination resource grid.
+  /// \param[in] d_pdcch Provides the block of complex-valued symbols to map.
+  /// \param[in] config  Provides the mapper configuration.
+  void map(resource_grid_writer& grid, const re_buffer_reader<>& d_pdcch, const config_t& config);
+
+public:
+  // See interface for the documentation.
+  void modulate(resource_grid_writer& grid, span<const uint8_t> data, const config_t& config) override;
+
+  /// Generic PDCCH modulator instance constructor.
+  pdcch_modulator_impl(std::unique_ptr<modulation_mapper>       modulator_,
+                       std::unique_ptr<pseudo_random_generator> scrambler_,
+                       std::unique_ptr<resource_grid_mapper>    mapper_) :
+    modulator(std::move(modulator_)), scrambler(std::move(scrambler_)), mapper(std::move(mapper_))
+  {
+    ocudu_assert(modulator, "Invalid modulator");
+    ocudu_assert(scrambler, "Invalid scrambler");
+    ocudu_assert(mapper, "Invalid resource grid mapper");
+  }
+};
+
+} // namespace ocudu

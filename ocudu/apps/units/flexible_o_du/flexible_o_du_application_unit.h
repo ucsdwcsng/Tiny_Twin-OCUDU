@@ -1,0 +1,38 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "apps/units/application_unit.h"
+#include "apps/units/flexible_o_du/o_du_unit.h"
+#include <yaml-cpp/node/node.h>
+
+namespace ocudu {
+struct o_du_high_unit_config;
+struct worker_manager_config;
+
+/// Flexible DU application unit interface.
+class flexible_o_du_application_unit : public application_unit
+{
+public:
+  virtual ~flexible_o_du_application_unit() = default;
+
+  /// Creates a flexible O-RAN DU using the given dependencies.
+  virtual o_du_unit create_flexible_o_du_unit(const o_du_unit_dependencies& dependencies) = 0;
+
+  /// Validates the configuration of this application unit. Returns true on success, otherwise false.
+  virtual bool on_configuration_validation() const = 0;
+
+  /// Returns the O-RAN DU high unit configuration of this flexible DU.
+  virtual o_du_high_unit_config&       get_o_du_high_unit_config()       = 0;
+  virtual const o_du_high_unit_config& get_o_du_high_unit_config() const = 0;
+};
+
+/// \brief Creates a flexible O-RAN DU application unit.
+///
+/// Different splits must provide an implementation of this free function so the applications can instantiate a flexible
+/// DU application unit.
+std::unique_ptr<flexible_o_du_application_unit> create_flexible_o_du_application_unit(std::string_view app_name);
+
+} // namespace ocudu

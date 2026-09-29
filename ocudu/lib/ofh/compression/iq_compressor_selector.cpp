@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "iq_compressor_selector.h"
+#include "ocudu/support/error_handling.h"
+
+using namespace ocudu;
+using namespace ofh;
+
+iq_compressor_selector::iq_compressor_selector(
+    std::array<std::unique_ptr<iq_compressor>, NOF_COMPRESSION_TYPES_SUPPORTED> compressors_) :
+  compressors(std::move(compressors_))
+{
+  // Sanity check that all the positions in the array has a valid compressor.
+  for (unsigned i = 0, e = compressors.size(); i != e; ++i) {
+    report_fatal_error_if_not(compressors[i],
+                              "Null compressor detected for compression type '{}'",
+                              to_string(static_cast<compression_type>(i)));
+  }
+}
+
+void iq_compressor_selector::compress(span<uint8_t>                buffer,
+                                      span<const cbf16_t>          iq_data,
+                                      const ru_compression_params& params)
+{
+  auto& compressor = compressors[static_cast<unsigned>(params.type)];
+  compressor->compress(buffer, iq_data, params);
+}

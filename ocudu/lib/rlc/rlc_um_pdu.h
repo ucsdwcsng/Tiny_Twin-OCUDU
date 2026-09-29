@@ -1,0 +1,206 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/rlc/rlc_config.h"
+#include "fmt/base.h"
+
+namespace ocudu {
+
+constexpr size_t rlc_um_pdu_header_size_complete_sdu = 1;
+
+constexpr size_t rlc_um_pdu_header_size_6bit_sn_no_so  = 1;
+constexpr size_t rlc_um_pdu_header_size_12bit_sn_no_so = 2;
+constexpr size_t rlc_um_pdu_header_size_no_so(rlc_um_sn_size sn_size)
+{
+  switch (sn_size) {
+    case rlc_um_sn_size::size6bits:
+      return rlc_um_pdu_header_size_6bit_sn_no_so;
+    case rlc_um_sn_size::size12bits:
+      return rlc_um_pdu_header_size_12bit_sn_no_so;
+  }
+  ocudu_assertion_failure("Cannot determine RLC UM PDU header size without SO: unsupported sn_size={}.",
+                          to_number(sn_size));
+  return rlc_um_pdu_header_size_6bit_sn_no_so;
+}
+
+constexpr size_t rlc_um_pdu_header_size_6bit_sn_with_so  = 3;
+constexpr size_t rlc_um_pdu_header_size_12bit_sn_with_so = 4;
+constexpr size_t rlc_um_pdu_header_size_with_so(rlc_um_sn_size sn_size)
+{
+  switch (sn_size) {
+    case rlc_um_sn_size::size6bits:
+      return rlc_um_pdu_header_size_6bit_sn_with_so;
+    case rlc_um_sn_size::size12bits:
+      return rlc_um_pdu_header_size_12bit_sn_with_so;
+  }
+  ocudu_assertion_failure("Cannot determine RLC UM PDU header size with SO: unsupported sn_size={}.",
+                          to_number(sn_size));
+  return rlc_um_pdu_header_size_6bit_sn_no_so;
+}
+
+struct rlc_um_pdu_header {
+  rlc_si_field   si;      ///< Segmentation info
+  rlc_um_sn_size sn_size; ///< Sequence number size (6 or 12 bits)
+  uint16_t       sn;      ///< Sequence number
+  uint16_t       so;      ///< Segment offset
+};
+
+/****************************************************************************
+ * Header pack/unpack helper functions
+ * Ref: 3GPP TS 38.322 version 15.3.0 Section 6.2.2.3
+ ***************************************************************************/
+inline bool
+rlc_um_read_data_pdu_header(const byte_buffer_view& pdu, const rlc_um_sn_size sn_size, rlc_um_pdu_header* header)
+{
+  byte_buffer_reader pdu_reader = pdu;
+  if (pdu_reader.empty()) {
+    ocudulog::fetch_basic_logger("RLC").warning(
+        "UMD PDU too small. pdu_len={} hdr_len={}", pdu.length(), rlc_um_pdu_header_size_no_so(sn_size));
+    return false;
+  }
+
+  header->sn_size = sn_size;
+
+  // Fixed part
+  if (sn_size == rlc_um_sn_size::size6bits) {
+    header->si = (rlc_si_field)((*pdu_reader >> 6U) & 0x03U); // 2 bits SI
+    header->sn = *pdu_reader & 0x3fU;                         // 6 bits SN
+    // sanity check
+    if (header->si == rlc_si_field::full_sdu and header->sn != 0) {
+      ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, reserved bits are set.");
+      return false;
+    }
+    ++pdu_reader;
+  } else if (sn_size == rlc_um_sn_size::size12bits) {
+    header->si = (rlc_si_field)((*pdu_reader >> 6U) & 0x03U); // 2 bits SI
+    header->sn = (*pdu_reader & 0x0fU) << 8U;                 // 4 bits SN
+    if (header->si == rlc_si_field::full_sdu and header->sn != 0) {
+      ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, reserved bits are set.");
+      return false;
+    }
+
+    // sanity check
+    if (header->si == rlc_si_field::first_segment) {
+      // make sure two reserved bits are not set
+      if (((*pdu_reader >> 4U) & 0x03U) != 0) {
+        ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, reserved bits are set.");
+        return false;
+      }
+    }
+
+    if (header->si != rlc_si_field::full_sdu) {
+      // continue unpacking remaining SN
+      ++pdu_reader;
+      if (pdu_reader.empty()) {
+        ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, missing lower byte of SN.");
+        return false;
+      }
+      header->sn |= (*pdu_reader & 0xffU); // 8 bits SN
+    }
+
+    ++pdu_reader;
+  } else {
+    ocudulog::fetch_basic_logger("RLC").error("Unsupported sn_size={}.", to_number(sn_size));
+    return false;
+  }
+
+  // Read optional part
+  if (header->si == rlc_si_field::last_segment || header->si == rlc_si_field::middle_segment) {
+    // read SO
+    if (pdu_reader.empty()) {
+      ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, missing upper byte of SO.");
+      return false;
+    }
+    header->so = (*pdu_reader & 0xffU) << 8U;
+    ++pdu_reader;
+    if (pdu_reader.empty()) {
+      ocudulog::fetch_basic_logger("RLC").error("Malformed PDU, missing lower byte of SO.");
+      return false;
+    }
+    header->so |= (*pdu_reader & 0xffU);
+    ++pdu_reader;
+  }
+
+  return true;
+}
+
+inline size_t rlc_um_nr_packed_length(const rlc_um_pdu_header& header)
+{
+  size_t len = 0;
+  if (header.si == rlc_si_field::full_sdu) {
+    // that's all ..
+    len++;
+  } else {
+    if (header.sn_size == rlc_um_sn_size::size6bits) {
+      // Only 1B for SN
+      len++;
+    } else {
+      // 2 B for 12bit SN
+      len += 2;
+    }
+    if (header.so) {
+      // Two bytes always for segment information
+      len += 2;
+    }
+  }
+  return len;
+}
+
+inline size_t rlc_um_write_data_pdu_header(span<uint8_t> buf, const rlc_um_pdu_header& header)
+{
+  span<uint8_t>::iterator buf_it = buf.begin();
+
+  *buf_it = (to_number(header.si) & 0x03U) << 6U; // 2 bits SI
+
+  if (header.si == rlc_si_field::full_sdu) {
+    return 1; // that's all
+  }
+
+  if (header.sn_size == rlc_um_sn_size::size6bits) {
+    // 6-bit SN
+    *buf_it |= (header.sn & 0x3fU); // write SN (6 bit)
+    buf_it++;
+  } else {
+    // 12-bit SN
+    *buf_it |= (header.sn >> 8U) & 0xfU; // upper 4 bits of SN
+    buf_it++;
+    *buf_it = header.sn & 0xffU; // lower part 8 bits of SN
+    buf_it++;
+  }
+  if (header.so != 0) {
+    // write SO
+    *buf_it = header.so >> 8U; // upper part of SO
+    buf_it++;
+    *buf_it = header.so & 0xffU; // lower part of SO
+    buf_it++;
+  }
+  return std::distance(buf.begin(), buf_it);
+}
+
+} // namespace ocudu
+
+namespace fmt {
+template <>
+struct formatter<ocudu::rlc_um_pdu_header> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::rlc_um_pdu_header& hdr, FormatContext& ctx) const
+  {
+    if (hdr.si == ocudu::rlc_si_field::full_sdu) {
+      // Header of full SDU only has SI; no SN and no SO.
+      return format_to(ctx.out(), "si={}", hdr.si, hdr.sn, hdr.so);
+    }
+    return format_to(ctx.out(), "si={} sn={} so={}", hdr.si, hdr.sn, hdr.so);
+  }
+};
+} // namespace fmt

@@ -1,0 +1,353 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "ocudu/adt/format.h"
+#include "ocudu/gateways/baseband/baseband_gateway_receiver.h"
+#include "ocudu/gateways/baseband/baseband_gateway_transmitter.h"
+#include "ocudu/gateways/baseband/buffer/baseband_gateway_buffer_dynamic.h"
+#include "ocudu/radio/radio_factory.h"
+#include "ocudu/support/executors/task_worker.h"
+#include "ocudu/support/math/complex_normal_random.h"
+#include <gtest/gtest.h>
+#include <random>
+#include <unistd.h>
+
+using namespace ocudu;
+
+// Parameters:
+// - Number of streams;
+// - Number of channels;
+// - Transmit block size;
+// - Receive block size;
+// - Number of samples to transmit/receive; and
+// - Throttle TX.
+using radio_zmq_e2e_test_parameters = std::tuple<unsigned, unsigned, unsigned, unsigned, unsigned, bool>;
+
+/// Indicates the test logging level.
+static const ocudulog::basic_levels log_level = ocudulog::basic_levels::warning;
+
+class RadioZmqE2EFixture : public ::testing::TestWithParam<radio_zmq_e2e_test_parameters>
+{
+protected:
+  static constexpr float ASSERT_MAX_ERROR_COMPLEX = 1.414213562f;
+
+  class radio_notifier_spy : public radio_event_notifier
+  {
+  public:
+    void on_radio_rt_event(const event_description& description) override {}
+  };
+
+  /// Indicates the number of streams.
+  unsigned nof_streams;
+  /// Indicates the number of channels per stream.
+  unsigned nof_channels;
+  /// Indicates the transmit center frequency for all ports.
+  double tx_freq_Hz;
+  /// Indicates the transmit gain for all ports in decibels.
+  double tx_gain_db;
+  /// Provides a list for all the transmit ports addresses.
+  std::vector<std::string> tx_addresses;
+  /// Sampling rate in hertz.
+  double sampling_rate_Hz;
+  /// Indicates the receive center frequency for all ports.
+  double rx_freq_Hz;
+  /// Indicates the receive gain for all ports in decibels.
+  double rx_gain_db;
+  /// Provides a list for all the receive ports addresses.
+  std::vector<std::string> rx_addresses;
+  /// Provides the number of samples per transmission.
+  unsigned tx_block_size;
+  /// Provides the number of samples per reception.
+  unsigned rx_block_size;
+  /// Total number of samples to process.
+  unsigned nof_samples;
+  /// Set to true for throttling the transmitter.
+  bool throttle_tx;
+
+  static std::unique_ptr<radio_factory> factory;
+  static std::unique_ptr<task_worker>   async_task_worker;
+  std::vector<std::mt19937>             tx_rgen;
+  std::vector<std::mt19937>             rx_rgen;
+  complex_normal_distribution<cf_t>     tx_dist;
+  complex_normal_distribution<cf_t>     rx_dist;
+
+  static void SetUpTestSuite()
+  {
+    if (!async_task_worker) {
+      async_task_worker = std::make_unique<task_worker>("async_thread", 2 * RADIO_MAX_NOF_PORTS);
+    }
+
+    if (factory) {
+      return;
+    }
+
+    // Create ZMQ factory.
+    factory = create_radio_factory("zmq");
+    ASSERT_NE(factory, nullptr);
+
+    ocudulog::init();
+    ocudulog::fetch_basic_logger("POOL").set_level(log_level);
+  }
+
+  static void TearDownTestSuite() { async_task_worker->stop(); }
+
+  static std::vector<std::string> get_zmq_ports(unsigned nof_ports)
+  {
+    std::vector<std::string> result;
+
+    for (unsigned i_port = 0; i_port != nof_ports; ++i_port) {
+      fmt::memory_buffer buffer;
+      fmt::format_to(std::back_inserter(buffer), "inproc://{}#{}", getpid(), i_port);
+      result.emplace_back(to_string(buffer));
+    }
+
+    return result;
+  }
+
+  static ci16_t generate_random_ci16(complex_normal_distribution<cf_t> dist, std::mt19937 gen)
+  {
+    static constexpr float scaling_factor = std::numeric_limits<int16_t>::max() / 4;
+    return to_ci16(dist(gen) * static_cast<float>(scaling_factor));
+  }
+
+  void SetUp() override
+  {
+    // Actual parameters.
+    nof_streams   = std::get<0>(GetParam());
+    nof_channels  = std::get<1>(GetParam());
+    tx_block_size = std::get<2>(GetParam());
+    rx_block_size = std::get<3>(GetParam());
+    nof_samples   = std::get<4>(GetParam());
+    throttle_tx   = std::get<5>(GetParam());
+
+    // Derived parameters.
+    unsigned nof_ports = nof_streams * nof_channels;
+    tx_addresses       = get_zmq_ports(nof_ports);
+    rx_addresses       = get_zmq_ports(nof_ports);
+
+    // Fix parameters.
+    sampling_rate_Hz = 3.84e6;
+    tx_freq_Hz       = 3.5e9;
+    tx_gain_db       = 0.0;
+    rx_freq_Hz       = 3.5e9;
+    rx_gain_db       = 0.0;
+
+    // Setup random generators.
+    for (unsigned i_port = 0; i_port != nof_ports; ++i_port) {
+      unsigned seed = 0x1234 + i_port;
+      tx_rgen.emplace_back(std::mt19937(seed));
+      rx_rgen.emplace_back(std::mt19937(seed));
+    }
+  }
+};
+
+class radio_notifier_spy : public radio_event_notifier
+{
+public:
+  void on_radio_rt_event(const event_description& description) override {}
+};
+
+std::unique_ptr<radio_factory> RadioZmqE2EFixture::factory           = nullptr;
+std::unique_ptr<task_worker>   RadioZmqE2EFixture::async_task_worker = nullptr;
+
+TEST_P(RadioZmqE2EFixture, RadioZmqE2EFlow)
+{
+  // Asynchronous task executor.
+  std::unique_ptr<task_executor> async_task_executor = make_task_executor_ptr(*async_task_worker);
+
+  // Prepare radio configuration.
+  radio_configuration::radio radio_config;
+  for (unsigned stream_id = 0, port_index = 0; stream_id != nof_streams; ++stream_id) {
+    radio_configuration::stream stream_config;
+    for (unsigned channel_id = 0; channel_id != nof_channels; ++channel_id, ++port_index) {
+      radio_configuration::channel channel_config;
+      channel_config.freq.center_frequency_Hz = tx_freq_Hz;
+      channel_config.gain_dB                  = tx_gain_db;
+      channel_config.args                     = tx_addresses[port_index];
+      stream_config.channels.push_back(channel_config);
+    }
+    radio_config.tx_streams.push_back(stream_config);
+  }
+
+  for (unsigned stream_id = 0, port_index = 0; stream_id != nof_streams; ++stream_id) {
+    radio_configuration::stream stream_config;
+    for (unsigned channel_id = 0; channel_id != nof_channels; ++channel_id, ++port_index) {
+      radio_configuration::channel channel_config;
+      channel_config.freq.center_frequency_Hz = rx_freq_Hz;
+      channel_config.gain_dB                  = rx_gain_db;
+      channel_config.args                     = rx_addresses[port_index];
+      stream_config.channels.push_back(channel_config);
+    }
+    radio_config.rx_streams.push_back(stream_config);
+  }
+  radio_config.log_level        = log_level;
+  radio_config.sampling_rate_Hz = sampling_rate_Hz;
+  radio_config.tx_mode          = radio_configuration::transmission_mode::continuous;
+
+  // Notifier.
+  radio_notifier_spy radio_notifier;
+
+  // Create radio session.
+  std::unique_ptr<radio_session> session = factory->create(radio_config, *async_task_executor, radio_notifier);
+  ASSERT_NE(session, nullptr);
+
+  // Calculate starting time.
+  double                     delay_s      = 0.1;
+  baseband_gateway_timestamp current_time = session->read_current_time();
+  baseband_gateway_timestamp start_time = current_time + static_cast<uint64_t>(delay_s * radio_config.sampling_rate_Hz);
+
+  // Start processing.
+  session->start(start_time);
+
+  std::atomic<unsigned> tx_sample_count = {0};
+  std::atomic<unsigned> rx_sample_count = {0};
+
+  std::thread tx_thread([this, &session, &start_time, &tx_sample_count, &rx_sample_count] {
+    // Prepare transmit buffer
+    baseband_gateway_buffer_dynamic tx_buffer(nof_channels, tx_block_size);
+
+    while (tx_sample_count != nof_samples) {
+      // If the transmitter throttling is enabled, make sure the transmitter does not advance the receiver.
+      while (throttle_tx && (tx_sample_count > (rx_sample_count + 2 * rx_block_size))) {
+        std::this_thread::sleep_for(std::chrono::microseconds(1));
+      }
+
+      unsigned block_size = std::min(tx_block_size, nof_samples - tx_sample_count);
+      tx_buffer.resize(block_size);
+
+      // Transmit for each stream the same buffer.
+      for (unsigned stream_id = 0, port_id = 0; stream_id != nof_streams; ++stream_id) {
+        // Get baseband gateway.
+        baseband_gateway& bb_gateway = session->get_baseband_gateway(stream_id);
+
+        // Select transmitter.
+        baseband_gateway_transmitter& transmitter = bb_gateway.get_transmitter();
+
+        // Generate transmit random data for each channel.
+        for (unsigned channel_id = 0; channel_id != nof_channels; ++channel_id, ++port_id) {
+          span<ci16_t> buffer = tx_buffer[channel_id];
+          for (ci16_t& sample : buffer) {
+            sample = generate_random_ci16(tx_dist, tx_rgen[port_id]);
+          }
+        }
+
+        // Transmit stream buffer.
+        baseband_gateway_transmitter_metadata tx_md;
+        tx_md.ts = start_time + tx_sample_count;
+        transmitter.transmit(tx_buffer.get_reader(), tx_md);
+      }
+
+      tx_sample_count += block_size;
+    }
+  });
+
+  // Prepare receive buffer.
+  baseband_gateway_buffer_dynamic rx_buffer(nof_channels, rx_block_size);
+
+  while (rx_sample_count != nof_samples) {
+    // Calculate block size.
+    unsigned block_size = std::min(rx_block_size, nof_samples - rx_sample_count);
+    rx_buffer.resize(block_size);
+
+    // Make sure the receiver does not advance the transmitter.
+    while (tx_sample_count < rx_sample_count + block_size) {
+      std::this_thread::sleep_for(std::chrono::microseconds(1));
+    }
+
+    // Receive for each stream the same buffer.
+    for (unsigned stream_id = 0, port_id = 0; stream_id != nof_streams; ++stream_id) {
+      // Get baseband gateway.
+      baseband_gateway& bb_gateway = session->get_baseband_gateway(stream_id);
+
+      // Select receiver.
+      baseband_gateway_receiver& receiver = bb_gateway.get_receiver();
+
+      // Receive.
+      baseband_gateway_receiver::metadata md = receiver.receive(rx_buffer.get_writer());
+      ASSERT_EQ(md.ts, start_time + rx_sample_count);
+
+      // Validate data for each channel.
+      for (unsigned channel_id = 0; channel_id != nof_channels; ++channel_id, ++port_id) {
+        span<const ci16_t> buffer = rx_buffer[channel_id];
+        for (const ci16_t& sample : buffer) {
+          ci16_t expected_sample = generate_random_ci16(rx_dist, rx_rgen[port_id]);
+          ASSERT_LE(std::abs(expected_sample - sample), ASSERT_MAX_ERROR_COMPLEX)
+              << fmt::format("expected={} sample={}", expected_sample, sample);
+        }
+      }
+    }
+
+    rx_sample_count += block_size;
+  }
+
+  // Finish Tx thread.
+  tx_thread.join();
+
+  // Stop session.
+  session->stop();
+}
+
+// Creates test suite that combines all possible parameters.
+INSTANTIATE_TEST_SUITE_P(RadioZmqE2ETest,
+                         RadioZmqE2EFixture,
+                         ::testing::Combine(::testing::Values(1, 2),
+                                            ::testing::Values(1, 2),
+                                            ::testing::Values(39, 123),
+                                            ::testing::Values(39, 123),
+                                            ::testing::Values(61440),
+                                            ::testing::Values(false, true)));
+
+TEST(RadioZmqGainTest, ValidateSetGainReturns)
+{
+  task_worker                    async_worker("gain_test_thread", 2 * RADIO_MAX_NOF_PORTS);
+  std::unique_ptr<task_executor> async_task_executor = make_task_executor_ptr(async_worker);
+
+  std::unique_ptr<radio_factory> zmq_factory = create_radio_factory("zmq");
+  ASSERT_NE(zmq_factory, nullptr);
+
+  fmt::memory_buffer addr_buf;
+  fmt::format_to(std::back_inserter(addr_buf), "inproc://{}#gain", getpid());
+  std::string address = to_string(addr_buf);
+
+  radio_configuration::radio   radio_config;
+  radio_configuration::stream  stream_config;
+  radio_configuration::channel ch_config;
+  ch_config.freq.center_frequency_Hz = 3.5e9;
+  ch_config.gain_dB                  = 0.0;
+  ch_config.args                     = address;
+  stream_config.channels.push_back(ch_config);
+  radio_config.tx_streams.push_back(stream_config);
+  radio_config.rx_streams.push_back(stream_config);
+  radio_config.log_level        = log_level;
+  radio_config.sampling_rate_Hz = 3.84e6;
+  radio_config.tx_mode          = radio_configuration::transmission_mode::continuous;
+
+  radio_notifier_spy             notifier;
+  std::unique_ptr<radio_session> session = zmq_factory->create(radio_config, *async_task_executor, notifier);
+  ASSERT_NE(session, nullptr);
+
+  radio_management_plane& mgmt = session->get_management_plane();
+
+  // Valid port and gain - must succeed.
+  EXPECT_TRUE(mgmt.set_tx_gain(0, -10.0));
+  EXPECT_TRUE(mgmt.set_rx_gain(0, -3.0));
+
+  // Out-of-range port - must fail.
+  EXPECT_FALSE(mgmt.set_tx_gain(1, 0.0));
+  EXPECT_FALSE(mgmt.set_rx_gain(1, 0.0));
+
+  // Out-of-range gain - must fail.
+  EXPECT_FALSE(mgmt.set_tx_gain(0, +1.0));
+  EXPECT_FALSE(mgmt.set_rx_gain(0, +1.0));
+
+  // NaN gain - must fail.
+  EXPECT_FALSE(mgmt.set_tx_gain(0, std::numeric_limits<float>::quiet_NaN()));
+  EXPECT_FALSE(mgmt.set_rx_gain(0, std::numeric_limits<float>::quiet_NaN()));
+
+  // Infinity gain - must fail.
+  EXPECT_FALSE(mgmt.set_tx_gain(0, -std::numeric_limits<float>::infinity()));
+  EXPECT_FALSE(mgmt.set_rx_gain(0, -std::numeric_limits<float>::infinity()));
+
+  session->stop();
+  async_worker.stop();
+}

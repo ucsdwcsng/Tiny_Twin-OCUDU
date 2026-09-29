@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+set_directory_properties(PROPERTIES LABELS "adt")
+
+include_directories(../../..)
+
+add_executable(bounded_bitset_test bounded_bitset_test.cpp)
+target_link_libraries(bounded_bitset_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(bounded_bitset_test bounded_bitset_test)
+
+add_executable(fixed_bitset_test fixed_bitset_test.cpp)
+target_link_libraries(fixed_bitset_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(fixed_bitset_test fixed_bitset_test)
+
+add_executable(interval_test interval_test.cpp)
+target_link_libraries(interval_test ocudulog GTest::gtest GTest::gtest_main)
+add_test(interval_test interval_test)
+
+add_executable(byte_buffer_test
+        byte_buffer_segment_test.cpp
+        byte_buffer_test.cpp
+        byte_buffer_chain_test.cpp
+        transform_view_test.cpp)
+target_link_libraries(byte_buffer_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(byte_buffer_test PROPERTIES LABELS "tsan")
+
+add_executable(ring_buffer_test ring_buffer_test.cpp blocking_queue_test.cpp concurrent_queue_test.cpp)
+target_link_libraries(ring_buffer_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(ring_buffer_test PROPERTIES LABELS "tsan")
+
+add_executable(circular_map_test circular_map_test.cpp)
+target_link_libraries(circular_map_test ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(circular_map_test)
+
+add_executable(segmented_circular_map_test segmented_circular_map_test.cpp)
+target_link_libraries(segmented_circular_map_test ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(segmented_circular_map_test)
+
+add_executable(expected_test expected_test.cpp)
+target_link_libraries(expected_test ocudulog GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(expected_test)
+
+add_executable(tiny_optional_test tiny_optional_test.cpp)
+target_link_libraries(tiny_optional_test ocudulog GTest::gtest GTest::gtest_main)
+add_test(tiny_optional_test tiny_optional_test)
+
+add_executable(slotted_array_test slotted_array_test.cpp)
+target_link_libraries(slotted_array_test ocudulog GTest::gtest GTest::gtest_main)
+add_test(slotted_array_test slotted_array_test)
+
+add_executable(span_formatter_test span_formatter_test.cpp)
+target_link_libraries(span_formatter_test ocudulog GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(span_formatter_test)
+
+add_executable(static_vector_test static_vector_test.cpp)
+target_link_libraries(static_vector_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(static_vector_test static_vector_test)
+
+add_executable(unique_function_test unique_function_test.cpp)
+target_link_libraries(unique_function_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(unique_function_test unique_function_test)
+
+add_executable(transform_view_test transform_view_test.cpp)
+target_link_libraries(transform_view_test ocudulog GTest::gtest GTest::gtest_main)
+add_test(transform_view_test transform_view_test)
+
+add_executable(strong_type_test strong_type_test.cpp)
+target_link_libraries(strong_type_test ocudulog GTest::gtest GTest::gtest_main)
+add_test(strong_type_test strong_type_test)
+
+add_executable(bounded_integer_test bounded_integer_test.cpp)
+target_link_libraries(bounded_integer_test ocudulog GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(bounded_integer_test)
+
+add_executable(lockfree_triple_buffer_test lockfree_triple_buffer_test.cpp)
+target_link_libraries(lockfree_triple_buffer_test ocudulog ocudu_support GTest::gtest GTest::gtest_main)
+add_test(lockfree_triple_buffer_test lockfree_triple_buffer_test)
+
+add_executable(spmc_slot_ring_test spmc_slot_ring_test.cpp)
+target_link_libraries(spmc_slot_ring_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(spmc_slot_ring_test PROPERTIES LABELS "tsan")
+
+add_executable(batched_dispatch_queue_test batched_dispatch_queue_test.cpp)
+target_link_libraries(batched_dispatch_queue_test ocudulog ocudu_support GTest::gtest GTest::gtest_main)
+add_test(batched_dispatch_queue_test batched_dispatch_queue_test)
+
+add_executable(flat_map_test flat_map_test.cpp)
+target_link_libraries(flat_map_test ocudulog ocudulog GTest::gtest  GTest::gtest_main)
+add_test(flat_map_test flat_map_test)
+
+add_executable(soa_table_test soa_table_test.cpp stable_id_map_test.cpp)
+target_link_libraries(soa_table_test ocudulog ocudulog GTest::gtest  GTest::gtest_main)
+add_test(soa_table_test soa_table_test)
+
+add_executable(type_list_buffer_test type_list_buffer_test.cpp segment_list_test.cpp)
+target_link_libraries(type_list_buffer_test ocudulog ocudu_support GTest::gtest GTest::gtest_main)
+add_test(type_list_buffer_test type_list_buffer_test)
+gtest_discover_tests(type_list_buffer_test)

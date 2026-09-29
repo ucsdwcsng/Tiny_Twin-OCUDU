@@ -1,0 +1,93 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/radio/radio_factory.h"
+
+namespace ocudu {
+
+class radio_notifier_spy : public radio_event_notifier
+{
+private:
+  ocudulog::basic_logger& logger;
+  unsigned                count_tx_overflow  = 0;
+  unsigned                count_tx_underflow = 0;
+  unsigned                count_tx_late      = 0;
+  unsigned                count_tx_other     = 0;
+  unsigned                count_rx_overflow  = 0;
+  unsigned                count_rx_underflow = 0;
+  unsigned                count_rx_late      = 0;
+  unsigned                count_rx_other     = 0;
+
+public:
+  radio_notifier_spy(ocudulog::basic_levels log_level_) : logger(ocudulog::fetch_basic_logger("Radio notification"))
+  {
+    ocudulog::init();
+    logger.set_level(log_level_);
+  }
+
+  void on_radio_rt_event(const event_description& description) override
+  {
+    logger.warning("stream_id={} channel_id={} source={} type={}",
+                   description.stream_id.has_value() ? fmt::to_string(*description.stream_id) : "na",
+                   description.channel_id.has_value() ? fmt::to_string(*description.channel_id) : "na",
+                   to_string(description.source),
+                   to_string(description.type));
+    switch (description.type) {
+      case radio_event_type::UNDEFINED:
+        // Ignore.
+        break;
+      case radio_event_type::LATE:
+        if (description.source == radio_event_source::TRANSMIT) {
+          count_tx_late++;
+        } else {
+          count_rx_late++;
+        }
+        break;
+      case radio_event_type::UNDERFLOW:
+        if (description.source == radio_event_source::TRANSMIT) {
+          count_tx_underflow++;
+        } else {
+          count_rx_underflow++;
+        }
+        break;
+      case radio_event_type::OVERFLOW:
+        if (description.source == radio_event_source::TRANSMIT) {
+          count_tx_overflow++;
+        } else {
+          count_rx_overflow++;
+        }
+        break;
+      case radio_event_type::OTHER:
+        if (description.source == radio_event_source::TRANSMIT) {
+          count_tx_other++;
+        } else {
+          count_rx_other++;
+        }
+        break;
+      case radio_event_type::START_OF_BURST:
+      case radio_event_type::END_OF_BURST:
+        // Ignore cases.
+        break;
+    }
+  }
+
+  void print()
+  {
+    fmt::println("[TX] Overflow: {}; Late: {} Underflow: {} Other: {}",
+                 count_tx_overflow,
+                 count_tx_late,
+                 count_tx_underflow,
+                 count_tx_other);
+    fmt::println("[RX] Overflow: {}; Late: {} Underflow: {} Other: {}",
+                 count_rx_overflow,
+                 count_rx_late,
+                 count_rx_underflow,
+                 count_rx_other);
+  }
+};
+
+} // namespace ocudu

@@ -1,0 +1,117 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "apps/services/metrics/metrics_config.h"
+#include "apps/services/metrics/metrics_notifier.h"
+#include "apps/services/metrics/metrics_set.h"
+#include "apps/services/metrics/periodic_metrics_report_controller.h"
+#include "metrics_properties.h"
+#include "ocudu/support/synchronization/stop_event.h"
+
+namespace ocudu {
+namespace app_services {
+
+/// \brief Metrics manager application service.
+///
+/// The manager allows to register metrics, metrics producers and metrics consumers in the service.
+class metrics_manager : public metrics_notifier
+{
+  /// Helper struct to store the information related to a metric.
+  struct metrics_entry {
+    /// Metric name.
+    std::string metric_name;
+    /// Callback to be executed when received this type of metrics.
+    metrics_callback callback;
+    /// Metric producer.
+    std::vector<std::unique_ptr<metrics_producer>> producers;
+    /// Metric consumer.
+    std::vector<std::unique_ptr<metrics_consumer>> consumers;
+    /// Helper vector to store the pointers to the consumers.
+    std::vector<metrics_consumer*> consumers_helper;
+  };
+
+public:
+  metrics_manager(ocudulog::basic_logger&   logger_,
+                  task_executor&            executor_,
+                  span<metrics_config>      metrics_info,
+                  timer_manager&            timers,
+                  std::chrono::milliseconds report_period) :
+    logger(logger_),
+    executor(executor_),
+    periodic_controller(([](span<metrics_config> metrics_info_cfg) {
+                          std::vector<metrics_producer*> producers;
+                          for (auto& metric : metrics_info_cfg) {
+                            for (auto& producer : metric.producers) {
+                              ocudu_assert(producer, "Invalid metrics producer");
+                              producers.push_back(producer.get());
+                            }
+                          }
+                          return producers;
+                        }(metrics_info)),
+                        timers,
+                        executor_,
+                        report_period)
+  {
+    for (auto& info : metrics_info) {
+      metrics_entry entry;
+      entry.metric_name = info.metric_name;
+      entry.callback    = std::move(info.callback);
+      entry.producers   = std::move(info.producers);
+      entry.consumers   = std::move(info.consumers);
+      for (const auto& con : entry.consumers) {
+        entry.consumers_helper.push_back(con.get());
+      }
+      supported_metrics.push_back(std::move(entry));
+    }
+  }
+
+  /// Forwards the given metric to the subscribers.
+  void on_new_metric(const metrics_set& metric) override
+  {
+    auto token = stop_manager.get_token();
+    if (OCUDU_UNLIKELY(token.is_stop_requested())) {
+      return;
+    }
+
+    std::string_view metrics_name = metric.get_properties().name();
+    auto             iter         = std::find_if(
+        supported_metrics.begin(), supported_metrics.end(), [&metrics_name](const metrics_entry& supported_metric) {
+          return supported_metric.metric_name == metrics_name;
+        });
+
+    ocudu_assert(iter != supported_metrics.end(), "Received unregistered metrics '{}'", metrics_name);
+
+    if (!iter->consumers_helper.empty()) {
+      iter->callback(metric, iter->consumers_helper, executor, logger, std::move(token));
+    }
+  }
+
+  /// Starts the periodic metrics report controller.
+  void start()
+  {
+    stop_manager.reset();
+
+    periodic_controller.start();
+  }
+
+  /// Stops the periodic metrics report controller.
+  void stop()
+  {
+    periodic_controller.stop();
+
+    stop_manager.stop();
+  }
+
+private:
+  ocudulog::basic_logger&            logger;
+  task_executor&                     executor;
+  stop_event_source                  stop_manager;
+  std::vector<metrics_entry>         supported_metrics;
+  periodic_metrics_report_controller periodic_controller;
+};
+
+} // namespace app_services
+} // namespace ocudu

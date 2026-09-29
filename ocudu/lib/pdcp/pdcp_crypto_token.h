@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/support/async/manual_event.h"
+#include "ocudu/support/ocudu_assert.h"
+
+namespace ocudu {
+
+class pdcp_crypto_token_manager
+{
+public:
+  explicit pdcp_crypto_token_manager() = default;
+
+  manual_event_flag& get_awaitable() { return pending_crypto; }
+
+  void start()
+  {
+    pending_crypto.reset();
+    increment_token();
+  }
+
+  void stop() { return_token(); }
+
+private:
+  void increment_token() { tokens.fetch_add(1, std::memory_order_relaxed); }
+
+  void return_token()
+  {
+    uint32_t prev_token = tokens.fetch_sub(1, std::memory_order_relaxed);
+    ocudu_assert(prev_token != UINT32_MAX,
+                 "Error counting crypto tokens. There are less tokens available then the ones granted.");
+
+    // If there is one less token then the ones granted, the stop() has been called,
+    // and all tokens have been returned.
+    if (prev_token == 0) {
+      set_once();
+    }
+  }
+
+  void set_once() { pending_crypto.set(); }
+
+  manual_event_flag pending_crypto;
+
+  std::atomic<uint32_t> tokens = 0;
+
+  friend class pdcp_crypto_token;
+};
+
+class pdcp_crypto_token
+{
+public:
+  pdcp_crypto_token(pdcp_crypto_token_manager& mngr_) : mngr(mngr_) { mngr.increment_token(); }
+
+  ~pdcp_crypto_token()
+  {
+    if (not was_moved) {
+      mngr.return_token();
+    }
+  }
+
+  pdcp_crypto_token(pdcp_crypto_token&& obj) noexcept : mngr(obj.mngr) { obj.was_moved = true; }
+  pdcp_crypto_token& operator=(pdcp_crypto_token&&)      = delete;
+  pdcp_crypto_token(const pdcp_crypto_token&)            = delete;
+  pdcp_crypto_token& operator=(const pdcp_crypto_token&) = delete;
+
+private:
+  bool                       was_moved = false;
+  pdcp_crypto_token_manager& mngr;
+};
+
+} // namespace ocudu

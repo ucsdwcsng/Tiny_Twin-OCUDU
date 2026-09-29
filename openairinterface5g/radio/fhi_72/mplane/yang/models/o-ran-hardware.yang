@@ -1,0 +1,461 @@
+module o-ran-hardware {
+  yang-version 1.1;
+  namespace "urn:o-ran:hardware:1.0";
+  prefix "o-ran-hw";
+
+  import ietf-hardware {
+    prefix hw;
+  }
+  import iana-hardware {
+    prefix ianahw;
+  }
+  import ietf-yang-types {
+    prefix yang;
+  }
+  import o-ran-wg4-features {
+    prefix or-feat;
+  }
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the YANG definitions for managing the O-RAN hardware.
+
+     Copyright 2024 the O-RAN Alliance.
+
+     THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+     AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+     IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+     ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+     LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+     CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+     SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+     INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+     CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+     ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+     POSSIBILITY OF SUCH DAMAGE.
+
+     Redistribution and use in source and binary forms, with or without
+     modification, are permitted provided that the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the above disclaimer.
+     * Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the above disclaimer in the documentation
+     and/or other materials provided with the distribution.
+     * Neither the Members of the O-RAN Alliance nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission.";
+
+   revision "2024-04-15" {
+     description
+       "version 15.0.0
+
+       1) Added support for new fan tray component.";
+
+     reference "ORAN-WG4.M.0-v15.00";
+   }
+
+  revision "2023-08-14" {
+    description
+      "version 13.0.0
+
+      1) New connector types for RS485 and external IO";
+
+    reference "ORAN-WG4.M.0-v13.00";
+  }
+
+  revision "2022-12-05" {
+   description
+     "version 10.1.0
+
+     1) Clarifications for Network Energy Saving";
+
+   reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2022-08-15" {
+    description
+      "version 10.0.0
+
+      1) introduction of O-RU connector functionality.
+      2) fixing constraints";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 5.2.0
+
+      1) typographical corrections in descriptions.";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2021-03-22" {
+    description
+      "version 5.1.0
+
+      1) typographical corrections in descriptions.";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2020-12-10" {
+    description
+      "version 5.0.0
+
+      1) added date-last-service leaf used in pnfRegistration";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2020-04-17" {
+    description
+      "version 3.0.0
+
+      1) added new leaf to indicate whether O-RU supports dying gasp
+      2) added new identities for PA and FPGA";
+
+    reference "ORAN-WG4.M.0-v03.00";
+  }
+
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) added new identities to accommodate cross working group use of
+      o-ran-hardware and associated set of augmentations that are backwards
+      compatible to version 1.0.0";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  feature ENERGYSAVING {
+    description
+      "Indicates that the Radio Unit supports energy saving state.";
+  }
+
+  // identity statements
+  identity O-RAN-RADIO {
+    base ianahw:module;
+    description
+      "Module used as it represents a self-contained sub-system
+      used in /hw:/hardware/hw:component/hw:class to represent
+      an O-RAN RU";
+  }
+
+  identity O-RAN-HW-COMPONENT {
+    base ianahw:module;
+    description
+      "Module used as it represents a self-contained sub-system
+      used in /hw:/hardware/hw:component/hw:class to represent
+      any O-RAN hardware component";
+  }
+
+  identity O-DU-COMPONENT {
+    base O-RAN-HW-COMPONENT;
+    description
+      "Used in /hw:/hardware/hw:component/hw:class to represent
+      any O-RAN defined O-DU hardware component";
+  }
+
+  identity O-RAN-FAN-TRAY {
+    base O-RAN-HW-COMPONENT;
+    description
+      "Used in /hw:/hardware/hw:component/hw:class to represent
+      any O-RAN defined fan tray hardware component.";
+  }
+
+  identity O-RU-COMPONENT {
+    base O-RAN-HW-COMPONENT;
+    description
+      "Used in /hw:/hardware/hw:component/hw:class to represent
+      any O-RAN defined O-RU hardware component, including a stand-alone
+      O-RU or an O-RU component integrated into a multi-module system.";
+  }
+
+  identity O-RU-POWER-AMPLIFIER {
+    base O-RU-COMPONENT;
+    description
+      "Used in /hw:/hardware/hw:component/hw:class to represent
+      an O-RU's power amplifier, and may be used for reporting
+      measurements on a per class basis";
+  }
+
+  identity O-RU-FPGA {
+    base O-RU-COMPONENT;
+    description
+      "Used in /hw:/hardware/hw:component/hw:class to represent
+      an FPGA in an O-RU, and may be used for reporting
+      measurements on a per class basis";
+  }
+
+  identity O-RU-CONNECTOR {
+    base ianahw:hardware-class;
+    description
+      "This identity is applicable if the hardware class is some sort
+      of O-RU connector.";
+  }
+
+  identity O-RU-ANTENNA-CONNECTOR {
+    base O-RU-CONNECTOR;
+    description
+      "This identity is applicable if the hardware class is some sort
+      of connector capable of interfacing between an O-RU and some
+      antenna function.";
+  }
+
+  identity O-RU-FEEDER {
+    base O-RU-ANTENNA-CONNECTOR;
+    description
+      "This identity is applicable if the hardware class is an
+      antenna feeder.";
+  }
+
+  identity O-RU-BF-CAL {
+    base O-RU-ANTENNA-CONNECTOR;
+    description
+      "This identity is applicable if the hardware class is for
+      beamforming calibration.";
+  }
+
+  identity O-RU-RS485 {
+    base O-RU-CONNECTOR;
+    description
+      "This identity is applicable if the hardware class is some sort
+      of connector capable of interfacing between an O-RU and Antenna
+      Line Devices using RS-485 electrical standard.";
+  }
+
+  identity O-RU-EXTIO {
+    base O-RU-CONNECTOR;
+    description
+      "This identity is applicable if the hardware class is some sort
+      of connector capable of interfacing between an O-RU external I/O lines.";
+  }
+
+  // typedef statements
+  typedef energysaving-state {
+    type enumeration {
+      enum UNKNOWN {
+        description
+          "The O-RU is unable to report its energy saving state.";
+      }
+      enum SLEEPING {
+        description
+          "The O-RU is in energy saving state. In this mode M-Plane connection is active. Depending
+          on the O-RU's design - other planes, functions and hardware components which are not needed
+          by the O-RU in energy saving state can be disabled or switched off by the O-RU autonomously.";
+      }
+      enum AWAKE {
+        description
+          "The O-RU is not in an energy saving state.";
+      }
+    }
+    description
+      "New typedef since ietf-hardware only covers power-state
+      for redundancy purposes, not to indicate energy saving operations.
+      For details please see O-RAN WG4 M-Plane specification, clause 9.1.3 'Modify state'";
+  }
+
+  typedef availability-type {
+    type enumeration {
+      enum UNKNOWN {
+        description "The Radio Unit is unable to report its availability state.";
+      }
+      enum NORMAL {
+        description
+          "The equipment is functioning correctly.";
+      }
+      enum DEGRADED {
+        description
+          "The equipment may be reporting a major alarm or may be reporting a critical
+           alarm that is only impacting one or more subcomponent, but where the
+           equipment's implementation permit it to continue operation (server traffic)
+           in a degraded state.
+
+           Used for example, when the equipment has M identical sub-components and
+           when a critical alarm is impacting only N subcomponents, where N<M.";
+      }
+      enum FAULTY {
+        description
+          "The (sub-)components impacted by the critical alarm(s) impact the
+          ability of the equipment to continue operation (serve traffic).";
+      }
+    }
+    description
+      "Equipment's availability-state is derived by matching active faults
+       and their impact to module's operation and enables an equipment to indicate
+       that even though it may have one or more critical alarms, it can continue
+       to serve traffic.";
+  }
+
+  // common WG4 and cross-WG augmentations using O-RAN-RADIO identity
+
+  augment "/hw:hardware/hw:component" {
+    when "(derived-from-or-self(hw:class, 'o-ran-hw:O-RAN-RADIO')) or
+    (derived-from-or-self(hw:class, 'o-ran-hw:O-RAN-HW-COMPONENT'))";
+    description "New O-RAN parameters for o-ran hardware";
+
+    container label-content {
+      config false;
+      description
+        "Which set of attributes are printed on the Radio Unit's label";
+      leaf model-name {
+        type boolean;
+        description
+          "indicates whether model-name is included on the equipment's label";
+      }
+      leaf serial-number {
+        type boolean;
+        description
+          "indicates whether serial number is included on the equipment's label";
+      }
+    }
+    leaf product-code {
+      type string;
+      config false;
+      mandatory true;
+      description
+        "O-RAN term that is distinct from model-name in ietf-hardware.";
+    }
+    leaf energy-saving-enabled {
+      if-feature "ENERGYSAVING";
+      type boolean;
+      default false;
+      description
+        "This parameter enables the O-RU to enter into energy saving state if there is no need to keep processing
+         paths working.
+         TRUE is used to permit the O-RU to enter energy saving state. If there is still need keep any
+         processing path, functions or HW components working.
+         The O-RU shall keep necessary processing paths working if there is any [tr]x-array-carrier with
+         'state' != DISABLED.
+         There may be also additional implementation-specific conditions which may require keeping processing paths,
+         functions or HW components working.
+         FALSE is used to prohibit the O-RU to enter or to stay in energy saving state. This value is also used
+         to awake the O-RU from sleeping when the O-RU is already in energy saving state. Setting this value has
+         no effect on [tr]x-array-carrier::active.
+         When the O-RU enters energy saving state, the O-RU shall reduce its power consumption to the lowest level
+         whilst M-plane remains available. Ongoing Netconf session(s) shall not be affected when the O-RU enters
+         energy saving state.
+         The O-RU uses RO node power-state to inform if the O-RU is in energy saving state.
+         NETCONF client should set energy-saving-enabled to FALSE to ensure O-RU is ready to immediately activate a
+         carrier.";
+    }
+    leaf dying-gasp-support {
+      type boolean;
+      default false;
+      config false;
+      description
+        "indicates whether the O-RU supports the dying gasp
+        capability";
+    }
+    leaf last-service-date {
+      if-feature "or-feat:NON-PERSISTENT-MPLANE";
+      type yang:date-and-time;
+      description
+        "Date of last service or repair of hardware component. How this gets
+        populated is a vendor specific issue.";
+      reference
+        "3GPP 32.692";
+    }
+  }
+
+  augment "/hw:hardware/hw:component" {
+    when "(derived-from-or-self(hw:class, 'o-ran-hw:O-RAN-RADIO')) or
+    (derived-from-or-self(hw:class, 'ianahw:port')) or
+    (derived-from-or-self(hw:class, 'o-ran-hw:O-RAN-HW-COMPONENT'))";
+    description "New O-RAN parameters for o-ran naming";
+    leaf o-ran-name {
+      type leafref {
+        path "/hw:hardware/hw:component/hw:name";
+      }
+      must "re-match(current(),'[a-zA-Z0-9][a-zA-Z0-9\\.\\-_]{0,253}[a-zA-Z0-9]')" {
+        error-message "Name must match pattern and length.";
+      }
+      mandatory true;
+      description
+        "O-RAN name needed to bind and match with the name of hw element,
+        to be compliant with O-RAN naming convention.";
+    }
+  }
+
+  augment "/hw:hardware/hw:component/hw:state"  {
+    when "(derived-from-or-self(../hw:class, 'o-ran-hw:O-RAN-RADIO')) or
+    (derived-from-or-self(../hw:class, 'o-ran-hw:O-RAN-HW-COMPONENT'))";
+    description
+      "new O-RAN defined state";
+    leaf power-state {
+      if-feature "ENERGYSAVING";
+      type energysaving-state;
+      config false;
+      description
+        "The current power saving state for this component.
+        Note - hw:/hardware/component/state/standby-state defined in RFC 4268 is
+        used for redundancy purposes but not for power saving operations.";
+    }
+    leaf availability-state {
+      type availability-type;
+      config false;
+      description
+        "Equipment's availability-state is derived by matching active faults
+         and their impact to module's operation and enables an equipment to indicate
+         that even though it may have one or more critical alarms, it can continue
+         to serve traffic.";
+    }
+  }
+
+  augment "/hw:hardware/hw:component" {
+    when "(derived-from-or-self(hw:class, 'o-ran-hw:O-RU-ANTENNA-CONNECTOR'))";
+    description "New O-RAN parameters for O-RAN Antenna connectors";
+
+    leaf connector-label {
+      type string;
+      config false;
+      description
+        "the label used to identify the connector on an O-RU ";
+    }
+  }
+
+
+// augmentations to Notifications
+
+  augment "/hw:hardware-state-oper-enabled"  {
+    description "new availability state";
+    leaf availability-state {
+    if-feature hw:hardware-state;
+      type leafref {
+        path "/hw:hardware/hw:component/hw:state/o-ran-hw:availability-state";
+      }
+      description
+        "The availability-state of the O-RU.";
+    }
+  }
+
+  augment "/hw:hardware-state-oper-disabled"  {
+    description "new availability state";
+    leaf availability-state {
+     if-feature hw:hardware-state;
+      type leafref {
+        path "/hw:hardware/hw:component/hw:state/o-ran-hw:availability-state";
+      }
+      description
+        "The availability-state of the O-RU.";
+    }
+  }
+}

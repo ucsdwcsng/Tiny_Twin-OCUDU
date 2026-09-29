@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+add_library(nr_common nr_common.c)
+target_include_directories(nr_common PUBLIC .)
+target_link_libraries(nr_common PUBLIC UTIL)
+if (ENABLE_TESTS)
+  add_subdirectory(tests)
+endif()

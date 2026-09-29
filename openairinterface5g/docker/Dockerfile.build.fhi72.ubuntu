@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface RAN Build for FHI 7.2
+#               Valid for UBUNTU 24.04
+#
+#---------------------------------------------------------------------
+
+FROM ran-base:latest AS ran-base
+
+ARG DPDK_VERSION=22.11.11
+ARG xran_VERSION=11.1.7
+ARG E2AP_VERSION=E2AP_V3
+ARG KPM_VERSION=KPM_V3_00
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe
+RUN apt-get update && \
+    apt-get upgrade --yes && \
+    apt-get install --yes \
+        meson \
+        wget \
+        xz-utils \
+        pkg-config \
+        libnuma-dev \
+        python3-pyelftools \
+        libpcre3-dev \
+        libssh-dev \
+        libxml2-dev \
+        libpam0g \
+        libnuma-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+
+RUN git clone https://github.com/CESNET/libyang.git && \
+    cd libyang && \
+    git checkout v2.1.111 && \
+    mkdir build && cd build && \
+    cmake -DENABLE_TESTS=OFF \
+      -DENABLE_VALGRIND_TESTS=OFF \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_INSTALL_RPATH=/usr/local/lib \
+      -DPLUGINS_DIR=/usr/local/lib/libyang \
+      -DPLUGINS_DIR_EXTENSIONS=/usr/local/lib/libyang/extensions \
+      -DPLUGINS_DIR_TYPES=/usr/local/lib/libyang/types \
+      -DYANG_MODULE_DIR=/usr/local/share/yang/modules/libyang .. && \
+   make && \
+   make install
+
+RUN git clone https://github.com/CESNET/libnetconf2.git && \
+    cd libnetconf2 && \
+    git checkout v2.1.37 && \
+    mkdir build && cd build && \
+    cmake -DENABLE_TESTS=OFF \
+      -DENABLE_EXAMPLES=OFF \
+      -DENABLE_VALGRIND_TESTS=OFF \
+      -DCLIENT_SEARCH_DIR=/usr/local/share/yang/modules \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_INSTALL_RPATH=/usr/local/lib \
+      -DLIBYANG_INCLUDE_DIR=/usr/local/include \
+      -DLIBYANG_LIBRARY=/usr/local/lib/libyang.so \
+      -DLY_VERSION_PATH=/usr/local/include \
+      -DYANG_MODULE_DIR=/usr/local/share/yang/modules/libnetconf2 .. && \
+     make && \
+     make install
+
+## Download and build DPDK
+RUN wget --no-verbose http://fast.dpdk.org/rel/dpdk-$DPDK_VERSION.tar.xz && \
+    tar -xf dpdk-$DPDK_VERSION.tar.xz && \
+    cd dpdk-stable-$DPDK_VERSION && \
+    meson build && \
+    ninja -C build && \
+    ninja install -C build
+
+## Build Fronthaul library
+RUN git clone https://github.com/openairinterface/o-du-phy.git /opt/phy && \
+    cd /opt/phy && \
+    git checkout $xran_VERSION &&\
+    cd /opt/phy/fhi_lib/lib && \
+    WIRELESS_SDK_TOOLCHAIN=gcc RTE_SDK=/oai-ran/dpdk-stable-$DPDK_VERSION/ XRAN_DIR=/opt/phy/fhi_lib make XRAN_LIB_SO=1
+
+COPY . .
+
+FROM ran-base AS ran-build-fhi72
+## Build and install OAI
+#run build_oai to build the target image
+RUN /bin/sh oaienv && \ 
+    cd cmake_targets && \
+    mkdir -p log && \
+    ./build_oai \
+      --ninja --gNB --nrRU \
+      --build-lib "telnetsrv enbscope uescope nrscope" \
+      -t oran_fhlib_5g_mplane --cmake-opt -Dxran_LOCATION=/opt/phy/fhi_lib/lib \
+      --build-e2 --cmake-opt -DKPM_VERSION=$KPM_VERSION --cmake-opt -DE2AP_VERSION=$E2AP_VERSION && \
+    # Mainly to see if the sanitize option was perfectly executed
+    ldd ran_build/build/nr-softmodem && \
+    ldd ran_build/build/liboran_fhlib_5g.so && \
+    ldd /opt/phy/fhi_lib/lib/build/libxran.so
+
+## Build FlexRIC for SM Models
+RUN mkdir -p openair2/E2AP/flexric/build && \
+    cd openair2/E2AP/flexric/build && \
+    cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
+          -DKPM_VERSION=$KPM_VERSION \
+          -DE2AP_VERSION=$E2AP_VERSION .. && \
+    ninja && \
+    ninja install

@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/upper/upper_phy_rx_results_notifier.h"
+
+namespace ocudu {
+
+class rx_buffer_pool;
+
+/// \brief Wrapper class of the upper PHY receive results notifier.
+///
+/// This wrapper object performs maintenance tasks before propagating the result events to the configured notifier
+/// object.
+class upper_phy_rx_results_notifier_wrapper : public upper_phy_rx_results_notifier
+{
+public:
+  // See interface for documentation.
+  void on_new_prach_results(const ul_prach_results& result) override;
+
+  // See interface for documentation.
+  void on_new_pusch_results_control(const ul_pusch_results_control& result) override;
+
+  // See interface for documentation.
+  void on_new_pusch_results_data(const ul_pusch_results_data& result) override;
+
+  // See interface for documentation.
+  void on_new_pucch_results(const ul_pucch_results& result) override;
+
+  // See interface for documentation.
+  void on_new_srs_results(const ul_srs_results& result) override;
+
+  /// Connects this wrapper to the notifier the notifications of new upper PHY receive results are forwarded to.
+  ///
+  /// \param[in] n RX results notifier to which the notifications will be forwarded.
+  void connect(upper_phy_rx_results_notifier& n);
+
+private:
+  /// Pointer to the upper PHY receive results notifier.
+  upper_phy_rx_results_notifier* rx_results_notifier = nullptr;
+};
+
+} // namespace ocudu

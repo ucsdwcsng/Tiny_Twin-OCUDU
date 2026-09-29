@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+decision_default:
+  default: true
+  pcc_rules:
+  - gbr-rule-default-3mbps
+
+decision_dnn_oai:
+  dnn: oai
+  pcc_rules:
+  - gbr-rule-default-3mbps
+  - gbr-rule-52080
+  - gbr-rule-52081
+
+decision_dnn_openairinterface:
+  dnn: openairinterface
+  pcc_rules:
+  - gbr-rule-default-3mbps
+
+decision_supi2:
+  pcc_rules:
+  - gbr-rule-default-3mbps
+  supi_imsi: 001010000059450
+decision_supi3:
+  pcc_rules:
+  - gbr-rule-default-3mbps
+  supi_imsi: 001010000059451
+decision_supi4:
+  pcc_rules:
+  - gbr-rule-default-3mbps
+  supi_imsi: 001010000059452
+decision_supi5:
+  pcc_rules:
+  - gbr-rule-default-3mbps
+  supi_imsi: 001010000059453

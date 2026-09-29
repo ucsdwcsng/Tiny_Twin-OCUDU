@@ -1,0 +1,82 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/bit_buffer.h"
+#include "ocudu/phy/support/rb_allocation.h"
+#include "ocudu/phy/support/re_pattern.h"
+#include "ocudu/phy/support/resource_grid_writer.h"
+#include "ocudu/ran/dmrs/dmrs.h"
+#include "ocudu/ran/precoding_beamforming_configuration.h"
+#include "ocudu/ran/resource_allocation/ofdm_symbol_range.h"
+#include "ocudu/ran/rnti.h"
+#include "ocudu/ran/sch/modulation_scheme.h"
+
+namespace ocudu {
+
+class resource_grid_mapper;
+
+/// \brief Describes a PDSCH modulator interface.
+///
+/// The PDSCH modulator shall modulate PDSCH according to TS38.211 Section 7.3.1 Physical downlink shared channel. It
+/// provides two possible modulation granularities:
+/// - Codeword: it modulates a codeword and maps it.
+/// - Codeblock: it modulates a single codeblock from a codeword.
+class pdsch_modulator
+{
+public:
+  /// Describes the necessary parameters to modulate a PDSCH transmission.
+  struct config_t {
+    /// Provides \f$n_{RNTI}\f$ from TS38.211 Section 7.3.1.1 Scrambling.
+    rnti_t rnti;
+    /// \brief Bandwidth part location within the resource grid.
+    ///
+    /// The BWP start common resource block index is relative to Point A and must be in the range {0, ..., 274}. The BWP
+    /// length is expressed as a number of contiguous common resource blocks and must be in the range {1, ..., 275}.
+    crb_interval bwp;
+    /// Modulation of the first codeword (q = 0).
+    modulation_scheme modulation1;
+    /// Modulation of the second codeword (q = 1).
+    std::optional<modulation_scheme> modulation2;
+    /// Frequency domain allocation.
+    rb_allocation freq_allocation;
+    /// \brief Time-domain allocation within a slot.
+    ///
+    /// The start symbol index and the number of symbols within the slot must be in the range {0, ..., 12} and {1, ...,
+    /// 14}, respectively.
+    ///
+    /// The time allocation must not exceed the maximum number of OFDM symbols in a slot.
+    ofdm_symbol_range time_alloc;
+    /// DM-RS symbol positions as a mask.
+    symbol_slot_mask dmrs_symb_pos;
+    /// Indicates the DMRS configuration type.
+    dmrs_config_type dmrs_type;
+    /// Number of DMRS CDM groups without data.
+    unsigned nof_cdm_groups_without_data;
+    /// Provides \f$n_{ID}\f$ from TS38.211 Section 7.3.1.1 Scrambling. Range is (0...1023).
+    unsigned n_id;
+    /// Scaling factor to apply to the resource elements according to PDSCH power allocation in TS38.214.
+    float scaling;
+    /// Reserved RE pattern where PDSCH is not mapped.
+    re_pattern_list reserved;
+    /// Precoding and beamforming configuration.
+    std::reference_wrapper<const precoding_beamforming_configuration> precoding_and_beamforming;
+  };
+
+  /// Default destructor.
+  virtual ~pdsch_modulator() = default;
+
+  /// \brief Modulates a PDSCH codeword according to TS38.211 Section 7.3.1 Physical downlink shared channel.
+  ///
+  /// \param[out] grid     Resource grid writer interface.
+  /// \param[in] codewords The encoded codewords to modulate.
+  /// \param[in] config    Configuration parameters required for PDSCH modulation.
+  /// \note The number of codewords shall be consistent with the number of layers.
+  /// \note The codeword length shall be consistent with the resource mapping, considering the reserved resource
+  /// elements.
+  virtual void modulate(resource_grid_writer& grid, span<const bit_buffer> codewords, const config_t& config) = 0;
+};
+
+} // namespace ocudu

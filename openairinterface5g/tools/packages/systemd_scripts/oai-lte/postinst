@@ -1,0 +1,17 @@
+#!/bin/sh
+set -x
+
+mkdir -p /var/log/lte-log
+echo "LTE demon-reload:" >> /var/log/lte-log/lte-systemctl.log
+systemctl daemon-reload >> /var/log/lte-log/lte-systemctl.log  2>&1
+echo "LTE-SOFTMODEM enable:" >> /var/log/lte-log/lte-systemctl.log
+systemctl enable lte-softmodem.service >> /var/log/lte-log/lte-systemctl.log  2>&1
+echo "LTE-SOFTMODEM start:" >> /var/log/lte-log/lte-systemctl.log
+systemctl start lte-softmodem.service >> /var/log/lte-log/lte-systemctl.log  2>&1
+# Add ldconfig
+echo "Running ldconfig..." >> /var/log/lte-log/lte-systemctl.log
+if command -v ldconfig >> /var/log/lte-log/lte-systemctl.log 2>&1; then
+    ldconfig
+else
+    echo "Warning: ldconfig not found"
+fi

@@ -1,0 +1,230 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>TEST-NSA-FR1-TM1-B200</htmlTabRef>
+  <htmlTabName>NSA SanityCheck with QUECTEL</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States (nepes)</desc>
+    <node>nepes</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Reset USRP on nepes</desc>
+    <node>nepes</node>
+    <command>sudo -S /usr/local/lib/uhd/utils/b2xx_fx3_utils --reset-device</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States (ofqot)</desc>
+    <node>ofqot</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>nepes</node>
+    <images>oai-enb</images>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>ofqot</node>
+    <images>oai-gnb</images>
+  </testCase>
+
+  <testCase>
+    <class>DeployCoreNetwork</class>
+    <desc>Start EPC</desc>
+    <cn_id>ltebox-nepes</cn_id>
+  </testCase>
+
+  <testCase>
+    <class>Initialize_UE</class>
+    <desc>Initialize Quectel</desc>
+    <id>idefix</id>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>nepes</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy eNB (FDD/Band7/5MHz/B200) in a container</desc>
+    <node>nepes</node>
+    <yaml_path>ci-scripts/yaml_files/nsa_b200_enb</yaml_path>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>ofqot</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy gNB (TDD/Band78/40MHz/B200) in a container</desc>
+    <node>ofqot</node>
+    <yaml_path>ci-scripts/yaml_files/nsa_b200_gnb</yaml_path>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach UE</desc>
+    <id>idefix</id>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 20pings in 20sec</desc>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>1</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 100pings in 20sec</desc>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <ping_args>-c 100 -i 0.2</ping_args>
+    <ping_packetloss_threshold>1</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (UL/8Mbps/UDP)(60 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 8M -t 60</iperf_args>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <iperf_packetloss_threshold>1</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>95</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (DL/70Mbps/UDP)(60 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 70M -t 60 -R</iperf_args>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (BIDIR TCP)(10 sec)(single-ue profile)</desc>
+    <iperf_args>-t 10 --bidir</iperf_args>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 20pings in 20sec</desc>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>1</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 100pings in 20sec</desc>
+    <id>idefix</id>
+    <svr_id>ltebox-nepes</svr_id>
+    <ping_args>-c 100 -i 0.2</ping_args>
+    <ping_packetloss_threshold>1</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach UE</desc>
+    <id>idefix</id>
+  </testCase>
+
+  <testCase>
+    <class>Terminate_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Terminate Quectel</desc>
+    <id>idefix</id>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy gNB</desc>
+    <node>ofqot</node>
+    <yaml_path>ci-scripts/yaml_files/nsa_b200_gnb</yaml_path>
+    <analysis>
+      <services>gnb_mono_tdd=RetxCheck=10,100,100,100 gnb_mono_tdd=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy eNB</desc>
+    <node>nepes</node>
+    <yaml_path>ci-scripts/yaml_files/nsa_b200_enb</yaml_path>
+    <analysis>
+      <services>enb_mono_fdd=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>UndeployCoreNetwork</class>
+    <desc>Terminate EPC</desc>
+    <always_exec>true</always_exec>
+    <cn_id>ltebox-nepes</cn_id>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States (nepes)</desc>
+    <node>nepes</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States (ofqot)</desc>
+    <node>ofqot</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>nepes</node>
+    <images>oai-enb</images>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>ofqot</node>
+    <images>oai-gnb</images>
+  </testCase>
+
+</testCaseList>

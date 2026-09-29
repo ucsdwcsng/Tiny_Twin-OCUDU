@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for Ubuntu 24.04
+#
+#---------------------------------------------------------------------
+
+FROM ran-base:develop AS ran-tests
+
+#RUN apt-get update && \
+#    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
+#    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+#        libgtest-dev \
+#        libyaml-cpp-dev
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+COPY . .
+
+WORKDIR /oai-ran/build
+# TODO should SANITIZE be ON? it makes it compile much longer
+RUN cmake -GNinja -DENABLE_PHYSIM_TESTS=ON \
+        -DSANITIZE_UNDEFINED=OFF -DSANITIZE_ADDRESS=OFF \
+        -DCMAKE_C_FLAGS=-Werror -DCMAKE_CXX_FLAGS=-Werror \
+        -DPHYSIM_CHECK_FILES="ThresholdsGracehopper.cmake" \
+        .. && \
+    ninja ldpctest polartest smallblocktest nr_pbchsim nr_dlschsim nr_ulschsim nr_dlsim nr_ulsim nr_ulsim_mu_mimo nr_pucchsim nr_prachsim nr_psbchsim nr_srssim

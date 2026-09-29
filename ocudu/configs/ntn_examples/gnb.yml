@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+cu_cp:
+  amf:
+    addr: 10.53.1.2                 # The address or hostname of the AMF. Check Open5GS config -> amf -> ngap -> addr
+    port: 38412
+    bind_addr: 10.53.1.1            # A local IP that the gNB binds to for traffic from the AMF.
+    supported_tracking_areas:
+      - tac: 7
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+  inactivity_timer: 7200            # Sets the UE/PDU Session/DRB inactivity timer to 7200 seconds. Supported: [1 - 7200].
+  request_pdu_session_timeout: 10
+  rrc:
+    rrc_procedure_guard_time_ms: 12800
+  f1ap:
+    procedure_timeout: 5000
+    ref_time_reporting:
+      enabled: true
+      event_type: periodic
+      periodicity_rf: 128
+
+cell_cfg:
+  dl_arfcn: 437000                  # ARFCN of the downlink carrier (center frequency).
+  band: 256                         # The NR band.
+  channel_bandwidth_MHz: 5          # Bandwith in MHz. Number of PRBs will be automatically derived.
+  common_scs: 15                    # Subcarrier spacing in kHz used for data.
+  plmn: "00101"                     # PLMN broadcasted by the gNB.
+  tac: 7                            # Tracking area code (needs to match the core configuration).
+  sib:
+    t300: 2000
+    t301: 2000
+    t311: 3000
+    t319: 2000
+    si_window_length: 5
+    si_sched_info:
+      - si_period: 16
+        sib_mapping: 2
+      - si_period: 16
+        sib_mapping: 19
+        si_window_position: 2
+    sib2:
+  ssb:
+    ssb_period: 10                  # In LEO NTN cell shorter SSB period improves timing estimation at the UE.
+  prach:
+    prach_config_index: 31
+    max_msg3_harq_retx: 0
+    zero_correlation_zone: 0
+  pdcch:
+    common:
+      ss1_n_candidates: [0, 0, 3, 0, 0]
+    dedicated:
+      ss2_n_candidates: [0, 0, 3, 0, 0]
+  pdsch:
+    mcs_table: qam256
+    nof_harqs: 32
+    max_nof_harq_retxs: 4
+    harq_feedback_disabled: false
+  pusch:
+    mcs_table: qam256
+    nof_harqs: 32
+    max_nof_harq_retxs: 4
+    harq_mode_b: false
+  pucch:
+    sr_period_ms: 80
+    resource_set_size: 7
+    nof_cell_res_set_configs: 1
+    f1_nof_cyclic_shifts: 1
+    f1_enable_occ: true
+    nof_cell_sr_res: 7
+    nof_cell_csi_res: 7
+  csi:
+    csi_rs_period: 80
+
+log:
+  filename: /tmp/gnb.log            # Path of the log file.
+  all_level: debug                   # Logging level applied to all layers.
+  config_level: debug
+  ntn_level: debug
+  broadcast_enabled: false
+  hex_max_size: 0
+
+metrics:
+  autostart_stdout_metrics: false   # Sets whether or note to autostart stdout metrics reporting. Supported [false, true].
+  enable_json: false                # Enable JSON metrics reporting
+  enable_log: false                 # Enable log metrics reporting
+  enable_verbose: false             # Enable extended detail metrics reporting
+
+pcap:
+  mac_enable: false                 # Set to true to enable MAC-layer PCAPs.
+  mac_filename: /tmp/gnb_mac.pcap   # Path where the MAC PCAP is stored.
+
+remote_control:
+  enabled: false                     # Enables the remote control feature. Supported: [false, true].
+  bind_addr: 127.0.0.1              # Sets the local IP address to bind for remote control. Supported: IPv4 address.
+  port: 8001                        # Sets the port where the remote control server listens for incoming connections. Supported: [0 - 65535].

@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for Ubuntu 24.04
+#
+#---------------------------------------------------------------------
+
+ARG UBUNTU_IMAGE=ubuntu:noble
+FROM ran-base:latest AS ran-build
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+       wget \
+       ninja-build \
+       #unzip is needed for protobuf
+       unzip \
+       moreutils \
+       vim-tiny \
+       nano \
+       # To build libnvipc
+       cmake libpcap-dev libcunit1-dev libnuma-dev pkg-config
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+COPY . .
+
+RUN /bin/sh oaienv && \
+    tar -xvzf nvipc_src.*.tar.gz  && \
+    cd nvipc_src.* && \
+    rm -rf build && mkdir build && cd build && \
+    cmake .. -DNVIPC_DPDK_ENABLE=OFF -DNVIPC_DOCA_ENABLE=OFF -DNVIPC_CUDA_ENABLE=OFF -DENABLE_SLT_RSP=ON && \
+    make -j && make install
+
+RUN /bin/sh oaienv && \
+    cd cmake_targets && \
+    mkdir -p log && \
+    ./build_oai -c -w AERIAL --gNB --ninja --build-tool-opt -k10 \
+      --cmake-opt -DCMAKE_C_FLAGS="-Werror" --cmake-opt -DCMAKE_CXX_FLAGS="-Werror" \
+      --cmake-opt -DT_RECORD_DB=ON
+
+
+#start from scratch for target executable
+FROM ${UBUNTU_IMAGE} AS oai-gnb-aerial
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe
+ENV PATH="/opt/oai-gnb/bin:$PATH"
+
+RUN apt-get update && \
+    apt-get upgrade --yes && \
+    apt-get install --yes \
+        software-properties-common \
+        procps \
+        libsctp1 \
+        tzdata \
+        libconfig9 \
+        openssl \
+        net-tools \
+        iperf \
+        iproute2 \
+        iputils-ping \
+        gdb \
+        moreutils \
+        libusb-1.0-0 \
+        libyaml-cpp-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/oai-gnb/bin
+COPY --from=ran-build \
+    /oai-ran/cmake_targets/ran_build/build/nr-softmodem \
+    /oai-ran/cmake_targets/ran_build/build/common/utils/T/tracer/record* \
+    ./
+
+COPY ./docker/scripts/gnb_entrypoint.sh ./entrypoint.sh
+
+COPY --from=ran-build \
+  /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
+  /oai-ran/cmake_targets/ran_build/build/libparams_yaml.so \
+  /oai-ran/cmake_targets/ran_build/build/_deps*/fmtlog-build*/libfmtlog-shared*.so \
+  /oai-ran/cmake_targets/ran_build/build/_deps*/clickhouse-cpp-build*/clickhouse/libclickhouse*.so \
+  /usr/local/lib/
+
+COPY --from=ran-build \
+    /usr/local/lib/libnvlog.so \
+    /usr/local/lib/libnvipc.so \
+    /usr/local/lib/
+
+RUN ldconfig && \
+    echo "---- ldd on nr-softmodem ----" && \
+    ldd /opt/oai-gnb/bin/nr-softmodem && \
+    echo "---- ldd on shared libraries ----" && \
+    ldd /usr/local/lib/libparams_libconfig.so \
+        /usr/local/lib/libfmtlog-shared.so \
+        /usr/local/lib/libnvlog.so \
+        /usr/local/lib/libnvipc.so
+
+WORKDIR /opt/oai-gnb
+
+COPY --from=ran-build /usr/local/bin/yq /usr/local/bin/yq
+COPY --from=ran-build /tini /tini
+COPY --from=ran-build /oai-ran/common/utils/T/T_messages.txt ./
+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-gnb/bin/entrypoint.sh"]
+CMD ["/opt/oai-gnb/bin/nr-softmodem"]

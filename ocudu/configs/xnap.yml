@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# Example configuration file for XnAP configuration with multiple gateways across disjoint subnets.
+#
+# Each XnAP gateway entry creates a gateway:
+# - with one SCTP socket, configured with (optional) sctp_* socket options,
+# - bound to specified bind_addrs,
+# - connecting to all the peer gNBs listed under "connections".
+# SCTP multi-homing is supported for both bind_addrs and peer_addrs fields.
+
+cu_cp:
+  xnap:
+    gateways:
+      # Gateway 0 — bound to subnet 10.10.1.0/24 (multi-homed), two multihomed peers, (skipped) default SCTP options.
+      - bind_addrs:
+          - 10.10.1.10
+          - 10.10.1.11
+        connections:
+          - peer_addrs:
+              - 10.10.1.100
+              - 10.10.1.101
+          - peer_addrs:
+              - 10.10.1.200
+              - 10.10.1.201
+
+      # Gateway 1 — bound to subnet 10.10.2.0/24, one multi-homed peer, custom SCTP options.
+      - bind_addrs:
+          - 10.10.2.10
+          - 10.10.2.11
+        connections:
+          - peer_addrs:
+              - 10.10.2.100
+              - 10.10.2.101
+        sctp:
+          sctp_rto_initial: 50
+          sctp_rto_min: 50
+          sctp_rto_max: 200
+          sctp_init_max_attempts: 5
+          sctp_max_init_timeo: 200
+          sctp_hb_interval: 5000
+          sctp_assoc_max_retx: 5
+          sctp_nodelay: true
+
+pcap:
+  xnap_enable: true
+  xnap_filename: /tmp/gnb_xnap.pcap

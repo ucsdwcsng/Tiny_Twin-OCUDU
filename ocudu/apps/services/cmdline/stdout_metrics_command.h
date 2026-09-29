@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "apps/services/cmdline/cmdline_command.h"
+#include "ocudu/adt/bounded_bitset.h"
+#include <vector>
+
+namespace ocudu {
+namespace app_services {
+
+/// Application command to display/hide the metrics in STDOUT. Available metrics
+class toggle_stdout_metrics_app_command : public app_services::cmdline_command
+{
+  /// [Implementation defined] Maximum number of metrics subcommands.
+  static constexpr size_t MAX_NOF_METRICS_SUBCOMMANDS = 32;
+
+public:
+  /// Metrics subcommand interface for STDOUT.
+  class metrics_subcommand
+  {
+  public:
+    virtual ~metrics_subcommand() = default;
+
+    /// Get the metrics name.
+    virtual std::string_view get_name() const = 0;
+
+    /// Prints this metrics header.
+    virtual void print_header() = 0;
+
+    /// Enables this subcommand.
+    virtual void enable() = 0;
+
+    /// Disables this subcommand.
+    virtual void disable() = 0;
+  };
+
+  toggle_stdout_metrics_app_command(std::vector<std::unique_ptr<metrics_subcommand>> available_metric_commands_,
+                                    bool                                             is_auto_start_enabled = false);
+
+  // See interface for documentation.
+  std::string_view get_name() const override { return "t"; }
+
+  // See interface for documentation.
+  std::string_view get_description() const override { return description; }
+
+  // See interface for documentation.
+  void execute(span<const std::string> args) override;
+
+private:
+  /// Executes subcommand for the given index.
+  void execute_subcommand(unsigned index);
+
+  /// Returns the subcommand index from the available subcommands that matches the given args.
+  int get_subcommand_index(const std::string& args) const;
+
+  /// \brief Stops the current active subcommand.
+  ///
+  /// Possible cases:
+  ///   There is no active command. In this case do nothing.
+  ///   Current active index matches the given index. In this case do nothing.
+  ///   Current active index does not match given index, so current active subcommand will change. Stop current
+  ///   subcommand before swapping active subcommand.
+  ///
+  ///   \return True if a subcommand was stopped, false otherwise.
+  bool stop_current_active_subcommand(unsigned index);
+
+private:
+  std::vector<std::unique_ptr<metrics_subcommand>> metric_subcommands;
+  bounded_bitset<MAX_NOF_METRICS_SUBCOMMANDS>      subcommand_active_status;
+  std::vector<std::string_view>                    metric_subcommand_names;
+  const std::string                                description;
+};
+
+/// Creates a STDOUT metrics application command with the given parameters.
+std::unique_ptr<cmdline_command> create_stdout_metrics_app_command(
+    std::vector<span<std::unique_ptr<toggle_stdout_metrics_app_command::metrics_subcommand>>> metrics_subcommand,
+    bool                                                                                      is_auto_start_enabled);
+
+} // namespace app_services
+} // namespace ocudu

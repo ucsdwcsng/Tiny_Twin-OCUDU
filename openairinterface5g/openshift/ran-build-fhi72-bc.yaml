@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+
+### Resource consumption 5Gi, 9CPU
+kind: BuildConfig
+apiVersion: build.openshift.io/v1
+metadata:
+  name: "ran-build-fhi72"
+  namespace: "oaicicd-ran"
+spec:
+    runPolicy: "Serial"
+    nodeSelector:
+        node-role.kubernetes.io/fhi72: ""
+    source:
+        type: "Binary"
+    strategy:
+        dockerStrategy:
+            dockerfilePath: "docker/Dockerfile.build.fhi72.rhel9"
+    output:
+        to:
+            kind: "ImageStreamTag"
+            name: "ran-build-fhi72:latest"

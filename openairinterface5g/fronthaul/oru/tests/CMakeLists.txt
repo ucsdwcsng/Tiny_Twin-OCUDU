@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+set(DPDK_TEST_ARGS "--no-huge" "--iova-mode=va" "--no-pci" "-m" "1024")
+
+add_executable(test_oru_io test_oru_io.c)
+target_link_libraries(test_oru_io PRIVATE oru_io ${dpdk_LIBRARIES})
+target_include_directories(test_oru_io PRIVATE ${dpdk_INCLUDE_DIRS})
+add_dependencies(tests test_oru_io)
+add_test(NAME test_oru_io COMMAND test_oru_io ${DPDK_TEST_ARGS} "--file-prefix=test_oru_io" "--vdev=net_null0" "--vdev=net_null1")
+set_property(TEST test_oru_io PROPERTY LABELS fronthaul)
+
+add_executable(test_oru_packet_processor test_oru_packet_processor.c)
+target_link_libraries(test_oru_packet_processor PRIVATE oru_packet_processor fh_compression log_headers ${dpdk_LIBRARIES})
+target_include_directories(test_oru_packet_processor PRIVATE ${dpdk_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/../../xran_pkt)
+add_dependencies(tests test_oru_packet_processor)
+add_test(NAME test_oru_packet_processor COMMAND test_oru_packet_processor ${DPDK_TEST_ARGS} "--file-prefix=test_oru_packet_processor" "--vdev=net_null0" "--vdev=net_null1")
+set_property(TEST test_oru_packet_processor PROPERTY LABELS fronthaul)
+
+add_executable(test_fh_compression test_fh_compression.c)
+target_link_libraries(test_fh_compression PRIVATE fh_compression)
+add_dependencies(tests test_fh_compression)
+add_test(NAME test_fh_compression COMMAND test_fh_compression)
+set_property(TEST test_fh_compression PROPERTY LABELS fronthaul)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PCAP REQUIRED libpcap)
+
+add_executable(test_oru_pcap test_oru_pcap.c)
+add_dependencies(tests test_oru_pcap)
+target_link_libraries(test_oru_pcap PRIVATE oru_packet_processor log_headers ${dpdk_LIBRARIES} ${PCAP_LIBRARIES} xran_pkt)
+target_include_directories(test_oru_pcap PRIVATE ${dpdk_INCLUDE_DIRS} ${PCAP_INCLUDE_DIRS})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/run_oru_pcap_test.sh DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+add_test(NAME test_oru_pcap_1 COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://github.com/bpodrygajlo/openairinterface5g/releases/download/fhi72-pcaps/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 9600 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_1")
+set_property(TEST test_oru_pcap_1 PROPERTY LABELS fronthaul)
+
+add_test(NAME test_oru_pcap_frag COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://github.com/bpodrygajlo/openairinterface5g/releases/download/fhi72-pcaps/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 1500 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_frag")
+set_property(TEST test_oru_pcap_frag PROPERTY LABELS fronthaul)
+
+add_dependencies(tests test_oru_pcap)
+
+add_executable(test_oru_fh test_oru_fh.c)
+target_link_libraries(test_oru_fh PRIVATE oru_fh xran_pkt ${dpdk_LIBRARIES})
+target_include_directories(test_oru_fh PRIVATE ${dpdk_INCLUDE_DIRS})
+add_dependencies(tests test_oru_fh)
+add_test(NAME test_oru_fh COMMAND test_oru_fh ${DPDK_TEST_ARGS} "--file-prefix=test_oru_fh" "--vdev=net_null0" "--vdev=net_null1")
+set_property(TEST test_oru_fh PROPERTY LABELS fronthaul)

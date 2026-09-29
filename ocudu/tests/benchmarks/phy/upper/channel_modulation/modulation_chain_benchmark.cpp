@@ -1,0 +1,125 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/ocuduvec/bit.h"
+#include "ocudu/phy/upper/channel_modulation/channel_modulation_factories.h"
+#include "ocudu/support/benchmark_utils.h"
+#include "ocudu/support/error_handling.h"
+#include <getopt.h>
+#include <random>
+
+// Random generator.
+static std::mt19937 rgen(0);
+
+static unsigned nof_repetitions = 1000;
+static bool     silent          = false;
+
+static void usage(const char* prog)
+{
+  fmt::print("Usage: {} [-R repetitions] [-s silent]\n", prog);
+  fmt::print("\t-R Repetitions [Default {}]\n", nof_repetitions);
+  fmt::print("\t-s Toggle silent operation [Default {}]\n", silent);
+  fmt::print("\t-h Show this message\n");
+}
+
+static void parse_args(int argc, char** argv)
+{
+  int opt = 0;
+  while ((opt = getopt(argc, argv, "R:sh")) != -1) {
+    switch (opt) {
+      case 'R':
+        nof_repetitions = std::strtol(optarg, nullptr, 10);
+        break;
+      case 's':
+        silent = (!silent);
+        break;
+      case 'h':
+      default:
+        usage(argv[0]);
+        std::exit(0);
+    }
+  }
+}
+
+using namespace ocudu;
+
+int main(int argc, char** argv)
+{
+  parse_args(argc, argv);
+
+  std::shared_ptr<modulation_mapper_factory> modulator_factory = create_modulation_mapper_factory();
+  report_fatal_error_if_not(modulator_factory, "modulator_factory");
+
+  std::shared_ptr<demodulation_mapper_factory> demodulator_factory = create_demodulation_mapper_factory();
+  report_fatal_error_if_not(demodulator_factory, "demodulator_factory");
+
+  std::shared_ptr<evm_calculator_factory> evm_calc_factory = create_evm_calculator_factory();
+  report_fatal_error_if_not(evm_calc_factory, "evm_calc_factory");
+
+  std::unique_ptr<modulation_mapper> modulator = modulator_factory->create();
+  report_fatal_error_if_not(modulator, "modulator");
+
+  std::unique_ptr<demodulation_mapper> demodulator = demodulator_factory->create();
+  report_fatal_error_if_not(demodulator, "demodulator");
+
+  std::unique_ptr<evm_calculator> evm_calc = evm_calc_factory->create();
+  report_fatal_error_if_not(evm_calc, "evm_calc");
+
+  std::uniform_int_distribution<uint8_t> bit_dist(0, 1);
+
+  benchmarker perf_meas("Modulation mapper", nof_repetitions);
+
+  for (modulation_scheme modulation : {modulation_scheme::PI_2_BPSK,
+                                       modulation_scheme::BPSK,
+                                       modulation_scheme::QPSK,
+                                       modulation_scheme::QAM16,
+                                       modulation_scheme::QAM64,
+                                       modulation_scheme::QAM256,
+                                       modulation_scheme::QAM1024}) {
+    for (unsigned nof_symbols : {38880}) {
+      // Calculate number of bytes.
+      unsigned nof_bits = nof_symbols * get_bits_per_symbol(modulation);
+
+      std::vector<uint8_t> data(nof_bits);
+      std::generate(data.begin(), data.end(), [&]() { return bit_dist(rgen); });
+
+      std::vector<float> noise_var(nof_symbols);
+      std::generate(noise_var.begin(), noise_var.end(), [&]() { return 0.00001F; });
+
+      std::vector<cf_t>                 cf_symbols(nof_symbols);
+      std::vector<ci8_t>                ci8_symbols(nof_symbols);
+      std::vector<log_likelihood_ratio> soft_bits(nof_bits);
+
+      dynamic_bit_buffer packed_data(nof_bits);
+      ocuduvec::bit_pack(packed_data, data);
+
+      // Measure performance of the modulation mapper for complex float.
+      perf_meas.new_measure(to_string(modulation) + " mapper cf_t " + std::to_string(nof_symbols), nof_bits, [&]() {
+        modulator->modulate(cf_symbols, packed_data, modulation);
+      });
+
+      // Measure performance of the modulation mapper for complex integer of 8 bit.
+      perf_meas.new_measure(to_string(modulation) + " mapper ci8_t " + std::to_string(nof_symbols), nof_bits, [&]() {
+        modulator->modulate(ci8_symbols, packed_data, modulation);
+      });
+
+      if (modulation >= modulation_scheme::QAM1024) {
+        continue;
+      }
+
+      // Measure performance of the demodulation mapper.
+      perf_meas.new_measure(to_string(modulation) + " demapper " + std::to_string(nof_symbols), nof_bits, [&]() {
+        demodulator->demodulate_soft(soft_bits, cf_symbols, noise_var, modulation);
+      });
+
+      // Measure performance of the EVM calculator.
+      perf_meas.new_measure(to_string(modulation) + " EVM calculator " + std::to_string(nof_symbols), nof_bits, [&]() {
+        evm_calc->calculate(soft_bits, cf_symbols, modulation);
+      });
+    }
+  }
+  if (!silent) {
+    perf_meas.print_percentiles_throughput("bits");
+  }
+}

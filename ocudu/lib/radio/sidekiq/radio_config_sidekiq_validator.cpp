@@ -1,0 +1,174 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "radio_config_sidekiq_validator.h"
+#include "fmt/format.h"
+#include <regex>
+#include <set>
+
+using namespace ocudu;
+
+static bool validate_clock_sources(const radio_configuration::clock_sources& sources)
+{
+  static const std::set<radio_configuration::clock_sources::source> valid_clock_sources = {
+      radio_configuration::clock_sources::source::DEFAULT, radio_configuration::clock_sources::source::INTERNAL};
+
+  if (valid_clock_sources.count(sources.clock) == 0) {
+    fmt::print("Invalid clock source.\n");
+    return false;
+  }
+
+  if (valid_clock_sources.count(sources.sync) == 0) {
+    fmt::print("Invalid sync source.\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_lo_freq(const radio_configuration::lo_frequency& lo_freq, bool is_tx)
+{
+  if (!std::isnormal(lo_freq.center_frequency_Hz)) {
+    fmt::print("{} center frequency must be non-zero, NAN nor infinite.\n", is_tx ? "TX" : "RX");
+    return false;
+  }
+
+  if ((lo_freq.lo_frequency_Hz != 0) && (lo_freq.lo_frequency_Hz != lo_freq.center_frequency_Hz)) {
+    fmt::print("Manual LO frequency selection is not supported.\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_args_format(const std::string& args)
+{
+  // Empty arguments are valid.
+  if (args.empty()) {
+    return true;
+  }
+
+  // Channel argument example: channel_arg0=123,channel_arg2=foo
+  std::cmatch cmatch;
+  std::regex  exp_channel_args(R"(^((([A-z]|_|[0-9])*\=([A-z]|_|[0-9])*),*)*$)");
+  std::regex_match(args.c_str(), cmatch, exp_channel_args);
+
+  if (cmatch.empty()) {
+    fmt::print("Arguments '{}' format is invalid.\n", args);
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_channel(const radio_configuration::channel& channel, bool is_tx)
+{
+  if (!validate_lo_freq(channel.freq, is_tx)) {
+    return false;
+  }
+
+  if (std::isnan(channel.gain_dB) || std::isinf(channel.gain_dB)) {
+    fmt::print("Channel gain must not be NAN nor infinite.\n");
+    return false;
+  }
+
+  if (!validate_args_format(channel.args)) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_stream(const radio_configuration::stream& stream, bool is_tx)
+{
+  if (stream.channels.empty()) {
+    fmt::print("Streams must contain at least one channel.\n");
+    return false;
+  }
+
+  for (const radio_configuration::channel& channel : stream.channels) {
+    if (!validate_channel(channel, is_tx)) {
+      return false;
+    }
+  }
+
+  if (!validate_args_format(stream.args)) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_sampling_rate(double sampling_rate)
+{
+  if (!std::isnormal(sampling_rate)) {
+    fmt::print("The sampling rate must be non-zero, NAN nor infinite.\n");
+    return false;
+  }
+
+  if (sampling_rate < 0.0) {
+    fmt::print("The sampling rate must be greater than zero.\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool validate_otw_format(radio_configuration::over_the_wire_format otw_format)
+{
+  static const std::set<radio_configuration::over_the_wire_format> valid_otw_formats = {
+      radio_configuration::over_the_wire_format::DEFAULT,
+      radio_configuration::over_the_wire_format::SC16,
+      radio_configuration::over_the_wire_format::SC12};
+
+  if (valid_otw_formats.count(otw_format) == 0) {
+    fmt::print("The selected over the wire format is not supported.\n");
+    return false;
+  }
+
+  return true;
+}
+
+bool radio_config_sidekiq_config_validator::is_configuration_valid(const radio_configuration::radio& config) const
+{
+  if (!validate_clock_sources(config.clock)) {
+    return false;
+  }
+
+  if (config.tx_streams.size() != config.rx_streams.size()) {
+    fmt::print("Transmit and receive number of streams must be equal.\n");
+    return false;
+  }
+
+  if (config.tx_streams.empty()) {
+    fmt::print("At least one transmit and one receive stream must be configured.\n");
+    return false;
+  }
+
+  for (const radio_configuration::stream& tx_stream : config.tx_streams) {
+    if (!validate_stream(tx_stream, true)) {
+      return false;
+    }
+  }
+
+  for (const radio_configuration::stream& rx_stream : config.rx_streams) {
+    if (!validate_stream(rx_stream, false)) {
+      return false;
+    }
+  }
+
+  if (!validate_sampling_rate(config.sampling_rate_Hz)) {
+    return false;
+  }
+
+  if (!validate_otw_format(config.otw_format)) {
+    return false;
+  }
+
+  if (config.tx_mode != radio_configuration::transmission_mode::continuous) {
+    fmt::print("Discontinuous transmission modes are not supported by the Sidekiq radio.\n");
+    return false;
+  }
+
+  return true;
+}

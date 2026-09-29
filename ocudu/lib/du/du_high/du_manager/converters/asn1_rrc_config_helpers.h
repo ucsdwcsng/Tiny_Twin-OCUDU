@@ -1,0 +1,69 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../ran_resource_management/du_ue_resource_config.h"
+#include "ocudu/asn1/rrc_nr/cell_group_config.h"
+#include "ocudu/asn1/rrc_nr/rrc_nr.h"
+#include "ocudu/du/du_cell_config.h"
+#include "ocudu/ran/tdd/tdd_ul_dl_config.h"
+
+namespace ocudu {
+namespace odu {
+
+inline asn1::rrc_nr::subcarrier_spacing_e get_asn1_scs(subcarrier_spacing scs)
+{
+  return asn1::rrc_nr::subcarrier_spacing_e{static_cast<asn1::rrc_nr::subcarrier_spacing_opts::options>(scs)};
+}
+
+asn1::rrc_nr::coreset_s make_asn1_rrc_coreset(const coreset_configuration& cfg);
+
+asn1::rrc_nr::search_space_s make_asn1_rrc_search_space(const search_space_configuration& cfg);
+
+asn1::dyn_array<asn1::rrc_nr::scs_specific_carrier_s>
+make_asn1_rrc_scs_specific_carrier_list(span<const scs_specific_carrier> scs_carrier_list);
+
+asn1::rrc_nr::bwp_dl_common_s make_asn1_init_dl_bwp(const dl_config_common& cfg);
+
+asn1::rrc_nr::bwp_ul_common_s make_asn1_rrc_initial_up_bwp(const ul_config_common& cfg);
+
+asn1::rrc_nr::tdd_ul_dl_cfg_common_s make_asn1_rrc_tdd_ul_dl_cfg_common(const tdd_ul_dl_config_common& tdd_cfg);
+
+asn1::rrc_nr::pucch_res_set_s make_asn1_rrc_pucch_resource_set(const pucch_resource_set& cfg);
+
+asn1::rrc_nr::sched_request_res_cfg_s make_asn1_rrc_sr_resource(const scheduling_request_resource_config& cfg);
+
+asn1::rrc_nr::pucch_res_s make_asn1_rrc_pucch_resource(const pucch_resource& cfg);
+
+asn1::rrc_nr::tci_state_s make_asn1_rrc_tci_state(const tci_state& cfg);
+
+asn1::rrc_nr::pusch_pathloss_ref_rs_s
+make_asn1_rrc_pusch_pathloss_ref_rs(const pusch_config::pusch_power_control::pusch_pathloss_ref_rs& cfg);
+
+asn1::rrc_nr::sri_pusch_pwr_ctrl_s
+make_asn1_rrc_sri_pusch_pwr_ctrl(const pusch_config::pusch_power_control::sri_pusch_pwr_ctrl& cfg);
+
+/// \brief Fills ASN.1 CellGroupConfig struct.
+/// \param[out] out The ASN.1 CellGroupConfig struct to fill.
+/// \param[in] src Previous cell group configuration of UE.
+/// \param[in] dest Next cell group configuration of UE.
+void calculate_cell_group_config_diff(asn1::rrc_nr::cell_group_cfg_s& out,
+                                      const du_ue_resource_config&    src,
+                                      const du_ue_resource_config&    dest);
+
+/// Compute ReconfigurationWithSync field. This is used, for instance, during handover.
+bool calculate_reconfig_with_sync_diff(asn1::rrc_nr::recfg_with_sync_s&    out,
+                                       const du_cell_config&               du_cell_cfg,
+                                       const du_ue_resource_config&        dest,
+                                       const asn1::rrc_nr::ho_prep_info_s& ho_prep_info,
+                                       rnti_t                              rnti);
+
+/// Fills ASN.1 measGapConfig struct based on changes in the UE configuration.
+void calculate_meas_gap_config_diff(asn1::rrc_nr::meas_gap_cfg_s&         out,
+                                    const std::optional<meas_gap_config>& src,
+                                    const std::optional<meas_gap_config>& dest);
+
+} // namespace odu
+} // namespace ocudu

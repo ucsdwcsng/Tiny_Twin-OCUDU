@@ -1,0 +1,111 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/metrics/phy_metrics_notifiers.h"
+#include "ocudu/phy/metrics/phy_metrics_reports.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_processor.h"
+#include "ocudu/support/resource_usage/scoped_resource_usage.h"
+#include <memory>
+
+namespace ocudu {
+
+/// PDSCH processor metric decorator.
+class phy_metrics_pdsch_processor_decorator : public pdsch_processor, private pdsch_processor_notifier
+{
+public:
+  /// Creates a PDSCH processor decorator from a base instance and a metric notifier.
+  phy_metrics_pdsch_processor_decorator(std::unique_ptr<pdsch_processor> base_,
+                                        pdsch_processor_metric_notifier& notifier_) :
+    base(std::move(base_)), notifier(notifier_)
+  {
+    ocudu_assert(base, "Invalid encoder.");
+  }
+
+  // See pdsch_processor interface for documentation.
+  void process(resource_grid_writer&                                           grid,
+               pdsch_processor_notifier&                                       notifier_,
+               static_vector<shared_transport_block, MAX_NOF_TRANSPORT_BLOCKS> data,
+               const pdu_t&                                                    pdu) override
+  {
+    // Save reference to the notifier for this transmission. It must be nullptr to ensure that the processor was
+    // released from previous processing.
+    [[maybe_unused]] pdsch_processor_notifier* prev_proc_notifier = std::exchange(processor_notifier, &notifier_);
+    ocudu_assert(prev_proc_notifier == nullptr, "The PDSCH processor is in use.");
+
+    // Prepare transmission.
+    start_time                       = std::chrono::steady_clock::now();
+    elapsed_completion_and_return_ns = {};
+    slot                             = pdu.slot;
+    tbs                              = units::bytes(data.front().get_buffer().size());
+
+    // Use scoped resource usage class to measure CPU usage of this block.
+    resource_usage_utils::measurements measurements;
+    {
+      resource_usage_utils::scoped_resource_usage rusage_tracker(measurements);
+      base->process(grid, *this, data, pdu);
+    }
+    self_cpu_usage_ns.store(measurements.duration.count(), std::memory_order_relaxed);
+    elapsed_completion_and_return_ns |=
+        std::min(std::chrono::nanoseconds(std::chrono::steady_clock::now() - start_time).count(), 0xffffffffL);
+
+    report_metrics();
+  }
+
+private:
+  // See pdsch_processor_notifier interface for documentation.
+  void on_finish_processing() override
+  {
+    // Update elapsed time.
+    elapsed_completion_and_return_ns |=
+        std::min(std::chrono::nanoseconds(std::chrono::steady_clock::now() - start_time).count(), 0xffffffffL) << 32;
+
+    // Report metrics.
+    report_metrics();
+  }
+
+  /// Reports the PDSCH processing metrics if the underlying PDSCH processor has returned and notified the completion of
+  /// the processing.
+  void report_metrics()
+  {
+    // The processing is considered complete if the processor has returned and notified the completion.
+    uint64_t current_elapsed_completion_and_return_ns = elapsed_completion_and_return_ns;
+    uint64_t elapsed_return_ns(current_elapsed_completion_and_return_ns & 0xffffffff);
+    uint64_t elapsed_completion_ns(current_elapsed_completion_and_return_ns >> 32);
+    if ((elapsed_return_ns == 0) || (elapsed_completion_ns == 0)) {
+      return;
+    }
+    if (!elapsed_completion_and_return_ns.compare_exchange_strong(current_elapsed_completion_and_return_ns, 0)) {
+      return;
+    }
+
+    notifier.on_new_metric(pdsch_processor_metrics{
+        .slot                = slot,
+        .tbs                 = tbs,
+        .elapsed_return      = std::chrono::nanoseconds(elapsed_return_ns),
+        .elapsed_completion  = std::chrono::nanoseconds(elapsed_completion_ns),
+        .self_cpu_time_usage = std::chrono::nanoseconds(self_cpu_usage_ns.load(std::memory_order_relaxed))});
+
+    // Notify the completion of the PDSCH processing. From now on, the processor might become available.
+    pdsch_processor_notifier* current_proc_notifier = std::exchange(processor_notifier, nullptr);
+    ocudu_assert(current_proc_notifier != nullptr, "PDSCH processor is still busy.");
+    current_proc_notifier->on_finish_processing();
+  }
+
+  std::chrono::steady_clock::time_point start_time                       = {};
+  std::atomic<uint64_t>                 elapsed_completion_and_return_ns = {};
+  std::atomic<uint64_t>                 self_cpu_usage_ns                = {};
+  pdsch_processor_notifier*             processor_notifier               = nullptr;
+  slot_point                            slot;
+  units::bytes                          tbs;
+  std::unique_ptr<pdsch_processor>      base;
+  pdsch_processor_metric_notifier&      notifier;
+
+  // Makes sure atomics are lock free.
+  static_assert(std::atomic<decltype(elapsed_completion_and_return_ns)>::is_always_lock_free);
+  static_assert(std::atomic<decltype(self_cpu_usage_ns)>::is_always_lock_free);
+};
+
+} // namespace ocudu

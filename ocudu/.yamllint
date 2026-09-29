@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+---
+extends: default
+
+rules:
+  line-length: disable
+  document-start: disable
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  key-duplicates: disable
+  document-end: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+    level: error
+  comments-indentation:
+    level: error
+  trailing-spaces: enable
+  new-line-at-end-of-file: enable
+
+ignore: |
+  build/
+  build_trx_retina/
+  build_retina/

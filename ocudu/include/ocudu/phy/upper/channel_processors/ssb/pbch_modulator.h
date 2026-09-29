@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/span.h"
+#include "ocudu/ran/pci.h"
+#include "ocudu/ran/precoding_beamforming_configuration.h"
+#include "ocudu/ran/ssb/ssb_configuration.h"
+
+namespace ocudu {
+
+class resource_grid_writer;
+
+/// PBCH modulator interface.
+class pbch_modulator
+{
+public:
+  /// Number of bits to modulate.
+  static constexpr unsigned M_bit = 864;
+
+  /// Number of symbols after modulation.
+  static constexpr unsigned M_symb = M_bit / 2;
+
+  /// Describes the PBCH modulator arguments.
+  struct config_t {
+    /// Physical cell identifier.
+    pci_t phys_cell_id;
+    /// SS/PBCH block index.
+    ssb_id_t ssb_idx;
+    /// First subcarrier in the resource grid.
+    unsigned ssb_first_subcarrier;
+    /// First symbol of the SS/PBCH block within the slot.
+    unsigned ssb_first_symbol;
+    /// PSS linear signal amplitude.
+    float amplitude;
+    /// Precoding and beamforming configuration.
+    precoding_beamforming_configuration precoding_and_beamforming;
+  };
+
+  /// Default destructor.
+  virtual ~pbch_modulator() = default;
+
+  /// \brief Modulates a PBCH message according to TS38.211 Section 7.3.3.
+  /// \param[in]  bits Input bits.
+  /// \param[out] grid Destination resource grid.
+  /// \param[in]  config Destination resource grid.
+  virtual void put(span<const uint8_t> bits, resource_grid_writer& grid, const config_t& config) = 0;
+};
+
+} // namespace ocudu

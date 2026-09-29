@@ -1,0 +1,29 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>gnb-build-tab</htmlTabRef>
+  <htmlTabName>Build-gNB</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Reboot USRP</desc>
+    <may_fail>true</may_fail>
+    <node>caracal</node>
+    <command>ssh root@192.168.20.2 reboot</command>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>caracal</node>
+  </testCase>
+
+  <testCase>
+    <mode>TesteNB</mode>
+    <class>Build_eNB</class>
+    <desc>Build gNB (USRP)</desc>
+    <node>caracal</node>
+    <Build_eNB_args>--gNB -w USRP --ninja -c -P --build-lib "ldpc_aal ldpc_ors" --cmake-opt -DASN1C_EXEC=/opt/asn1c/bin/asn1c --cmake-opt -DPHYSIM_CHECK_FILES="ThresholdsOffload.cmake\;ThresholdsOrsOffload.cmake"</Build_eNB_args>
+  </testCase>
+
+</testCaseList>

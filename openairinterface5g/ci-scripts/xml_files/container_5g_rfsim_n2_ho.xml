@@ -1,0 +1,234 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-f1-n2-ho</htmlTabRef>
+  <htmlTabName>F1 SA TDD N2 Handover</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-cuup-asan oai-nr-ue-asan</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_n2_ho</yaml_path>
+    <services>mysql oai-amf oai-smf oai-upf oai-ext-dn</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CU-CP/CU-UP/DU 0 + UE RFsim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_n2_ho</yaml_path>
+    <services>oai-cucp-0 oai-cuup-0 oai-du-0 oai-nr-ue</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE (Wait for IP)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>UL ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i0.5</ping_args>
+    <ping_packetloss_threshold>80</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CU-CP/CU-UP/DU 1 RFsim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_n2_ho</yaml_path>
+    <services>oai-cucp-1 oai-cuup-1 oai-du-1</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>5</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Trigger N2 Handover</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_n2_ho 1,1 | ncat 192.168.71.150 9090</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>UE (1) connected to DU-PCI 1?</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.180 9090 | grep "1234"</command>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/10Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 3M -t 20 -R</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/4Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 1M -t 20</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Trigger N2 Handover</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_n2_ho 0,1 | ncat 192.168.71.180 9090</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>UE (1) connected to DU-PCI 0?</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.150 9090 | grep "3584"</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Trigger N2 Handover</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_n2_ho 1,1 | ncat 192.168.71.150 9090</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>UE (1) connected to DU-PCI 1?</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.180 9090 | grep "1234"</command>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_n2_ho</yaml_path>
+    <analysis>
+      <services>oai-cucp-0=EndsWithBye oai-cuup-0=EndsWithBye oai-du-0=RetxCheck=10,100,100,100 oai-du-0=EndsWithBye oai-nr-ue oai-cucp-1=EndsWithBye oai-cuup-1=EndsWithBye oai-du-1=RetxCheck=10,100,100,100 oai-du-1=EndsWithBye oai-nr-ue</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-cuup-asan oai-nr-ue-asan</images>
+  </testCase>
+
+</testCaseList>

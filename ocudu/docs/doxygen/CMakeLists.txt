@@ -1,0 +1,138 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+
+find_package(Doxygen OPTIONAL_COMPONENTS dot)
+
+if (DOXYGEN_FOUND)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/CMakeGenerateTeXMacros.txt)
+
+  # Configure doxygen
+  set(DOXYGEN_PROJECT_NAME "OCUDU")
+  set(DOXYGEN_PROJECT_NUMBER ${VERSION})
+  set(DOXYGEN_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  set(DOXYGEN_WARN_LOGFILE ${CMAKE_CURRENT_BINARY_DIR}/doxygen.log)
+  set(DOXYGEN_USE_MATHJAX "YES")
+  set(DOXYGEN_MATHJAX_EXTENSIONS "TeX/AMSmath")
+  set(DOXYGEN_FORMULA_MACROFILE ${CMAKE_CURRENT_BINARY_DIR}/math_macros.tex)
+  set(DOXYGEN_STRIP_FROM_PATH ${CMAKE_HOME_DIRECTORY})
+  set(DOXYGEN_EXTRACT_STATIC "YES")
+  set(DOXYGEN_EXTRACT_PRIVATE "YES")
+  set(DOXYGEN_GENERATE_TREEVIEW "YES")
+  set(DOXYGEN_GENERATE_XML "YES")
+  set(DOXYGEN_HTML_HEADER "header.html")
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/doxygen-awesome.css)
+    set(DOXYGEN_GENERATE_TREEVIEW "YES")
+    set(DOXYGEN_HTML_EXTRA_STYLESHEET "doxygen-awesome.css")
+  endif()
+  set(DOXYGEN_UML_LOOK "YES")
+  set(DOXYGEN_CALL_GRAPH "YES")
+  set(DOXYGEN_CALLER_GRAPH "YES")
+  set(DOXYGEN_DISTRIBUTE_GROUP_DOC "YES")
+  set(DOXYGEN_PREDEFINED "HAVE_AVX2:=1")
+
+  # find plantuml
+  find_program(PLANTUML_PATH plantuml.jar PATH_SUFFIXES PlantUML plantuml Plantuml
+          PATHS /usr/share /usr/local/share /usr/local/bin /opt/local/share/java)
+  if (PLANTUML_PATH)
+    message(STATUS "PLANTUML found in ${PLANTUML_PATH}.")
+  endif ()
+  set(DOXYGEN_PLANTUML_JAR_PATH "${PLANTUML_PATH}")
+
+  # directories and files to process for all the docs
+  set(docs_inputs ${CMAKE_CURRENT_SOURCE_DIR}
+                  ${CMAKE_HOME_DIRECTORY}/include/ocudu
+                  ${CMAKE_HOME_DIRECTORY}/lib
+                  ${CMAKE_HOME_DIRECTORY}/tests
+                  ${CMAKE_HOME_DIRECTORY}/apps
+  )
+  set(DOXYGEN_EXCLUDE ${CMAKE_HOME_DIRECTORY}/include/ocudu/asn1)
+
+  doxygen_add_docs(doxygen
+    ${docs_inputs}
+    COMMENT "Generating all documentation."
+  )
+
+  # directories and files to process for FAPI related docs
+  set(docs_inputs_fapi ${CMAKE_CURRENT_SOURCE_DIR}
+                       ${CMAKE_HOME_DIRECTORY}/include/ocudu/fapi
+                       ${CMAKE_HOME_DIRECTORY}/include/ocudu/fapi_adaptor
+                       ${CMAKE_HOME_DIRECTORY}/lib/fapi
+                       ${CMAKE_HOME_DIRECTORY}/lib/fapi_adaptor
+  )
+
+  doxygen_add_docs(doxygen-fapi
+    ${docs_inputs_fapi}
+    COMMENT "Generating FAPI-related documentation."
+  )
+
+  # directories and files to process for MAC+RLC docs
+  set(docs_inputs_du_high ${CMAKE_CURRENT_SOURCE_DIR}
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/mac
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/scheduler
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/rlc
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/f1ap/common
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/f1ap/du
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/du/du_manager
+                          ${CMAKE_HOME_DIRECTORY}/lib/mac
+                          ${CMAKE_HOME_DIRECTORY}/lib/scheduler
+                          ${CMAKE_HOME_DIRECTORY}/lib/rlc
+                          ${CMAKE_HOME_DIRECTORY}/lib/f1ap/common
+                          ${CMAKE_HOME_DIRECTORY}/lib/f1ap/du
+                          ${CMAKE_HOME_DIRECTORY}/lib/du_manager
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/mac
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/scheduler
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/rlc
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/f1ap/common
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/f1ap/du
+                          ${CMAKE_HOME_DIRECTORY}/tests/unittests/du_manager
+  )
+
+  doxygen_add_docs(doxygen-du-high
+    ${docs_inputs_du_high}
+    COMMENT "Generating documentation for layers MAC and RLC."
+  )
+
+  # directories and files to process for PHY+RAN docs
+  set(docs_inputs_phy ${CMAKE_CURRENT_SOURCE_DIR}
+                      ${CMAKE_HOME_DIRECTORY}/include/ocudu/phy
+                      ${CMAKE_HOME_DIRECTORY}/include/ocudu/ran
+                      ${CMAKE_HOME_DIRECTORY}/include/ocudu/radio
+                      ${CMAKE_HOME_DIRECTORY}/lib/phy
+                      ${CMAKE_HOME_DIRECTORY}/lib/ran
+                      ${CMAKE_HOME_DIRECTORY}/lib/radio
+                      ${CMAKE_HOME_DIRECTORY}/tests/benchmarks/phy
+                      ${CMAKE_HOME_DIRECTORY}/tests/unittests/phy
+                      ${CMAKE_HOME_DIRECTORY}/tests/unittests/ran
+                      ${CMAKE_HOME_DIRECTORY}/tests/unittests/radio
+  )
+
+  doxygen_add_docs(doxygen-phy
+    ${docs_inputs_phy}
+    COMMENT "Generating documentation for layers PHY and radio."
+  )
+
+  # directories and files to process for support-related docs
+  set(docs_inputs_support ${CMAKE_CURRENT_SOURCE_DIR}
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/adt
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/ocudulog
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/ocuduvec
+                          ${CMAKE_HOME_DIRECTORY}/include/ocudu/support
+                          ${CMAKE_HOME_DIRECTORY}/lib/ocudulog
+                          ${CMAKE_HOME_DIRECTORY}/lib/ocuduvec
+                          ${CMAKE_HOME_DIRECTORY}/lib/support
+  )
+
+  doxygen_add_docs(doxygen-support
+    ${docs_inputs_support}
+    COMMENT "Generating documentation for support libraries."
+  )
+
+  add_custom_target(doxygen-clean
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/html
+                                       ${CMAKE_CURRENT_BINARY_DIR}/doxygen.log
+    COMMENT "Cleaning documentation"
+    VERBATIM
+  )
+endif(DOXYGEN_FOUND)

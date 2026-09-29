@@ -1,0 +1,43 @@
+{
+    "externalClientType": "VALUE_ADDED_SERVICES",
+    "amfId": "128:1:1",
+    "locationQoS": {
+        "hAccuracy": 1.5,
+        "vAccuracy": 1.5,
+        "verticalRequested": true,
+        "responseTime": "LOW_DELAY",
+        "lcsQosClass": "BEST_EFFORT"
+    },
+    "supportedGADShapes": [
+        "POINT",
+        "POINT_UNCERTAINTY_CIRCLE"
+    ],
+    "supi": "imsi-001010000000001",
+    "ncgi": {
+        "plmnId": {
+            "mcc": "001",
+            "mnc": "01"
+        },
+        "nrCellId": "917505",
+        "nid": "0"
+    },
+    "priority": "HIGHEST_PRIORITY",
+    "velocityRequested": "VELOCITY_IS_NOT_REQUESTED",
+    "lcsServiceType": 127,
+    "ldrType": "UE_AVAILABLE",
+    "hgmlcCallBackURI": "198.168.70.129",
+    "ldrReference": "11",
+    "lirReference": "1",
+    "periodicEventInfo": {
+        "reportingAmount": 10,
+        "reportingInterval": 60
+    },
+    "reportingAccessTypes": [
+        "NR",
+        "NON_3GPP_CONNECTED_TO_5GC"
+    ],
+    "ueConnectivityStates": {
+        "accessType": "3GPP_ACCESS",
+        "connectivitystate": "IDLE"
+    }
+}

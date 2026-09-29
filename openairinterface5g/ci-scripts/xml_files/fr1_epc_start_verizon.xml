@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>epc-start-tab</htmlTabRef>
+  <htmlTabName>EPC-Start</htmlTabName>
+  <htmlTabIcon>log-in</htmlTabIcon>
+
+  <testCase>
+    <class>Initialize_HSS</class>
+    <desc>Initialize HSS</desc>
+  </testCase>
+
+  <testCase>
+    <class>Initialize_MME</class>
+    <desc>Initialize MME</desc>
+    <option>mme-verizon.conf</option>
+  </testCase>
+
+  <testCase>
+    <class>Initialize_SPGW</class>
+    <desc>Initialize SPGW</desc>
+  </testCase>
+
+</testCaseList>

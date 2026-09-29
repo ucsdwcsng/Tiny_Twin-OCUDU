@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# This file lists all the commits that should be ignored by git-blame, like e.g.:
+# - namespace changes,
+# - formatting updates,
+# - copyright updates,
+# as those changes are not meaningful from application logic and git-blame user perspective.
+#
+# Please don't use it for other changes - it should only list commits that were (automated) bulk edits which are "guaranteed to work".
+#
+# You can use it on demand by supplying it to your git-blame call:
+#
+#    git blame --ignore-revs-file .git-blame-ignore-revs <file>
+#
+# or you can add a permanent setting in your git config:
+#
+#    git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# If you introduce a change that should be ignored – please amend this list with:
+# - comment that contains the commit name and the reason for ignoring this change,
+# - full commit hash.
+#
+# If you are adding something to the list with a delay – please keep chronological order.
+#
+# Ignored commits:
+
+# all: switch namespace, apply format 
+# reason: srsran:: to ocudu:: namespace change
+bd622888b44ac7a14c2bd0b5aa47cd9bc3c77f3d
+
+# ocudu: rename ntn namespace
+# reason: srs_ntn:: to ocudu_ntn namespace change
+b7e52dd086d71262e5e24636f00f0c2809046efe

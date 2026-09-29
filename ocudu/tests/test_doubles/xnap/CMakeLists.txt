@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+# Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+
+add_library(xnap_test_doubles xnap_test_message_validators.cpp)
+target_link_libraries(xnap_test_doubles ocudu_support ocudulog xnap_asn1)

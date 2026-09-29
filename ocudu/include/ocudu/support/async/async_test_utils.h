@@ -1,0 +1,86 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/support/async/async_no_op_task.h"
+#include "ocudu/support/async/async_task.h"
+#include "ocudu/support/async/eager_async_task.h"
+#include "ocudu/support/async/manual_event.h"
+#include <optional>
+
+namespace ocudu {
+
+/// Factory of async tasks that await on an external event.
+template <typename Result>
+class wait_manual_event_tester
+{
+public:
+  wait_manual_event_tester() = default;
+
+  wait_manual_event_tester(const Result& r) : result(r) {}
+  wait_manual_event_tester(Result&& r) : result(std::move(r)) {}
+
+  async_task<Result> launch()
+  {
+    return launch_async([this](coro_context<async_task<Result>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_AWAIT(ready_ev);
+      CORO_RETURN(result);
+    });
+  }
+
+  manual_event_flag ready_ev;
+  Result            result;
+};
+
+/// Specialization for result of type void.
+template <>
+class wait_manual_event_tester<void>
+{
+public:
+  async_task<void> launch()
+  {
+    return launch_async([this](coro_context<async_task<void>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_AWAIT(ready_ev);
+      CORO_RETURN();
+    });
+  }
+
+  manual_event_flag ready_ev;
+};
+
+template <typename R>
+struct lazy_task_launcher : public eager_async_task<R> {
+  explicit lazy_task_launcher(async_task<R>& t_) : t(t_)
+  {
+    *static_cast<eager_async_task<R>*>(this) = launch_async([this](coro_context<eager_async_task<R>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_AWAIT_VALUE(result, t);
+      CORO_RETURN(result.value());
+    });
+  }
+
+  std::optional<R> result;
+
+private:
+  async_task<R>& t;
+};
+
+template <>
+struct lazy_task_launcher<void> : public eager_async_task<void> {
+  explicit lazy_task_launcher(async_task<void>& t_) : t(t_)
+  {
+    *static_cast<eager_async_task<void>*>(this) = launch_async([this](coro_context<eager_async_task<void>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_AWAIT(t);
+      CORO_RETURN();
+    });
+  }
+
+private:
+  async_task<void>& t;
+};
+
+} // namespace ocudu

@@ -1,0 +1,134 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/adt/byte_buffer_chain.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/pdcp/pdcp_config.h"
+#include "ocudu/security/security.h"
+
+/*
+ * This file will hold the interfaces and notifiers for the PDCP entity.
+ * They follow the following nomenclature:
+ *
+ *   pdcp_{tx/rx}_{lower/upper}_{[control/data]}_{interface/notifier}
+ *
+ * 1. TX/RX indicates whether the interface is intended for the
+ *    TX or RX side of the entity
+ * 2. Lower/Upper indicates whether the interface/notifier interacts
+ *    with the upper or lower layers.
+ * 3. Control/Data: indicates whether this interface is necessary for "control"
+ *    purposes (e.g., notifying the RRC of an integrity failure, or that we are
+ *    near max HFN) or "data" purposes (e.g. handling SDUs).
+ *    This distinction is only necessary when interfacing with the upper layers,
+ *    and as such, we omit it in the interfaces with the lower layers.
+ * 4. Interface/Notifier: whether this is an interface the PDCP entity will
+ *    inherit or if a notifier that the PDCP will keep as a member.
+ *
+ */
+
+namespace ocudu {
+
+/// This interface represents the data entry point of the receiving side of a PDCP entity.
+/// The lower-layers will use this class to pass PDUs into the PDCP.
+class pdcp_rx_lower_interface
+{
+public:
+  pdcp_rx_lower_interface()                                          = default;
+  virtual ~pdcp_rx_lower_interface()                                 = default;
+  pdcp_rx_lower_interface(const pdcp_rx_lower_interface&)            = delete;
+  pdcp_rx_lower_interface& operator=(const pdcp_rx_lower_interface&) = delete;
+  pdcp_rx_lower_interface(pdcp_rx_lower_interface&&)                 = delete;
+  pdcp_rx_lower_interface& operator=(pdcp_rx_lower_interface&&)      = delete;
+
+  virtual void handle_pdu(byte_buffer_chain pdu) = 0; ///< Handle the incoming PDU.
+};
+
+/// This interface represents the data exit point of the receiving side of a PDCP entity.
+/// The PDCP will use this class to pass SDUs to the upper-layers.
+class pdcp_rx_upper_data_notifier
+{
+public:
+  pdcp_rx_upper_data_notifier()                                              = default;
+  virtual ~pdcp_rx_upper_data_notifier()                                     = default;
+  pdcp_rx_upper_data_notifier(const pdcp_rx_upper_data_notifier&)            = delete;
+  pdcp_rx_upper_data_notifier& operator=(const pdcp_rx_upper_data_notifier&) = delete;
+  pdcp_rx_upper_data_notifier(pdcp_rx_upper_data_notifier&&)                 = delete;
+  pdcp_rx_upper_data_notifier& operator=(pdcp_rx_upper_data_notifier&&)      = delete;
+
+  /// Pass SDU to higher layers.
+  ///
+  /// \param sdu The SDU passed to the upper layers.
+  /// \param integrity_verified Indicates whether the integrity is verified (true) or unverified/unchecked (false).
+  virtual void on_new_sdu(byte_buffer sdu, bool integrity_verified) = 0;
+};
+
+/// This interface represents the control upper layer that the
+/// RX PDCP bearer must notify in case of integrity errors or protocol failures.
+class pdcp_rx_upper_control_notifier
+{
+public:
+  pdcp_rx_upper_control_notifier()                                                 = default;
+  virtual ~pdcp_rx_upper_control_notifier()                                        = default;
+  pdcp_rx_upper_control_notifier(const pdcp_rx_upper_control_notifier&)            = delete;
+  pdcp_rx_upper_control_notifier& operator=(const pdcp_rx_upper_control_notifier&) = delete;
+  pdcp_rx_upper_control_notifier(pdcp_rx_upper_control_notifier&&)                 = delete;
+  pdcp_rx_upper_control_notifier& operator=(pdcp_rx_upper_control_notifier&&)      = delete;
+
+  virtual void on_protocol_failure()  = 0;
+  virtual void on_integrity_failure() = 0;
+  virtual void on_max_count_reached() = 0;
+  virtual void on_resume_required()   = 0;
+};
+
+/// This interface represents the control SAP of the receiving side of a PDCP entity.
+/// The RRC will use this interface to configure security keys and enable/disable
+/// integrity and ciphering.
+class pdcp_rx_upper_control_interface
+{
+public:
+  pdcp_rx_upper_control_interface()                                                  = default;
+  virtual ~pdcp_rx_upper_control_interface()                                         = default;
+  pdcp_rx_upper_control_interface(const pdcp_rx_upper_control_interface&)            = delete;
+  pdcp_rx_upper_control_interface& operator=(const pdcp_rx_upper_control_interface&) = delete;
+  pdcp_rx_upper_control_interface(pdcp_rx_upper_control_interface&&)                 = delete;
+  pdcp_rx_upper_control_interface& operator=(pdcp_rx_upper_control_interface&&)      = delete;
+
+  /// Handle the incoming security config.
+  virtual void configure_security(security::sec_128_as_config sec_cfg,
+                                  security::integrity_enabled integrity_enabled_,
+                                  security::ciphering_enabled ciphering_enabled_) = 0;
+
+  /// Trigger re-establishment
+  virtual void reestablish(security::sec_128_as_config sec_cfg) = 0;
+
+  /// Tell the PDCP to buffer SDUs. Useful, e.g., for waiting for the crypto
+  /// processing to be finished before changing the security keys of an active DRB.
+  virtual void begin_buffering() = 0;
+
+  /// Tell the PDCP to stop buffering SDUs. The PDCP will flush the currently buffered SDUs.
+  virtual void end_buffering() = 0;
+
+  virtual bool suspend() = 0;
+  virtual bool resume()  = 0;
+
+  /// Get the RX count for status transfer
+  virtual pdcp_count_info get_count() const = 0;
+
+  /// Set the RX count for status transfer
+  virtual void set_count(pdcp_count_info count_info) = 0;
+
+  /// Tell the PDCP entity to notify when it is finished with processing
+  /// the currently in-flight PDUs. No further PDUs should be push after calling
+  /// this function until after calling `restart_pdu_processing()`.
+  virtual void notify_pdu_processing_stopped() = 0;
+
+  /// Tell the PDCP entity that reconfiguration is finished, and it is safe to
+  /// have in-flight PDUs again. Should not be called without previously calling
+  /// `notify_pdu_processing_stopped()`
+  virtual void restart_pdu_processing() = 0;
+};
+} // namespace ocudu

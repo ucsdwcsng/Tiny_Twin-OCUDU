@@ -1,0 +1,86 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "mac_dl_processor.h"
+#include "ocudu/mac/mac_subframe_time_mapper.h"
+#include "ocudu/support/async/async_no_op_task.h"
+
+using namespace ocudu;
+
+mac_dl_processor::mac_dl_processor(const mac_dl_config&             mac_cfg,
+                                   mac_scheduler_cell_info_handler& sched_,
+                                   du_rnti_table&                   rnti_table_) :
+  cfg(mac_cfg), rnti_table(rnti_table_), sched(sched_)
+{
+}
+
+bool mac_dl_processor::has_cell(du_cell_index_t cell_index) const
+{
+  return cell_index < MAX_NOF_DU_CELLS and cells[cell_index] != nullptr;
+}
+
+mac_dl_cell_controller& mac_dl_processor::add_cell(const mac_cell_creation_request& cell_cfg_req,
+                                                   mac_cell_config_dependencies     dependencies)
+{
+  ocudu_assert(not has_cell(cell_cfg_req.cell_index), "Overwriting existing cell is invalid.");
+
+  // Create MAC cell and add it to list.
+  cells[cell_cfg_req.cell_index] =
+      std::make_unique<mac_cell_processor>(cell_cfg_req,
+                                           sched,
+                                           sfn_time_mapper,
+                                           rnti_table,
+                                           cfg.phy_notifier.get_cell(cell_cfg_req.cell_index),
+                                           cfg.cell_exec_mapper.mac_cell_executor(cell_cfg_req.cell_index),
+                                           cfg.cell_exec_mapper.slot_ind_executor(cell_cfg_req.cell_index),
+                                           cfg.ctrl_exec,
+                                           cfg.pcap,
+                                           cfg.timers,
+                                           std::move(dependencies));
+
+  return *cells[cell_cfg_req.cell_index];
+}
+
+void mac_dl_processor::remove_cell(du_cell_index_t cell_index)
+{
+  ocudu_assert(has_cell(cell_index), "Accessing non-existing cell.");
+
+  // Remove cell from cell manager.
+  cells[cell_index].reset();
+}
+
+async_task<bool> mac_dl_processor::add_ue(const mac_ue_create_request& request)
+{
+  if (not has_cell(request.cell_index)) {
+    return launch_no_op_task<bool>(false);
+  }
+  return cells[request.cell_index]->add_ue(request);
+}
+
+async_task<void> mac_dl_processor::remove_ue(const mac_ue_delete_request& request)
+{
+  if (not has_cell(request.cell_index)) {
+    return launch_no_op_task();
+  }
+  return cells[request.cell_index]->remove_ue(request);
+}
+
+async_task<bool> mac_dl_processor::addmod_bearers(du_ue_index_t                          ue_index,
+                                                  du_cell_index_t                        pcell_index,
+                                                  span<const mac_logical_channel_config> logical_channels)
+{
+  if (not has_cell(pcell_index)) {
+    return launch_no_op_task<bool>(false);
+  }
+  return cells[pcell_index]->addmod_bearers(ue_index, logical_channels);
+}
+
+async_task<bool>
+mac_dl_processor::remove_bearers(du_ue_index_t ue_index, du_cell_index_t pcell_index, span<const lcid_t> lcids_to_rem)
+{
+  if (not has_cell(pcell_index)) {
+    return launch_no_op_task<bool>(false);
+  }
+  return cells[pcell_index]->remove_bearers(ue_index, lcids_to_rem);
+}

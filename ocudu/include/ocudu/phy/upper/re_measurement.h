@@ -1,0 +1,415 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// \brief Resource Element (RE) measurements container.
+
+#pragma once
+
+#include "ocudu/adt/tensor.h"
+#include "ocudu/ocuduvec/copy.h"
+
+namespace ocudu {
+
+/// Describes the data structure containing the RE measurements.
+struct re_measurement_dimensions {
+  /// Number of subcarriers.
+  unsigned nof_subc = 0;
+  /// Number of contiguous OFDM symbols.
+  unsigned nof_symbols = 0;
+  /// \brief Number of slices.
+  ///
+  /// A slice consists of a set of contiguous REs that spans \c nof_subc subcarriers and \c nof_symbols OFDM symbols.
+  /// Typically, for a PHY channel, it represents all the REs corresponding to a single Rx antenna port (before
+  /// channel equalization) or to a single Tx layer (after channel equalization).
+  unsigned nof_slices = 0;
+
+  /// \name Comparison operators.
+  /// @{
+
+  /// The RE dimensions are considered equal if the number of subcarriers, OFDM symbols and slices match.
+  bool operator==(const re_measurement_dimensions& other) const
+  {
+    return (nof_subc == other.nof_subc) && (nof_symbols == other.nof_symbols) && (nof_slices == other.nof_slices);
+  }
+  bool operator!=(const re_measurement_dimensions& other) const { return !(*this == other); }
+  /// @}
+};
+
+/// \brief Container interface for RE measurements.
+///
+/// \anchor slice0be287
+/// This class is used to store measurements/observations for all resource elements (REs) corresponding to a physical
+/// channel. More specifically, the container organizes the REs in \e slices: A slice includes all the REs seen by a
+/// single receive antenna port (before channel equalization) or by a single transmit layer (after channel equalization)
+/// and, hence, spans all allocated resource blocks and OFDM symbols.
+///
+/// Examples of measurements/observations that may be stored in this container include modulated symbols and noise
+/// variances.
+///
+/// \tparam measure_type The type of the represented RE measurement (e.g., \c float or \c cf_t).
+template <typename measure_type>
+class re_measurement
+{
+public:
+  using value_type = std::remove_cv_t<measure_type>;
+
+  /// Default destructor
+  virtual ~re_measurement() = default;
+
+  /// Returns the RE measurements dimensions.
+  virtual const re_measurement_dimensions& size() const = 0;
+
+  /// Returns a read-write view over the RE measurements corresponding to the given symbol index and \ref slice0be287
+  /// "slice".
+  virtual span<measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) = 0;
+
+  /// Returns a read-only view over the RE measurements corresponding to the given symbol index and \ref slice0be287
+  /// "slice".
+  virtual span<const measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) const = 0;
+
+  /// \brief Updates the size of the internal buffer to the given dimensions.
+  /// \remark The amount of memory reserved for a re_measurement object depends on the implementation. This method only
+  /// affects the amount of accessible REs and the \ref slice0be287 "slice" size.
+  virtual void resize(const re_measurement_dimensions& dims) = 0;
+};
+
+/// \brief Modular resource element measurement.
+///
+/// A modular resource element is a collection of views to symbols organized in slices. All symbols must have the same
+/// size (number of subcarriers).
+///
+/// A \c modular_re_measurement object can be created from another \c re_measurement-based object, for instance to
+/// restrict access to a subset of subcarriers. The constructor preserves the const-qualification of the original object
+/// (e.g., a read-only \c re_measurement generates a read-only \c modular_re_measurement).
+///
+/// \tparam measure_type  Underlying data type.
+/// \tparam MaxNofSymbols Maximum number of symbols per slice.
+/// \tparam MaxNofSlices  Maximum number of slices.
+template <typename measure_type, unsigned MaxNofSymbols, unsigned MaxNofSlices>
+class modular_re_measurement : public re_measurement<measure_type>
+{
+private:
+  /// Metaprogramming for checking types in the constructors.
+  ///@{
+  /// Default failing compatibility test.
+  template <typename T, typename = void>
+  struct is_modular_compatible : std::false_type {};
+
+  /// \brief Compatibility test for type \c T.
+  ///
+  /// Type T can be used to construct a modular_re_measurement<measure_type> object if re_measurement is the base class
+  /// of T and if we can create span<measure_type> from span<T::value_type>.
+  template <typename T>
+  struct is_modular_compatible<T, std::void_t<typename T::value_type>>
+    : std::conditional_t<
+          (std::is_base_of_v<re_measurement<typename T::value_type>, T> ||
+           std::is_base_of_v<re_measurement<const typename T::value_type>, T>) &&
+              std::is_convertible_v<
+                  std::conditional_t<std::is_const_v<T>, const typename T::value_type, typename T::value_type> (*)[],
+                  measure_type (*)[]>,
+          std::true_type,
+          std::false_type> {};
+  ///@}
+
+public:
+  /// Default constructor - creates an empty RE measurement object.
+  modular_re_measurement() = default;
+
+  /// Creates a modular RE measurement object with the given dimensions.
+  modular_re_measurement(const re_measurement_dimensions& dimensions_) { resize(dimensions_); }
+
+  /// Creates a modular RE measurement object from another RE measurement object.
+  template <typename U, std::enable_if_t<is_modular_compatible<U>::value, int> = 0>
+  modular_re_measurement(U& other) : modular_re_measurement(other, 0, other.size().nof_subc)
+  {
+  }
+
+  /// Creates a modular RE measurement object from another RE measurement object with an offset and number of
+  /// subcarriers.
+  template <typename U, std::enable_if_t<is_modular_compatible<U>::value, int> = 0>
+  modular_re_measurement(U& other, unsigned offset, unsigned nof_subc)
+  {
+    assign(other, offset, nof_subc);
+  }
+
+  // See interface for documentation.
+  const re_measurement_dimensions& size() const override { return dimensions; }
+
+  // See interface for documentation.
+  span<measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) override
+  {
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Slice index (i.e., {}) exceeds the number of slices (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_slices);
+    ocudu_assert(i_symbol < dimensions.nof_symbols,
+                 "Symbol index (i.e., {}) exceeds the number of symbols (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_symbols);
+    return data[{i_slice, i_symbol}];
+  }
+
+  // See interface for documentation.
+  span<const measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) const override
+  {
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Slice index (i.e., {}) exceeds the number of slices (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_slices);
+    ocudu_assert(i_symbol < dimensions.nof_symbols,
+                 "Symbol index (i.e., {}) exceeds the number of symbols (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_symbols);
+    return data[{i_slice, i_symbol}];
+  }
+
+  // See interface for documentation.
+  void resize(const re_measurement_dimensions& dims) override
+  {
+    ocudu_assert(dims.nof_symbols <= MaxNofSymbols,
+                 "The number of symbols (i.e., {}) exceeds the maximum (i.e., {}).",
+                 dims.nof_symbols,
+                 MaxNofSymbols);
+    ocudu_assert(dims.nof_slices <= MaxNofSlices,
+                 "The number of slices (i.e., {}) exceeds the maximum (i.e., {}).",
+                 dims.nof_slices,
+                 MaxNofSlices);
+    dimensions = dims;
+    data.resize({dims.nof_slices, dims.nof_symbols});
+    std::fill_n(data.get_data().begin(), dims.nof_slices * dims.nof_symbols, span<measure_type>());
+  }
+
+  /// \brief Sets a symbol view.
+  ///
+  /// This method is available only if a view <t>span<U></t> is compatible with the data type of the RE measurements
+  /// stored in the calling object.
+  template <typename U, std::enable_if_t<std::is_convertible_v<U (*)[], measure_type (*)[]>, int> = 0>
+  void set_symbol(unsigned i_symbol, unsigned i_slice, span<U> view)
+  {
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Slice index (i.e., {}) exceeds the number of slices (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_slices);
+    ocudu_assert(i_symbol < dimensions.nof_symbols,
+                 "Symbol index (i.e., {}) exceeds the number of symbols (i.e., {}).",
+                 i_symbol,
+                 dimensions.nof_symbols);
+    ocudu_assert(view.size() == dimensions.nof_subc,
+                 "The number of subcarriers in the view (i.e., {}) does not match the configured one (i.e., {}).",
+                 view.size(),
+                 dimensions.nof_subc);
+    data[{i_slice, i_symbol}] = view;
+  }
+
+  /// Assigns the views of the resource element measurement to another measurement.
+  template <typename U, std::enable_if_t<is_modular_compatible<U>::value, int> = 0>
+  void assign(U& other)
+  {
+    assign(other, 0, other.size().nof_subc);
+  }
+
+  /// Assigns the views of the resource element measurement to another measurement with a subcarrier offset.
+  template <typename U, std::enable_if_t<is_modular_compatible<U>::value, int> = 0>
+  void assign(U& other, unsigned offset, unsigned nof_subc)
+  {
+    const re_measurement_dimensions& base_dims = other.size();
+    ocudu_assert(offset + nof_subc <= base_dims.nof_subc, "Invalid offset and number of subcarriers.");
+
+    resize({.nof_subc = nof_subc, .nof_symbols = base_dims.nof_symbols, .nof_slices = base_dims.nof_slices});
+
+    for (unsigned i_slice = 0; i_slice != dimensions.nof_slices; ++i_slice) {
+      for (unsigned i_symbol = 0; i_symbol != dimensions.nof_symbols; ++i_symbol) {
+        set_symbol(i_symbol, i_slice, other.get_symbol(i_symbol, i_slice).subspan(offset, nof_subc));
+      }
+    }
+  }
+
+private:
+  re_measurement_dimensions                                          dimensions;
+  static_tensor<2, span<measure_type>, MaxNofSymbols * MaxNofSlices> data;
+};
+
+namespace detail {
+
+/// Number of dimensions that are contained for each indexing level.
+enum re_measurement_nof_dimensions : unsigned { symbol = 1, slice = 2, all = 3 };
+
+/// \brief Base container for RE measurements based on a tensor.
+///
+/// \tparam measure_type The type of the represented RE measurement (e.g., \c float or \c cf_t).
+/// \tparam Tensor       The type of the tensor to instantiate.
+template <typename measure_type, typename Tensor>
+class re_measurement_tensor_base : public re_measurement<measure_type>
+{
+public:
+  // See interface for documentation.
+  const re_measurement_dimensions& size() const override { return dimensions; }
+
+  /// \brief Writes data on a \ref slice0be287 "slice".
+  ///
+  /// \param[in] data     Input data.
+  /// \param[in] i_slice  Index of the destination slice.
+  /// \remark The size of \c data should be equal to the number of REs in a slice.
+  void set_slice(span<const measure_type> data, unsigned i_slice)
+  {
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Requested slice {}, but only {} slices are supported.",
+                 i_slice,
+                 dimensions.nof_slices);
+    ocudu_assert(data.size() == dimensions.nof_subc * dimensions.nof_symbols,
+                 "Slice size mismatch: given {}, current {}.",
+                 data.size(),
+                 dimensions.nof_subc * dimensions.nof_symbols);
+
+    span<measure_type> slice = re_meas.template get_view<re_measurement_nof_dimensions::slice>({i_slice});
+    ocuduvec::copy(slice, data);
+  }
+
+  // See interface for documentation.
+  span<measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) override
+  {
+    ocudu_assert(i_symbol < dimensions.nof_symbols,
+                 "Requested symbol {}, but only {} symbols are supported.",
+                 i_symbol,
+                 dimensions.nof_symbols);
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Requested slice {}, but only {} slices are supported.",
+                 i_slice,
+                 dimensions.nof_slices);
+    return re_meas.template get_view<re_measurement_nof_dimensions::symbol>({i_symbol, i_slice});
+  }
+
+  // See interface for documentation.
+  span<const measure_type> get_symbol(unsigned i_symbol, unsigned i_slice) const override
+  {
+    ocudu_assert(i_symbol < dimensions.nof_symbols,
+                 "Requested symbol {}, but only {} symbols are supported.",
+                 i_slice,
+                 dimensions.nof_symbols);
+    ocudu_assert(i_slice < dimensions.nof_slices,
+                 "Requested slice {}, but only {} slices are supported.",
+                 i_slice,
+                 dimensions.nof_slices);
+    return re_meas.template get_view<re_measurement_nof_dimensions::symbol>({i_symbol, i_slice});
+  }
+
+  // See interface for documentation.
+  void resize(const re_measurement_dimensions& dims) override
+  {
+    ocudu_assert(dims.nof_subc <= reserved_dims.nof_subc,
+                 "Requested {} subcarriers, but at most {} are allowed.",
+                 dims.nof_subc,
+                 reserved_dims.nof_subc);
+    ocudu_assert(dims.nof_symbols <= reserved_dims.nof_symbols,
+                 "Requested {} OFDM symbols, but at most {} are allowed.",
+                 dims.nof_symbols,
+                 reserved_dims.nof_symbols);
+    ocudu_assert(dims.nof_slices <= reserved_dims.nof_slices,
+                 "Requested {} slices, but at most {} are supported.",
+                 dims.nof_slices,
+                 reserved_dims.nof_slices);
+
+    dimensions = dims;
+    re_meas.resize({dims.nof_subc, dims.nof_symbols, dims.nof_slices});
+  }
+
+protected:
+  /// Maximum reserved dimensions.
+  re_measurement_dimensions reserved_dims;
+
+  /// \brief RE measurements container.
+  ///
+  /// RE measurements should be thought as three-dimensional tensor with the first two dimensions representing, in
+  /// order, subcarriers and OFDM symbols. Typically, the third dimension is referred to as slice and represents
+  /// either receive ports (before channel equalization) or transmit layers (after channel equalization). The
+  /// underlying data structure is a single vector, indexed in the same order: i) subcarriers, ii) OFDM symbols, iii)
+  /// slice.
+  Tensor re_meas;
+
+private:
+  /// Current dimensions.
+  re_measurement_dimensions dimensions;
+};
+
+} // namespace detail
+
+/// \brief Static container for RE measurements.
+///
+/// The amount of memory reserved is fixed and set at compilation time.
+///
+/// \tparam measure_type The type of the represented RE measurement (e.g., \c float or \c cf_t).
+/// \tparam MAX_NOF_SUBC    Maximum number of subcarriers.
+/// \tparam MAX_NOF_SYMBOLS Maximum number of symbols.
+/// \tparam MAX_NOF_SLICES  Maximum number of slices.
+template <typename measure_type, unsigned MAX_NOF_SUBC, unsigned MAX_NOF_SYMBOLS, unsigned MAX_NOF_SLICES>
+class static_re_measurement
+  : public detail::re_measurement_tensor_base<measure_type,
+                                              static_tensor<detail::re_measurement_nof_dimensions::all,
+                                                            measure_type,
+                                                            MAX_NOF_SUBC * MAX_NOF_SYMBOLS * MAX_NOF_SLICES>>
+{
+  using base = detail::re_measurement_tensor_base<measure_type,
+                                                  static_tensor<detail::re_measurement_nof_dimensions::all,
+                                                                measure_type,
+                                                                MAX_NOF_SUBC * MAX_NOF_SYMBOLS * MAX_NOF_SLICES>>;
+
+public:
+  /// Constructor: checks template type.
+  static_re_measurement()
+  {
+    static_assert(std::is_same_v<measure_type, float> || std::is_same_v<measure_type, cf_t> ||
+                      std::is_same_v<measure_type, cbf16_t>,
+                  "At the moment, this template is only available for float, cf_t and cbf16_t.");
+    base::reserved_dims = {MAX_NOF_SUBC, MAX_NOF_SYMBOLS, MAX_NOF_SLICES};
+  }
+
+  /// Constructor: sets the size of the internal buffer.
+  explicit static_re_measurement(const re_measurement_dimensions& dims) : static_re_measurement()
+  {
+    static_assert(std::is_same_v<measure_type, float> || std::is_same_v<measure_type, cf_t>,
+                  "At the moment, this template is only available for float and cf_t.");
+    base::resize(dims);
+  }
+};
+
+/// \brief Dynamic container for RE measurements.
+///
+/// The amount of memory reserved is fixed and set at construction time.
+///
+/// \tparam measure_type The type of the represented RE measurement (e.g., \c float or \c cf_t).
+/// \warning Instantiating an object of this class entails a heap memory allocation.
+template <typename measure_type>
+class dynamic_re_measurement
+  : public detail::re_measurement_tensor_base<measure_type,
+                                              dynamic_tensor<detail::re_measurement_nof_dimensions::all, measure_type>>
+{
+  using base =
+      detail::re_measurement_tensor_base<measure_type,
+                                         dynamic_tensor<detail::re_measurement_nof_dimensions::all, measure_type>>;
+
+public:
+  /// Constructor: checks template type and reserves internal memory.
+  dynamic_re_measurement()
+  {
+    static_assert(std::is_same_v<measure_type, float> || std::is_same_v<measure_type, cf_t>,
+                  "At the moment, this template is only available for float and cf_t.");
+  }
+
+  /// Constructor: sets the size of the internal buffer.
+  explicit dynamic_re_measurement(const re_measurement_dimensions& dims) : dynamic_re_measurement() { reserve(dims); }
+
+  /// \brief Reserve memory for the internal buffer and resize it to the given dimensions.
+  /// \warning This method entails a heap memory allocation.
+  void reserve(const re_measurement_dimensions& dims)
+  {
+    static_assert(std::is_same_v<measure_type, float> || std::is_same_v<measure_type, cf_t>,
+                  "At the moment, this template is only available for float and cf_t.");
+
+    base::reserved_dims = dims;
+    base::re_meas.reserve({dims.nof_subc, dims.nof_symbols, dims.nof_slices});
+  }
+};
+
+} // namespace ocudu

@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Example configuration file to define advanced SIB parameters.
+
+cell_cfg:
+  sib:
+    t300: 1000
+    t301: 1000
+    t310: 1000
+    t319: 1000
+    t311: 3000
+    n310: 1
+    n311: 1
+    si_window_length: 40
+    si_sched_info:
+      - si_period: 64
+        sib_mapping: 2
+      - si_period: 64
+        sib_mapping: 3
+    sib2:
+      q_hyst: 3
+      thresh_serving_low_p: 0
+      cell_reselection_priority: 6
+      q_rx_lev_min: -70
+      s_intra_search_p: 62
+      t_reselection_nr: 1
+    sib3:
+      intra_freq_neigh_cell_list:
+        - pci: 2
+          q_offset_cell: 3
+        - pci: 3
+          q_offset_cell: 3
+      intra_freq_excluded_cell_list:
+        - start: 4
+          size: 4

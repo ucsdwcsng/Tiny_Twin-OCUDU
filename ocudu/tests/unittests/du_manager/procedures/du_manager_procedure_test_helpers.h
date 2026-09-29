@@ -1,0 +1,121 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../du_manager_test_helpers.h"
+#include "lib/du/du_high/du_manager/du_ue/du_ue.h"
+#include "lib/du/du_high/du_manager/du_ue/du_ue_manager_repository.h"
+#include "lib/du/du_high/du_manager/metrics/du_procedure_metrics_collector.h"
+#include "ocudu/mac/mac_pdu_handler.h"
+#include "ocudu/support/async/fifo_async_task_scheduler.h"
+
+namespace ocudu {
+namespace odu {
+
+class du_ue_dummy : public du_ue, public mac_ue_radio_link_notifier, public rlc_tx_upper_layer_control_notifier
+{
+public:
+  bool                         ue_notifiers_disconnected = false;
+  bool                         drbs_and_rlf_disabled     = false;
+  std::optional<du_ue_index_t> last_rlf_ue_index;
+  std::optional<rlf_cause>     last_rlf_cause;
+
+  du_ue_dummy(const du_ue_context&         ctx_,
+              ue_ran_resource_configurator resources_,
+              fifo_async_task_scheduler*   ue_ctrl_loop_) :
+    du_ue(ctx_, std::move(resources_)), ue_ctrl_loop(ue_ctrl_loop_)
+  {
+  }
+
+  fifo_async_task_scheduler* ue_ctrl_loop;
+
+  void             disable_rlf_detection() override {}
+  async_task<void> handle_activity_stop_request(bool stop_srbs) override
+  {
+    ue_notifiers_disconnected = stop_srbs;
+    drbs_and_rlf_disabled     = true;
+    return launch_no_op_task();
+  }
+  async_task<void> handle_drb_stop_request(span<const drb_id_t> /*unused*/) override { return launch_no_op_task(); }
+  void             schedule_async_task(async_task<void> task) override { ue_ctrl_loop->schedule(std::move(task)); }
+  void             handle_rlf_detection(rlf_cause cause, std::optional<rb_id_t> rb_id) override {}
+  void             handle_crnti_ce_detection() override {}
+  mac_ue_radio_link_notifier&          get_mac_rlf_notifier() override { return *this; }
+  void                                 on_rlf_detected(mac_rlf_cause cause) override {}
+  void                                 on_crnti_ce_received() override {}
+  rlc_tx_upper_layer_control_notifier& get_rlc_rlf_notifier() override { return *this; }
+  void                                 on_protocol_failure(rb_id_t rb_id) override
+  {
+    this->handle_rlf_detection(rlf_cause::rlc_protocol_failure, rb_id);
+  }
+  void on_max_retx(rb_id_t rb_id) override {}
+};
+
+class ue_manager_dummy : public du_ue_manager_repository
+{
+  dummy_teid_pool teid_pool;
+
+public:
+  slotted_array<du_ue_dummy, MAX_NOF_DU_UES> ues;
+
+  expected<du_ue*, std::string> add_ue(const du_ue_context& u, ue_ran_resource_configurator resources) override
+  {
+    du_ue_index_t ue_index = u.ue_index;
+    ues.emplace(ue_index, std::move(u), std::move(resources), &ue_ctrl_loop);
+    return &ues[ue_index];
+  }
+  void         remove_ue(du_ue_index_t ue_index) override { ues.erase(ue_index); }
+  void         update_crnti(du_ue_index_t ue_index, rnti_t rnti) override {}
+  du_ue*       find_ue(du_ue_index_t ue_index) override { return ues.contains(ue_index) ? &ues[ue_index] : nullptr; }
+  const du_ue* find_ue(du_ue_index_t ue_index) const override
+  {
+    return ues.contains(ue_index) ? &ues[ue_index] : nullptr;
+  }
+  du_ue* find_rnti(rnti_t rnti) override
+  {
+    for (auto& u : ues) {
+      if (u.rnti == rnti) {
+        return &u;
+      }
+    }
+    return nullptr;
+  }
+  du_ue* find_f1ap_ue_id(gnb_du_ue_f1ap_id_t f1ap_ue_id) override
+  {
+    for (auto& u : ues) {
+      if (u.f1ap_ue_id == f1ap_ue_id) {
+        return &u;
+      }
+    }
+    return nullptr;
+  }
+  gtpu_teid_pool& get_f1u_teid_pool() override { return teid_pool; }
+
+  void schedule_async_task(du_ue_index_t ue_index, async_task<void> task) override
+  {
+    ue_ctrl_loop.schedule(std::move(task));
+  }
+
+  fifo_async_task_scheduler ue_ctrl_loop{128};
+};
+
+ul_ccch_indication_message create_test_ul_ccch_message(rnti_t rnti);
+
+class du_manager_proc_tester : public du_manager_test_bench
+{
+public:
+  du_manager_proc_tester(span<const du_cell_config> cells_) : du_manager_test_bench(cells_) {}
+
+  du_ue& create_ue(du_ue_index_t ue_index);
+
+  /// \brief Run DU UE configuration procedure to completion.
+  f1ap_ue_context_update_response configure_ue(const f1ap_ue_context_update_request& req);
+
+  ue_manager_dummy               ue_mng;
+  du_procedure_metrics_collector proc_metrics{false};
+};
+
+} // namespace odu
+} // namespace ocudu

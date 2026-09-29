@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+
+## Resource consumption 3Gi, 5CPU
+kind: BuildConfig
+apiVersion: build.openshift.io/v1
+metadata:
+  name: "oai-clang"
+  namespace: "oaicicd-ran"
+spec:
+    nodeSelector:
+        node-role.kubernetes.io/fhi72-intel3: ""
+    runPolicy: "Serial"
+    source:
+        type: "Binary"
+    strategy:
+        dockerStrategy:
+            dockerfilePath: "docker/Dockerfile.clang.rhel9"
+    output:
+        to:
+            kind: "ImageStreamTag"
+            name: "oai-clang:latest"

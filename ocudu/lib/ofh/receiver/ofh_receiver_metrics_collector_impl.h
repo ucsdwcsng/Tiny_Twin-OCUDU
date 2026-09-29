@@ -1,0 +1,61 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ofh_closed_rx_window_handler.h"
+#include "ofh_message_receiver_metrics_collector.h"
+#include "ofh_rx_window_checker.h"
+#include "ocudu/ofh/ethernet/ethernet_receiver_metrics_collector.h"
+#include "ocudu/ofh/receiver/ofh_receiver_metrics_collector.h"
+
+namespace ocudu {
+namespace ofh {
+
+/// Open Fronthaul receiver metrics collector implementation.
+class receiver_metrics_collector_impl : public receiver_metrics_collector
+{
+public:
+  receiver_metrics_collector_impl(bool                                metrics_enabled,
+                                  closed_rx_window_handler&           closed_window_handler_,
+                                  rx_window_checker&                  window_checker_,
+                                  message_receiver_metrics_collector* msg_rcv_metrics_collector_,
+                                  ether::receiver_metrics_collector*  eth_rcv_metrics_collector_) :
+    is_disabled(!metrics_enabled),
+    closed_window_handler(closed_window_handler_),
+    window_checker(window_checker_),
+    msg_rcv_metrics_collector(msg_rcv_metrics_collector_),
+    eth_rcv_metrics_collector(eth_rcv_metrics_collector_)
+  {
+    if (!is_disabled) {
+      ocudu_assert(msg_rcv_metrics_collector && eth_rcv_metrics_collector,
+                   "Open fronthaul receiver metrics collectors must be initialized when the metrics are enabled");
+    }
+  }
+
+  // See interface for documentation.
+  void collect_metrics(receiver_metrics& metrics) override
+  {
+    if (disabled()) {
+      return;
+    }
+
+    closed_window_handler.collect_metrics(metrics.closed_window_metrics);
+    window_checker.collect_metrics(metrics.rx_messages_metrics);
+    msg_rcv_metrics_collector->collect_metrics(metrics.rx_decoding_perf_metrics);
+    eth_rcv_metrics_collector->collect_metrics(metrics.eth_receiver_metrics);
+  }
+
+  /// Returns true if the metrics collector is disabled.
+  bool disabled() const { return is_disabled; }
+
+private:
+  const bool                          is_disabled;
+  closed_rx_window_handler&           closed_window_handler;
+  rx_window_checker&                  window_checker;
+  message_receiver_metrics_collector* msg_rcv_metrics_collector;
+  ether::receiver_metrics_collector*  eth_rcv_metrics_collector;
+};
+
+} // namespace ofh
+} // namespace ocudu

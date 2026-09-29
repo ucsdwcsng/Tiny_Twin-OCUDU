@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+include:
+  - local: .gitlab/ci-shared/docker.yml
+  - local: .gitlab/ci/doxygen/version.yml
+
+stages:
+  - publish
+
+build-and-publish:
+  extends: .docker-builder
+  stage: publish
+  rules:
+    - if: $ON_MR
+  variables:
+    NAME: doxygen
+    CONTEXT: .gitlab/ci/doxygen
+    VERSION: "${DOXYGEN_VERSION}-${PLANTUML_VERSION}"
+    BUILD_ARGS: DOXYGEN_VERSION=${DOXYGEN_VERSION};PLANTUML_VERSION=${PLANTUML_VERSION}
+    MODE: publish

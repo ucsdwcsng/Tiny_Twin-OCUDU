@@ -1,0 +1,102 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/generic_functions/precoding/precoding_factories.h"
+#include "ocudu/phy/support/interpolator.h"
+#include "ocudu/phy/support/prach_buffer.h"
+#include "ocudu/phy/support/resource_grid_mapper.h"
+#include "ocudu/phy/support/resource_grid_pool.h"
+#include "ocudu/support/executors/task_executor.h"
+#include <memory>
+#include <vector>
+
+namespace ocudu {
+
+/// Factory that builds resource grids.
+class resource_grid_factory
+{
+public:
+  /// Default destructor.
+  virtual ~resource_grid_factory() = default;
+
+  /// Creates and returns an instance of a resource grid.
+  virtual std::unique_ptr<resource_grid> create(unsigned nof_ports, unsigned nof_symbols, unsigned nof_subc) = 0;
+};
+
+/// \brief Creates and returns a resource grid factory that instantiates resource grids.
+///
+/// \return A pointer to a resource grid factory.
+std::shared_ptr<resource_grid_factory> create_resource_grid_factory();
+
+/// \brief Creates a generic resource grid pool.
+///
+/// It selects a different resource grid every time a resource grid is requested. The resource grid is repeated every
+/// \c grids.size() requests.
+///
+/// \param[in] grids Resource grids, ownerships are transferred to the pool.
+/// \return A generic resource grid pool.
+std::unique_ptr<resource_grid_pool>
+create_generic_resource_grid_pool(std::vector<std::unique_ptr<resource_grid>> grids);
+
+/// \brief Creates an asynchronous resource grid pool.
+///
+/// It selects a different resource grid every time a resource grid is requested. The resource grid expires
+/// \c expire_timeout_slots after it is requested. When a resource grid expires, it is asynchronously set to zero.
+///
+/// The resource grid repetition is not deterministic but it is guaranteed that it is repeated after
+/// \c expire_timeout_slots.
+///
+/// \param[in] async_executor       Asynchronous task executor for setting the grid to zero.
+/// \param[in] grids                Resource grids, ownerships are transferred to the pool.
+/// \return An asynchronous resource grid pool.
+std::unique_ptr<resource_grid_pool>
+create_asynchronous_resource_grid_pool(task_executor&                              async_executor,
+                                       std::vector<std::unique_ptr<resource_grid>> grids);
+
+/// Factory that builds resource grid mappers.
+class resource_grid_mapper_factory
+{
+public:
+  /// Default destructor.
+  virtual ~resource_grid_mapper_factory() = default;
+
+  /// Creates and returns an instance of a resource grid mapper.
+  virtual std::unique_ptr<resource_grid_mapper> create() = 0;
+};
+
+/// \brief Creates and returns a resource grid mapper factory that instantiates resource grid mappers.
+///
+/// \param[in] precoder_factory Precoder factory instance.
+/// \return A pointer to a resource grid mapper factory.
+std::shared_ptr<resource_grid_mapper_factory>
+create_resource_grid_mapper_factory(std::shared_ptr<channel_precoder_factory> precoder_factory);
+
+/// \brief Creates a long PRACH sequence buffer.
+///
+/// Long buffers contain 839-element PRACH sequences for up to 4 OFDM symbols and a given maximum number of
+/// frequency-domain occasions.
+///
+/// \param[in] max_nof_antennas     Maximum number of antennas.
+/// \param[in] max_nof_fd_occasions Maximum number of frequency-domain occasions.
+/// \return A long preamble sequence buffer.
+std::unique_ptr<prach_buffer> create_prach_buffer_long(unsigned max_nof_antennas, unsigned max_nof_fd_occasions);
+
+/// \brief Creates a short PRACH sequence buffer.
+///
+/// Short buffers contain 139-element PRACH sequences for up to \ref prach_constants::SHORT_SEQUENCE_MAX_NOF_SYMBOLS
+/// symbols per occasion.
+///
+/// \param[in] max_nof_antennas     Maximum number of antennas.
+/// \param[in] max_nof_td_occasions Maximum number of time-domain occasions.
+/// \param[in] max_nof_fd_occasions Maximum number of frequency-domain occasions.
+/// \return A short preamble sequence buffer containing PRACH sequence buffers for the number of selected occasions.
+std::unique_ptr<prach_buffer>
+create_prach_buffer_short(unsigned max_nof_antennas, unsigned max_nof_td_occasions, unsigned max_nof_fd_occasions);
+
+/// \brief Returns an interpolator.
+std::unique_ptr<ocudu::interpolator> create_interpolator();
+
+} // namespace ocudu

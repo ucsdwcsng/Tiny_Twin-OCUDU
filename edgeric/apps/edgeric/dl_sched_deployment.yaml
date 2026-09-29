@@ -1,0 +1,34 @@
+# EdgeRIC DL scheduling: the edgeric_sched codeletset (dl_sched on the mac_sched_dl_ctrl hook) and the dl_sched_app muApp (fixed weights or Max-Weight over the codelet's telemetry, pushing per-UE PRB caps back into the codelet).
+#
+# Adapted from scout-jbpf jrtc-apps/jrtc_apps/edgeric/dl_sched_deployment.yaml (commit cfd2a6e) for
+# ocudu/tiny-twin-test/docker-compose.jrtc.yml: jrtc, jrtc-decoder and jbpf-proxy share one network namespace, so the
+# decoder, the app REST API and the gNB's jbpf proxy are all at 127.0.0.1. jrtc-ctl reads "ip" (not scout's k8s
+# "host" names, which it ignores). Load from inside the jrtc container, where JRTC_APPS=/apps and
+# JBPF_CODELETS=/codelets:
+#   jrtc-ctl load -c /apps/edgeric/dl_sched_deployment.yaml
+
+name: edgeric_sched
+
+decoder:
+  - type: decodergrpc
+    ip: 127.0.0.1
+    port: 20789
+
+app:
+  - name: dl_sched_app
+    path: ${JRTC_APPS}/edgeric/dl_sched_app.py
+    type: python
+    ip: 127.0.0.1
+    port: 3001
+    modules:
+      - ${JBPF_CODELETS}/edgeric/dl_sched_report.py
+
+jbpf:
+  device:
+    - id: 1
+      ip: 127.0.0.1
+      port: 30450
+
+  codelet_set:
+    - device: 1
+      config: ${JBPF_CODELETS}/edgeric/edgeric_sched.yaml

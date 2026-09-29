@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for Ubuntu 24.04
+#
+#---------------------------------------------------------------------
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS cuda-image
+FROM ran-base:develop AS ran-tests
+
+RUN rm -Rf /oai-ran
+COPY --from=cuda-image /usr/local/cuda/ /usr/local/cuda/
+
+# Set the LD_LIBRARY_PATH to ensure the system can find the copied libraries.
+# This is crucial for applications that use CUDA.
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/targets/sbsa-linux/lib
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV C_INCLUDE_PATH=/usr/local/cuda/include
+
+WORKDIR /oai-ran
+COPY . .
+
+WORKDIR /oai-ran/build
+RUN cmake -GNinja -DENABLE_PHYSIM_TESTS=ON -DENABLE_TESTS=ON \
+        -DSANITIZE_UNDEFINED=OFF -DSANITIZE_ADDRESS=OFF \
+        -DCMAKE_C_FLAGS=-Werror -DCMAKE_CXX_FLAGS=-Werror \
+        -DPHYSIM_CHECK_FILES="ThresholdsCuda.cmake" \
+        -DENABLE_CHANNEL_SIM_CUDA=ON \
+        -DUSE_UNIFIED_MEMORY=ON \
+        -DUSE_ATS_MEMORY=OFF \
+        -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/oai-ran/cmake_targets/ran_build/build \
+        .. && \
+        ninja test_channel_scalability

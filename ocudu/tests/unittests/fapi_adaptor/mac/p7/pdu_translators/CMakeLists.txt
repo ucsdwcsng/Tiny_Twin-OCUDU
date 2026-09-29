@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+# Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+
+add_library(ocudu_mac_translator_helpers STATIC helpers.cpp)
+
+add_executable(mac_fapi_pdcch_adaptor_test dl_pdcch_pdu_test.cpp)
+target_link_libraries(mac_fapi_pdcch_adaptor_test ocudu_mac_fapi_adaptors ocudu_support ocudulog ocudu_mac_translator_helpers gtest gtest_main)
+target_include_directories(mac_fapi_pdcch_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_pdcch_adaptor_test)
+
+add_executable(mac_fapi_pdsch_adaptor_test dl_pdsch_pdu_test.cpp)
+target_link_libraries(mac_fapi_pdsch_adaptor_test ocudu_mac_fapi_adaptors ocudu_fapi_precoding_matrix_tools ocudu_support ocudulog ocudu_mac_translator_helpers gtest gtest_main)
+target_include_directories(mac_fapi_pdsch_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_pdsch_adaptor_test)
+
+add_executable(mac_fapi_ssb_adaptor_test dl_ssb_pdu_test.cpp)
+target_link_libraries(mac_fapi_ssb_adaptor_test ocudu_mac_fapi_adaptors ocudu_support ocudulog ocudu_mac_translator_helpers gtest gtest_main)
+target_include_directories(mac_fapi_ssb_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_ssb_adaptor_test)
+
+add_executable(mac_fapi_prach_adaptor_test ul_prach_pdu_test.cpp)
+target_link_libraries(mac_fapi_prach_adaptor_test ocudu_mac_fapi_adaptors ocudu_support gtest gtest_main ocudu_mac_translator_helpers)
+target_include_directories(mac_fapi_prach_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_prach_adaptor_test)
+
+add_executable(mac_fapi_pucch_adaptor_test ul_pucch_pdu_test.cpp)
+target_link_libraries(mac_fapi_pucch_adaptor_test ocudu_mac_fapi_adaptors ocudu_support gtest gtest_main ocudu_mac_translator_helpers)
+target_include_directories(mac_fapi_pucch_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_pucch_adaptor_test)
+
+add_executable(mac_fapi_pusch_adaptor_test ul_pusch_pdu_test.cpp)
+target_link_libraries(mac_fapi_pusch_adaptor_test ocudu_mac_fapi_adaptors ocudu_support ocudu_fapi_uci_part2_tools gtest gtest_main ocudu_mac_translator_helpers)
+target_include_directories(mac_fapi_pusch_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_pusch_adaptor_test)
+
+add_executable(mac_fapi_srs_adaptor_test ul_srs_pdu_test.cpp)
+target_link_libraries(mac_fapi_srs_adaptor_test ocudu_mac_fapi_adaptors ocudu_support gtest gtest_main ocudu_mac_translator_helpers)
+target_include_directories(mac_fapi_srs_adaptor_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/fapi_adaptor/mac/p7/pdu_translators)
+gtest_discover_tests(mac_fapi_srs_adaptor_test)

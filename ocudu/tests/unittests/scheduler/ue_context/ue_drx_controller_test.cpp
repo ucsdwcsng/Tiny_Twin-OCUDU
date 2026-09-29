@@ -1,0 +1,342 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "../test_utils/sched_random_utils.h"
+#include "lib/scheduler/config/logical_channel_config_pool.h"
+#include "lib/scheduler/ue_context/logical_channel_system.h"
+#include "lib/scheduler/ue_context/ue_drx_controller.h"
+#include "tests/test_doubles/utils/test_rng.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+
+using msec = std::chrono::milliseconds;
+
+class base_ue_drx_controller_test
+{
+protected:
+  base_ue_drx_controller_test(const std::optional<drx_config>& drx_cfg_) :
+    drx_cfg(drx_cfg_), ue_lc_chs(lc_ch_sys.create_ue(to_du_ue_index(0), scs, false, cfg_pool.create({})))
+  {
+  }
+
+  void tick()
+  {
+    drx.slot_indication(next_slot);
+    cur_slot = next_slot;
+    ++next_slot;
+  }
+
+  const subcarrier_spacing        scs          = subcarrier_spacing::kHz30;
+  const std::chrono::milliseconds conres_timer = msec{64};
+  std::optional<drx_config>       drx_cfg;
+  logical_channel_config_pool     cfg_pool;
+  logical_channel_system          lc_ch_sys;
+  ue_logical_channel_repository   ue_lc_chs;
+  slot_point                      ul_ccch_slot{to_numerology_value(scs), 0};
+  ocudulog::basic_logger&         logger = ocudulog::fetch_basic_logger("SCHED");
+  ue_drx_controller               drx{scs, conres_timer, drx_cfg, ue_lc_chs.view(), ul_ccch_slot, logger};
+
+  const unsigned period_slots = drx_cfg.has_value() ? drx_cfg->long_cycle.count() * get_nof_slots_per_subframe(scs) : 0;
+  const unsigned offset_slot =
+      drx_cfg.has_value() ? drx_cfg->long_start_offset.count() * get_nof_slots_per_subframe(scs) : 0;
+  const unsigned on_dur_slots =
+      drx_cfg.has_value() ? drx_cfg->on_duration_timer.count() * get_nof_slots_per_subframe(scs) : 0;
+  const unsigned inactivity_slots =
+      drx_cfg.has_value() ? drx_cfg->inactivity_timer.count() * get_nof_slots_per_subframe(scs) : 0;
+
+  slot_point next_slot{test_helper::generate_random_slot_point(scs)};
+  slot_point cur_slot;
+};
+
+class drx_disabled_ue_drx_controller_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  drx_disabled_ue_drx_controller_test() : base_ue_drx_controller_test(std::nullopt) {}
+};
+
+TEST_F(drx_disabled_ue_drx_controller_test, when_no_drx_config_provided_pdcch_is_always_available)
+{
+  static constexpr unsigned nof_tests = 16;
+  for (unsigned i = 0; i != nof_tests; ++i) {
+    tick();
+    ASSERT_TRUE(drx.is_pdcch_enabled());
+  }
+}
+
+class ue_drx_controller_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  ue_drx_controller_test() : base_ue_drx_controller_test(drx_config{msec{80}, msec{10}, msec{20}, msec{10}}) {}
+};
+
+TEST_F(ue_drx_controller_test, when_drx_config_provided_slot_offset_and_on_duration_are_respected)
+{
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    const unsigned slot_mod         = cur_slot.count() % period_slots;
+    bool           enabled          = drx.is_pdcch_enabled();
+    bool           in_active_window = slot_mod >= offset_slot and slot_mod < (offset_slot + on_dur_slots);
+
+    ASSERT_EQ(enabled, in_active_window);
+  }
+}
+
+TEST_F(ue_drx_controller_test, when_pdcch_sent_then_on_duration_extended_by_inactivity_timer)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  // Make sure drx-InactivityTimer stops after drx-onDurationTimer.
+  const unsigned pdcch_idx  = test_rng::uniform_int<unsigned>(offset_slot + on_dur_slots - inactivity_slots + 1,
+                                                             offset_slot + on_dur_slots - 1);
+  const unsigned active_end = pdcch_idx + inactivity_slots;
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    if (i == pdcch_idx) {
+      // Note: for DL PDCCH grants `pxsch_slot` is ignored.
+      drx.on_new_dl_pdcch_alloc(cur_slot);
+    }
+
+    bool enabled = drx.is_pdcch_enabled();
+    if (i < offset_slot) {
+      ASSERT_FALSE(enabled);
+    } else if (i < active_end) {
+      ASSERT_TRUE(enabled) << fmt::format(
+          "Failed active window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    } else {
+      ASSERT_FALSE(enabled) << fmt::format(
+          "Failed inactive window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    }
+  }
+}
+
+TEST_F(ue_drx_controller_test, when_sr_is_pending_then_drx_is_in_active_time)
+{
+  ue_lc_chs.handle_sr_indication(cur_slot);
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    ASSERT_TRUE(drx.is_pdcch_enabled());
+  }
+
+  ue_lc_chs.reset_sr_indication();
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    const unsigned slot_mod         = cur_slot.count() % period_slots;
+    bool           enabled          = drx.is_pdcch_enabled();
+    bool           in_active_window = slot_mod >= offset_slot and slot_mod < (offset_slot + on_dur_slots);
+
+    ASSERT_EQ(enabled, in_active_window);
+  }
+}
+
+TEST_F(ue_drx_controller_test, when_conres_timer_is_running_then_drx_is_active)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  const unsigned con_res_timer_slots = conres_timer.count() * get_nof_slots_per_subframe(scs);
+
+  drx.on_con_res_start();
+
+  for (unsigned i = 0; i != con_res_timer_slots; ++i) {
+    tick();
+    ASSERT_TRUE(drx.is_pdcch_enabled()) << "DRX should be active while ra-ConResTimer is running";
+  }
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    const unsigned slot_mod         = cur_slot.count() % period_slots;
+    bool           enabled          = drx.is_pdcch_enabled();
+    bool           in_active_window = slot_mod >= offset_slot and slot_mod < (offset_slot + on_dur_slots);
+
+    ASSERT_EQ(enabled, in_active_window);
+  }
+}
+
+// Use
+class ue_drx_controller_slot_point_limit_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  ue_drx_controller_slot_point_limit_test() :
+    base_ue_drx_controller_test(drx_config{msec{10240}, msec{10000}, msec{800}, msec{0}})
+  {
+  }
+};
+
+TEST_F(ue_drx_controller_slot_point_limit_test,
+       when_on_duration_window_end_is_higher_than_slot_point_period_the_window_is_respected)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  // For this test we want to force part of the window to fall on the next period.
+  ASSERT_GT(offset_slot + on_dur_slots, period_slots);
+  for (unsigned i = 0; i != 2 * period_slots; ++i) {
+    tick();
+
+    const unsigned slot_mod         = cur_slot.count() % period_slots;
+    bool           enabled          = drx.is_pdcch_enabled();
+    bool           in_active_window = slot_mod >= offset_slot or slot_mod < (offset_slot + on_dur_slots) % period_slots;
+    ASSERT_EQ(enabled, in_active_window);
+  }
+}
+
+class ue_drx_controller_no_inactivity_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  ue_drx_controller_no_inactivity_test() :
+    base_ue_drx_controller_test(drx_config{msec{80}, msec{20}, msec{20}, msec{0}})
+  {
+  }
+};
+
+TEST_F(ue_drx_controller_no_inactivity_test, when_pdcch_received_then_activity_is_not_extended)
+{
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    const unsigned slot_mod         = cur_slot.count() % period_slots;
+    bool           enabled          = drx.is_pdcch_enabled();
+    bool           in_active_window = slot_mod >= offset_slot and slot_mod < (offset_slot + on_dur_slots);
+
+    if (in_active_window) {
+      // New PDCCH took place but it has no effect in active time.
+      // Note: for DL PDCCH grants `pxsch_slot` is ignored.
+      this->drx.on_new_dl_pdcch_alloc(cur_slot);
+    }
+
+    ASSERT_EQ(enabled, in_active_window);
+  }
+}
+
+class ue_drx_controller_retx_ul_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  ue_drx_controller_retx_ul_test() :
+    base_ue_drx_controller_test(drx_config{msec{80}, msec{20}, msec{20}, msec{0}, 0, 20})
+  {
+  }
+};
+
+TEST_F(ue_drx_controller_retx_ul_test, when_pdcch_sent_then_on_duration_extended_by_retx_timer_ul)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  static constexpr unsigned k2 = 4;
+  // Make sure drx-RetransmissionTimerUL stops after drx-onDurationTimer.
+  const unsigned pusch_idx = test_rng::uniform_int<unsigned>(offset_slot + on_dur_slots - drx_cfg->retx_timer_ul + 1,
+                                                             offset_slot + on_dur_slots - 1);
+  const unsigned pdcch_idx = pusch_idx - k2;
+  ASSERT_TRUE(pdcch_idx > offset_slot);
+  const unsigned active_end = pusch_idx + drx_cfg->retx_timer_ul;
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    if (i == pdcch_idx) {
+      drx.on_new_ul_pdcch_alloc(cur_slot, cur_slot + k2);
+    }
+
+    bool enabled = drx.is_pdcch_enabled();
+    if (i < offset_slot) {
+      ASSERT_FALSE(enabled);
+    } else if (i < active_end) {
+      ASSERT_TRUE(enabled) << fmt::format(
+          "Failed active window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    } else {
+      ASSERT_FALSE(enabled) << fmt::format(
+          "Failed inactive window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    }
+  }
+}
+
+class ue_drx_controller_retx_dl_test : public base_ue_drx_controller_test, public testing::Test
+{
+protected:
+  ue_drx_controller_retx_dl_test() :
+    base_ue_drx_controller_test(drx_config{msec{80}, msec{20}, msec{20}, msec{0}, 20, 0})
+  {
+  }
+};
+
+TEST_F(ue_drx_controller_retx_dl_test,
+       when_pdcch_sent_and_dl_harq_nack_received_then_on_duration_extended_by_retx_timer_dl)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  static constexpr unsigned k0 = 0;
+  static constexpr unsigned k1 = 4;
+
+  // Make sure drx-RetransmissionTimerDL stops after drx-onDurationTimer.
+  const unsigned pucch_idx = test_rng::uniform_int<unsigned>(offset_slot + on_dur_slots - drx_cfg->retx_timer_dl + 1,
+                                                             offset_slot + on_dur_slots - 1);
+  const unsigned pdcch_idx = pucch_idx - (k0 + k1);
+  ASSERT_TRUE(pdcch_idx > offset_slot);
+  const unsigned active_end = pucch_idx + drx_cfg->retx_timer_dl;
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    if (i == pdcch_idx) {
+      drx.on_new_dl_pdcch_alloc(cur_slot);
+    }
+
+    if (i == pucch_idx) {
+      drx.on_dl_harq_nack(cur_slot);
+    }
+
+    bool enabled = drx.is_pdcch_enabled();
+    if (i < offset_slot) {
+      ASSERT_FALSE(enabled);
+    } else if (i < active_end) {
+      ASSERT_TRUE(enabled) << fmt::format(
+          "Failed active window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    } else {
+      ASSERT_FALSE(enabled) << fmt::format(
+          "Failed inactive window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    }
+  }
+}
+
+TEST_F(ue_drx_controller_retx_dl_test,
+       when_pdcch_sent_and_dl_harq_nack_not_received_then_on_duration_is_not_extended_by_retx_timer_dl)
+{
+  next_slot = slot_point{to_numerology_value(scs), 0};
+
+  static constexpr unsigned k0 = 0;
+  static constexpr unsigned k1 = 4;
+
+  // Make sure drx-RetransmissionTimerDL stops after drx-onDurationTimer.
+  const unsigned pucch_idx = test_rng::uniform_int<unsigned>(offset_slot + on_dur_slots - drx_cfg->retx_timer_dl + 1,
+                                                             offset_slot + on_dur_slots - 1);
+  const unsigned pdcch_idx = pucch_idx - (k0 + k1);
+  ASSERT_TRUE(pdcch_idx > offset_slot);
+  const unsigned active_end = offset_slot + on_dur_slots;
+
+  for (unsigned i = 0; i != period_slots; ++i) {
+    tick();
+
+    if (i == pdcch_idx) {
+      drx.on_new_dl_pdcch_alloc(cur_slot);
+    }
+
+    bool enabled = drx.is_pdcch_enabled();
+    if (i < offset_slot) {
+      ASSERT_FALSE(enabled);
+    } else if (i < active_end) {
+      ASSERT_TRUE(enabled) << fmt::format(
+          "Failed active window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    } else {
+      ASSERT_FALSE(enabled) << fmt::format(
+          "Failed inactive window detection at slot_mod={}, window=[{},{})", i, offset_slot, active_end);
+    }
+  }
+}

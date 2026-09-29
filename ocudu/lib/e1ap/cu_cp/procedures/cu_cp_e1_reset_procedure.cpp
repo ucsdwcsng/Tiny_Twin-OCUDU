@@ -1,0 +1,116 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "cu_cp_e1_reset_procedure.h"
+#include "common/e1ap_asn1_converters.h"
+#include "ocudu/asn1/e1ap/common.h"
+#include "ocudu/asn1/e1ap/e1ap_pdu_contents.h"
+#include "ocudu/e1ap/common/e1ap_message.h"
+
+using namespace ocudu;
+using namespace ocucp;
+
+cu_cp_e1_reset_procedure::cu_cp_e1_reset_procedure(const e1ap_configuration& e1ap_cfg_,
+                                                   const cu_cp_reset&        reset_,
+                                                   e1ap_message_notifier&    pdu_notifier_,
+                                                   e1ap_transaction_manager& ev_mng_,
+                                                   e1ap_ue_context_list&     ue_ctxt_list_,
+                                                   ocudulog::basic_logger&   logger_) :
+  e1ap_cfg(e1ap_cfg_),
+  reset(reset_),
+  pdu_notifier(pdu_notifier_),
+  ev_mng(ev_mng_),
+  ue_ctxt_list(ue_ctxt_list_),
+  logger(logger_)
+{
+}
+
+void cu_cp_e1_reset_procedure::operator()(coro_context<async_task<void>>& ctx)
+{
+  CORO_BEGIN(ctx);
+
+  logger.info("\"{}\" started...", name());
+
+  // Create transaction.
+  transaction = ev_mng.transactions.create_transaction(e1ap_cfg.proc_timeout);
+
+  // The transaction may already be aborted at this point, e.g. if the E1AP is being stopped. Skip sending the
+  // request in that case, since nothing will ever observe its response.
+  if (transaction.aborted()) {
+    logger.warning("\"{}\" failed. Cause: Timeout reached for E1ResetAcknowledge reception", name());
+    CORO_EARLY_RETURN();
+  }
+
+  // Forward message to CU-UP.
+  if (not send_e1_reset()) {
+    logger.debug("\"{}\" terminated early, as there are no UEs present at CU-UP", name());
+    CORO_EARLY_RETURN();
+  }
+
+  // Await CU-UP response.
+  CORO_AWAIT(transaction);
+
+  if (transaction.aborted()) {
+    logger.warning("\"{}\" failed. Cause: Timeout reached for E1ResetAcknowledge reception", name());
+    CORO_EARLY_RETURN();
+  }
+
+  // TODO: Handle E1 RESET ACKNOWLEDGE message.
+
+  logger.info("\"{}\" finished successfully", name());
+
+  CORO_RETURN();
+}
+
+bool cu_cp_e1_reset_procedure::send_e1_reset()
+{
+  // Pack message into PDU.
+  e1ap_message e1ap_msg;
+  e1ap_msg.pdu.set_init_msg().load_info_obj(ASN1_E1AP_ID_RESET);
+  asn1::e1ap::reset_s& e1_reset = e1ap_msg.pdu.init_msg().value.reset();
+  e1_reset->transaction_id      = transaction.id();
+  e1_reset->cause               = cause_to_asn1(std::get<e1ap_cause_t>(reset.cause));
+  if (reset.interface_reset) {
+    // Reset all UEs.
+    e1_reset->reset_type.set_e1_interface() = asn1::e1ap::reset_all_opts::options::reset_all;
+
+    // Send E1 Reset to CU-UP.
+    pdu_notifier.on_new_message(e1ap_msg);
+    return true;
+  }
+
+  // Reset only specific UEs.
+  asn1::e1ap::ue_associated_lc_e1_conn_list_res_l& reset_part_of_e1_interface =
+      e1_reset->reset_type.set_part_of_e1_interface();
+  for (const auto& ue : reset.ues_to_reset) {
+    if (!ue_ctxt_list.contains(ue)) {
+      logger.debug("ue={}: Excluding UE from E1 Reset. UE context does not exist", ue);
+    } else {
+      auto& ue_ctxt = ue_ctxt_list[ue];
+
+      asn1::protocol_ie_single_container_s<asn1::e1ap::ue_associated_lc_e1_conn_item_res_o> item_container;
+      asn1::e1ap::ue_associated_lc_e1_conn_item_s& conn_item = item_container->ue_associated_lc_e1_conn_item();
+
+      if (ue_ctxt.ue_ids.cu_cp_ue_e1ap_id != gnb_cu_cp_ue_e1ap_id_t::invalid) {
+        conn_item.gnb_cu_cp_ue_e1ap_id_present = true;
+        conn_item.gnb_cu_cp_ue_e1ap_id         = to_underlying(ue_ctxt.ue_ids.cu_cp_ue_e1ap_id);
+      }
+      if (ue_ctxt.ue_ids.cu_up_ue_e1ap_id != gnb_cu_up_ue_e1ap_id_t::invalid) {
+        conn_item.gnb_cu_up_ue_e1ap_id_present = true;
+        conn_item.gnb_cu_up_ue_e1ap_id         = to_underlying(ue_ctxt.ue_ids.cu_up_ue_e1ap_id);
+      }
+
+      reset_part_of_e1_interface.push_back(item_container);
+    }
+  }
+
+  if (reset_part_of_e1_interface.size() == 0u) {
+    // No E1 UEs to release. Skipping sending E1 reset.
+    return false;
+  }
+
+  // Send the E1 Reset to CU-UP.
+  pdu_notifier.on_new_message(e1ap_msg);
+  return true;
+}

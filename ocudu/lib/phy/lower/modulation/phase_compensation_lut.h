@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/complex.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ran/cyclic_prefix.h"
+#include "ocudu/ran/slot_point.h"
+#include "ocudu/ran/subcarrier_spacing.h"
+
+namespace ocudu {
+
+/// \brief Phase compensation as per TS38.211 Section 5.4.
+///
+/// Implements the phase compensation for OFDM modulation and demodulation as described in TS38.211 Section 5.4. The
+/// phase compensation is implemented as a look-up table populated at construction time.
+class phase_compensation_lut
+{
+  /// Stores the coefficients for every symbol in a subframe.
+  static_vector<cf_t, MAX_NSYMB_PER_SLOT * get_nof_slots_per_subframe(subcarrier_spacing::kHz240)> coefficients;
+
+public:
+  /// \brief Constructs the phase compensation look-up table.
+  /// \param[in] scs                 Subcarrier spacing.
+  /// \param[in] cp                  Cyclic Prefix.
+  /// \param[in] dft_size            DFT size.
+  /// \param[in] center_frequency_Hz Center frequency in Hz.
+  /// \param[in] is_tx               Set to true if the phase correction table is for transmission.
+  phase_compensation_lut(subcarrier_spacing scs,
+                         cyclic_prefix      cp,
+                         unsigned           dft_size,
+                         double             center_frequency_Hz,
+                         bool               is_tx)
+  {
+    double sampling_rate_Hz = to_sampling_rate_Hz(scs, dft_size);
+    ocudu_assert(std::isnormal(sampling_rate_Hz),
+                 "Invalid sampling rate from SCS {} kHz and DFT size {}.",
+                 scs_to_khz(scs),
+                 dft_size);
+
+    unsigned nslot_per_subframe = get_nof_slots_per_subframe(scs);
+    unsigned nsymb_per_slot     = get_nsymb_per_slot(cp);
+    double   sign_two_pi        = ((is_tx) ? -1 : 1) * 2.0 * M_PI;
+
+    // Clear coefficient list.
+    coefficients.clear();
+
+    // For each symbol in a subframe.
+    for (unsigned symbol = 0, symbol_offset = 0; symbol != nslot_per_subframe * nsymb_per_slot; ++symbol) {
+      // Add cyclic prefix length to the symbol offset.
+      symbol_offset += cp.get_length(symbol, scs).to_samples(sampling_rate_Hz);
+
+      // Calculate the time between the start of the subframe and the start of the symbol.
+      double start_time_s = static_cast<double>(symbol_offset) / sampling_rate_Hz;
+
+      // Calculate the phase in radians.
+      double symbol_phase = sign_two_pi * center_frequency_Hz * start_time_s;
+
+      // Calculate phase compensation.
+      coefficients.emplace_back(static_cast<cf_t>(std::polar(1.0, symbol_phase)));
+
+      // Advance the symbol size.
+      symbol_offset += dft_size;
+    }
+  }
+
+  /// \brief Get the phase compensation for a symbol.
+  /// \param[in] symbol_index Symbol index within a subframe.
+  /// \return The phase compensation coefficient for a given symbol within a subframe.
+  /// \remark An assertion is triggered if the symbol index exceeds the number of symbols in a subframe.
+  cf_t get_coefficient(unsigned symbol_index) const
+  {
+    ocudu_assert(symbol_index < coefficients.size(),
+                 "The symbol index within a subframe {} exceeds the number of symbols in the subframe {}.",
+                 symbol_index,
+                 coefficients.size());
+    return coefficients[symbol_index];
+  }
+};
+
+} // namespace ocudu

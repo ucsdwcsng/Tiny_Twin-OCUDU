@@ -1,0 +1,287 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+/// \file
+/// \brief Configuration structs passed to scheduler implementation.
+
+#include "ocudu/adt/interval.h"
+#include "ocudu/ran/direct_current_offset.h"
+#include "ocudu/ran/pdcch/aggregation_level.h"
+#include "ocudu/ran/resource_allocation/vrb_to_prb.h"
+#include "ocudu/ran/resource_block.h"
+#include "ocudu/ran/sch/sch_mcs.h"
+#include "ocudu/ran/sib/sib_configuration.h"
+#include "ocudu/ran/slot_pdu_capacity_constants.h"
+#include "ocudu/ran/srs/srs_configuration.h"
+#include <chrono>
+#include <variant>
+#include <vector>
+
+namespace ocudu {
+
+/// \brief QoS-aware scheduler policy parameters.
+struct time_qos_scheduler_config {
+  /// \brief Scheduler sub-weight combination function to use.
+  ///
+  /// It aggregates the multiple sub-weight functions (e.g. GBR, PF) into a single weight that will be used to
+  /// determine the scheduling priority of a given UE.
+  /// Supported:
+  /// - gbr_prioritized - logical channels with GBR get always prioritized if their BR < GBR.
+  /// - geometric_mean - different weight functions (e.g. GBR, PF) for a given logical channel are "averaged" to obtain
+  /// the final weight function. This weight function was inspired by B. Bojovic, N. Baldo, “A new Channel and QoS Aware
+  /// Scheduler to enhance the capacity of Voice over LTE systems”, in Proceedings of 11th International
+  /// Multi-Conference on Systems, Signals & Devices (SSD’14), Castelldefels, 11-14 February 2014, Castelldefels
+  /// (Spain).
+  enum class combine_function_type { gbr_prioritized, geometric_mean };
+
+  /// \brief Determines how the scheduler policy will combine the different sub-weights.
+  combine_function_type combine_function = combine_function_type::gbr_prioritized;
+  /// \brief Fairness Coefficient to use in Proportional Fair weight of the QoS-aware policy.
+  /// For a coefficient of zero, the PF weight prioritizes maximum rate.
+  /// As the coefficient tends towards infinity, the PF weight prioritizes fairness in throughput distribution.
+  double pf_fairness_coeff = 2.0;
+  /// Whether to take into account or ignore the QoS Flow priority and ARP priority in the QoS-aware scheduling.
+  bool priority_enabled = true;
+  /// Whether to take into account or ignore the QoS Flow Packet Delay Budget (PDB) in the QoS-aware scheduling.
+  bool pdb_enabled = true;
+  /// Whether to take into account or ignore the QoS Flow Guaranteed Bit Rate (GBR) in the QoS-aware scheduling.
+  bool gbr_enabled = true;
+};
+
+/// \brief Round-Robin policy scheduler expert parameters.
+struct time_rr_scheduler_config {};
+
+/// \brief Scheduler policy parameters.
+using scheduler_policy_config = std::variant<time_qos_scheduler_config, time_rr_scheduler_config>;
+
+struct ul_power_control {
+  /// Enable closed-loop PUSCH power control.
+  bool enable_pusch_cl_pw_control = false;
+  /// Enable bandwidth adaptation to prevent negative PHR.
+  bool enable_phr_bw_adaptation = false;
+  /// Target PUSCH SINR to be achieved with Close-loop power control, in dB.
+  /// Only relevant if \c enable_closed_loop_pw_control is set to true.
+  float target_pusch_sinr{10.0f};
+  /// Path-loss at which the Target PUSCH SINR is expected to be achieved, in dB.
+  /// This is used to compute the path loss compensation for PUSCH fractional power control.
+  /// Only relevant if \c enable_closed_loop_pw_control is set to true.
+  float path_loss_for_target_pusch_sinr{70.0f};
+  /// Enable closed-loop PUCCH power control.
+  bool enable_pucch_cl_pw_control = false;
+  /// Target PUCCH SINR to be achieved with Close-loop power control, in dB, for the PUCCH formats 0, 2 and 3.
+  float pucch_f0_sinr_target_dB = 6.0f;
+  float pucch_f2_sinr_target_dB = 3.0f;
+  float pucch_f3_sinr_target_dB = -3.0f;
+  /// Smoothing factor "alpha" for Exponential Moving Average filter of PUSCH Closed-Loop Power Control SINR.
+  /// Range: (0, 1).
+  float ema_alpha_cl_pw_control_sinr{0.5f};
+  /// Smoothing factor "alpha" for Exponential Moving Average filter of PUCCH Closed-Loop Power Control SINR.
+  /// Range: (0, 1).
+  float ema_alpha_cl_pw_control_pucch_sinr{0.5f};
+};
+
+/// \brief Time Advance (TA) control-loop and MAC CE scheduling parameters.
+///
+/// These parameters define the behaviour of the Time Advance manager and on how the Time Advance Command (\f$T_A\f$)
+/// is triggered.
+///
+/// The TA measurement is reported from the physical layer, averaged over a \ref ta_measurement_slot_period and
+/// outliers are filtered out. The final estimated TA is rounded to the nearest TA unit.
+/// \remark T_A is defined in TS 38.213, clause 4.2.
+struct scheduler_ta_control_config {
+  /// Measurements periodicity in nof. slots over which the new Timing Advance Command is computed.
+  unsigned measurement_period{80};
+  /// \brief Delay in nof. slots between issuing the TA_CMD and starting TA measurements.
+  ///
+  /// This parameter specifies the mandatory waiting period (i.e. the prohibit period) that must elapse after the
+  /// Timing Advance command (TA_CMD) is issued before the system begins its Timing Advance measurements.
+  /// The delay allows the system to settle, ensuring that measurements are taken under stable conditions.
+  unsigned measurement_prohibit_period{0};
+  /// \brief Timing Advance Command (T_A) offset threshold.
+  ///
+  /// A TA command is triggered if the estimated TA is equal to or greater than this threshold. Possible valid values
+  /// are {0,...,32}.
+  ///
+  /// If set to less than zero, issuing of TA Command is disabled.
+  int8_t ta_cmd_offset_threshold{1};
+  /// \brief Timing Advance target in units of TA.
+  ///
+  /// Offsets the target TA measurements so the signal from the UE is kept delayed. This parameter is useful for
+  /// avoiding negative TA when the UE is getting away.
+  float target = 0.0F;
+  /// UL SINR threshold (in dB) above which reported N_TA update measurement is considered valid.
+  float update_measurement_ul_sinr_threshold = 0.0F;
+  /// \brief Z-score threshold for outlier detection in N_TA measurements.
+  ///
+  /// This parameter controls the sensitivity of the outlier detection algorithm used to filter out invalid
+  /// N_TA update measurements. The algorithm uses Welford's method to compute the mean and standard deviation
+  /// of N_TA differences, and measurements that deviate from the mean by more than this threshold multiplied by
+  /// the standard deviation are considered outliers and discarded.
+  ///
+  /// A lower value makes the filter more aggressive (rejects more measurements), while a higher value makes it
+  /// more permissive. Typical values range from 1.5 to 3.0. The default value of 1.75 provides a balance between
+  /// filtering noise while preserving valid measurements.
+  ///
+  /// Setting this parameter to 0.0 disables outlier detection entirely, allowing all measurements to pass through
+  /// regardless of their deviation from the mean.
+  float outlier_detection_zscore_threshold = 1.75F;
+};
+
+/// \brief UE scheduling statically configurable expert parameters.
+struct scheduler_ue_expert_config {
+  /// Range of allowed MCS indices for DL UE scheduling. To use a fixed mcs, set the minimum mcs equal to the maximum.
+  interval<sch_mcs_index, true> dl_mcs{0, 28};
+  /// Sequence of redundancy versions used for PDSCH scheduling. Possible values: {0, 1, 2, 3}.
+  std::vector<uint8_t> pdsch_rv_sequence = {0};
+  /// Range of allowed MCS indices for UL UE scheduling. To use a fixed mcs, set the minimum mcs equal to the maximum.
+  interval<sch_mcs_index, true> ul_mcs{0, 28};
+  /// Sequence of redundancy versions used for PUSCH scheduling. Possible values: {0, 1, 2, 3}.
+  std::vector<uint8_t> pusch_rv_sequence = {0};
+  /// CQI used to derived the MCS for DL scheduling, when no CSI has been reported yet.
+  unsigned initial_cqi = 3;
+  /// Maximum number of DL HARQ retxs.
+  unsigned max_nof_dl_harq_retxs = 4;
+  /// Maximum number of UL HARQ retxs.
+  unsigned max_nof_ul_harq_retxs = 4;
+  /// Timeout for DL HARQ with pending retransmission to be discarded.
+  std::chrono::milliseconds dl_harq_retx_timeout{100};
+  /// Timeout for UL HARQ with pending retransmission to be discarded.
+  std::chrono::milliseconds ul_harq_retx_timeout{100};
+  /// Maximum MCS index that can be assigned when scheduling MSG4.
+  sch_mcs_index max_msg4_mcs = 9;
+  /// Initial UL SINR value used for Dynamic UL MCS computation (in dB).
+  double initial_ul_sinr = 5.0;
+  /// Enable multiplexing of CSI-RS and PDSCH.
+  bool enable_csi_rs_pdsch_multiplexing = true;
+  /// Set boundaries, in number of RBs, for UE PDSCH grants.
+  interval<unsigned> pdsch_nof_rbs{1, MAX_NOF_PRBS};
+  /// Set boundaries, in number of RBs, for UE PUSCH grants.
+  interval<unsigned> pusch_nof_rbs{1, MAX_NOF_PRBS};
+  /// Direct Current (DC) offset, in number of subcarriers, used in PUSCH, by default. The gNB may supersede this DC
+  /// offset value through RRC messaging. See TS38.331 - "txDirectCurrentLocation".
+  dc_offset_t initial_ul_dc_offset{dc_offset_t::center};
+  /// Maximum number of PDSCH grants per slot.
+  unsigned max_pdschs_per_slot = MAX_PDSCH_PDUS_PER_SLOT;
+  /// Maximum number of PUSCH grants per slot.
+  unsigned max_puschs_per_slot = MAX_PUSCH_PDUS_PER_SLOT;
+  /// Maximum number of PUCCH grants per slot.
+  unsigned max_pucchs_per_slot{31U};
+  /// Maximum number of PUSCH + PUCCH grants per slot.
+  unsigned max_ul_grants_per_slot{32U};
+  /// Maximum number of PDCCH grant allocation attempts per slot. Default: Unlimited.
+  unsigned max_pdcch_alloc_attempts_per_slot = std::max(MAX_DL_PDCCH_PDUS_PER_SLOT, MAX_UL_PDCCH_PDUS_PER_SLOT);
+  /// Offset to apply to the CQI for PDCCH aggregation level calculation.
+  float pdcch_al_cqi_offset = 0;
+  /// CQI offset increment used in outer loop link adaptation (OLLA) algorithm. If set to zero, OLLA is disabled.
+  float olla_cqi_inc{0.001};
+  /// DL Target BLER to be achieved with OLLA.
+  float olla_dl_target_bler{0.01};
+  /// Maximum CQI offset that the OLLA algorithm can apply to the reported CQI.
+  float olla_max_cqi_offset{4.0};
+  /// UL SNR offset increment in dB used in OLLA algorithm. If set to zero, OLLA is disabled.
+  float olla_ul_snr_inc{0.001};
+  /// UL Target BLER to be achieved with OLLA.
+  float olla_ul_target_bler{0.01};
+  /// Maximum UL SNR offset that the OLLA algorithm can apply on top of the estimated UL SINR.
+  float olla_max_ul_snr_offset{5.0};
+  /// Minimum PUSCH SINR, in dB, that a CRC must report to be considered by the UL OLLA algorithm. CRCs reporting a
+  /// lower SINR are ignored, as they are unreliable indicators of the link adaptation bias.
+  float olla_ul_min_pusch_snr{-10.0};
+  /// \brief Effective CQI threshold below which the scheduler uses PDSCH repetitions
+  /// for UEs configured with the Rel-16 dedicated PDSCH TDRA list. Value 0 disables CQI-triggered repetitions.
+  float pdsch_cqi_rep_threshold{0.0f};
+  /// Threshold for drop in CQI of the first HARQ transmission above which HARQ retransmissions are cancelled.
+  uint8_t dl_harq_la_cqi_drop_threshold{2};
+  /// Threshold for drop in nof. layers of the first HARQ transmission above which HARQ retransmission is cancelled.
+  uint8_t dl_harq_la_ri_drop_threshold{1};
+  /// Boundaries in RB interval for resource allocation of UE PDSCHs.
+  crb_interval pdsch_crb_limits{0, MAX_NOF_PRBS};
+  /// Bundle size used for interleaving. Possible values: {0, 2, 4}. When set to 0, interleaving is disabled.
+  vrb_to_prb::mapping_type pdsch_interleaving_bundle_size{vrb_to_prb::mapping_type::non_interleaved};
+  /// Boundaries in RB interval for resource allocation of UE PUSCHs.
+  crb_interval pusch_crb_limits{0, MAX_NOF_PRBS};
+  /// Minimum distance between PUCCH and PUSCH in number of PRBs.
+  unsigned min_pucch_pusch_prb_distance = 1;
+  /// \brief SINR threshold, in dB, below which PUCCH PDUs are always considered invalid.
+  /// If not set, no SINR-based filtering of PUCCH UCI indications is applied.
+  std::optional<float> pucch_sinr_threshold_dB;
+  /// \brief SINR threshold, in dB, below which CG PUSCH PDUs are always considered DTX (i.e., not transmitted).
+  float cg_pusch_sinr_threshold_dB = -8.0;
+  /// Configuration of the scheduler policy. Currently, time-domain round-robin and time-domain QoS-aware are supported.
+  scheduler_policy_config policy_cfg = time_qos_scheduler_config{};
+  /// \brief Size of the group of UEs that is considered for newTx allocation in a given slot. The groups of UEs
+  /// will rotate in a round-robin fashion.
+  /// To minimize computation load, a lower group size can be used. If the QoS scheduler policy is used, this will
+  /// mean that the QoS priority is only computed to a subset of UEs and the scheduler will operate like a hybrid of
+  /// round-robin and QoS.
+  unsigned pre_policy_rr_ue_group_size = 32;
+  /// Expert PUCCH/PUSCH power control parameters.
+  ul_power_control ul_power_ctrl = ul_power_control{};
+  /// TA control parameters.
+  scheduler_ta_control_config ta_control;
+  /// \bierf Defines a time window starting from the last sent aperiodic SRS within which any new allocation of
+  /// aperiodic SRS is not allowed. Only applies to aperiodic SRS.
+  std::optional<srs_periodicity> srs_prohibit_time;
+};
+
+/// \brief System Information scheduling statically configurable expert parameters.
+struct scheduler_si_expert_config {
+  /// As per TS 38.214, Section 5.1.3.1, only an MCS with modulation order 2 allowed for SIB1.
+  sch_mcs_index     sib1_mcs_index          = 5;
+  aggregation_level sib1_dci_aggr_lev       = aggregation_level::n4;
+  sch_mcs_index     si_message_mcs_index    = 5;
+  aggregation_level si_message_dci_aggr_lev = aggregation_level::n4;
+  /// SIB1 retx period.
+  sib1_rtx_periodicity sib1_retx_period = sib1_rtx_periodicity::ms160;
+};
+
+/// \brief Random Access scheduling statically configurable expert parameters.
+struct scheduler_ra_expert_config {
+  /// MCS to use for RAR PDSCH.
+  sch_mcs_index rar_mcs_index = 0;
+  /// MCS to use for Msg3 PUSCH.
+  sch_mcs_index msg3_mcs_index = 0;
+  /// Maximum number of Msg3 PUSCH retransmissions.
+  unsigned max_nof_msg3_harq_retxs = 4;
+  /// Number of RBs that are used as guardband on each side of the PRACH RBs dedicated interval.
+  unsigned nof_prach_guardbands_rbs = 3;
+  /// \brief SNR threshold, in dB, below which a detected PRACH preamble is excluded from the RAR/Msg3 grant and
+  /// triggers the inclusion of a Backoff Indicator subheader in the RAR.
+  /// If not set, no SNR-based filtering of PRACH preambles is applied.
+  std::optional<float> backoff_indicator_snr_threshold_dB;
+  /// \brief Maximum number of preambles accepted per PRACH occasion. Preambles in excess of this number (weakest by
+  /// SNR first) are excluded from the RAR/Msg3 grant and trigger the inclusion of a Backoff Indicator subheader in
+  /// the RAR. Defaults to MAX_PREAMBLES_PER_PRACH_OCCASION, i.e. no filtering.
+  unsigned backoff_indicator_max_preambles = MAX_PREAMBLES_PER_PRACH_OCCASION;
+  /// \brief Requested Backoff Indicator duration signalled in the RAR when congestion control is triggered. Mapped
+  /// by the RA scheduler to the closest value in TS38.321, Table 7.2-1.
+  std::chrono::milliseconds backoff_indicator_duration{40};
+  /// \brief Whether pending UCI may be multiplexed into Contention-free (CF) RAR UL grants, rather than restricting
+  /// the CF RAR UL grants to slots where the UE has no pending PUCCH.
+  /// \remark The TS 38.321 and TS 38.213 are very unclear on whether UCI should be multiplexed in RAR UL grants for
+  /// CFRA (are CFRA RAR UL grants even Msg3s?), so we decided to support both options.
+  bool multiplex_uci_on_cf_rar_ul_grant = true;
+};
+
+/// \brief Paging scheduling statically configurable expert parameters.
+struct scheduler_paging_expert_config {
+  /// As per TS 38.214, Section 5.1.3.1, only an MCS with modulation order 2 allowed for Paging.
+  sch_mcs_index     paging_mcs_index    = 5;
+  aggregation_level paging_dci_aggr_lev = aggregation_level::n4;
+  unsigned          max_paging_retries  = 2;
+};
+
+/// \brief Scheduling statically configurable expert parameters.
+struct scheduler_expert_config {
+  scheduler_si_expert_config     si;
+  scheduler_ra_expert_config     ra;
+  scheduler_paging_expert_config pg;
+  scheduler_ue_expert_config     ue;
+  bool                           log_broadcast_messages       = false;
+  bool                           log_high_latency_diagnostics = false;
+};
+
+} // namespace ocudu

@@ -1,0 +1,239 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/f1u/cu_up/f1u_bearer_logger.h"
+#include "ocudu/f1u/cu_up/f1u_gateway.h"
+#include "ocudu/f1u/du/f1u_bearer_logger.h"
+#include "ocudu/f1u/du/f1u_gateway.h"
+#include "ocudu/gtpu/gtpu_teid_pool.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "fmt/std.h"
+#include <cstdint>
+#include <mutex>
+#include <unordered_map>
+
+namespace ocudu {
+/// \brief Object used to represent a bearer at the CU F1-U gateway
+/// On the co-located case this is done by connecting both entities directly.
+///
+/// It will keep a notifier to the DU NR-U RX and provide the methods to pass
+/// an SDU to it.
+class f1u_gateway_cu_bearer : public f1u_cu_up_gateway_bearer
+{
+public:
+  f1u_gateway_cu_bearer(uint32_t                              ue_index,
+                        drb_id_t                              drb_id,
+                        const gtpu_teid_t&                    ul_teid_,
+                        f1u_cu_up_gateway_bearer_rx_notifier& cu_rx_,
+                        task_executor&                        ul_exec_,
+                        ocuup::f1u_bearer_disconnector&       disconnector_) :
+    ul_tnl_info(transport_layer_address::create_from_string(ul_ip_addr), ul_teid_),
+    logger("CU-F1-U", {ue_index, drb_id, ul_tnl_info}),
+    disconnector(disconnector_),
+    cu_rx(cu_rx_),
+    ul_exec(ul_exec_)
+  {
+  }
+
+  ~f1u_gateway_cu_bearer() override { stop(); }
+
+  void stop() override
+  {
+    if (not stopped) {
+      disconnector.disconnect_cu_bearer(ul_tnl_info);
+    }
+    stopped = true;
+  }
+
+  expected<std::string> get_bind_address() const override { return ul_ip_addr; }
+
+  void attach_du_notifier(odu::f1u_du_gateway_bearer_rx_notifier& notifier_,
+                          const up_transport_layer_info&          dl_tnl_info_)
+  {
+    notifier = &notifier_;
+    dl_tnl_info.emplace(dl_tnl_info_);
+  }
+
+  void detach_du_notifier(const up_transport_layer_info& dl_tnl_info_)
+  {
+    if (dl_tnl_info == dl_tnl_info_) {
+      notifier = nullptr;
+      dl_tnl_info.reset();
+    } else {
+      logger.log_info("Skipped detach of DU bearer from old F-TEID={}. Current F-TEID={}", dl_tnl_info_, dl_tnl_info);
+    }
+  }
+
+  void on_new_pdu(nru_dl_message msg) override
+  {
+    if (notifier == nullptr) {
+      logger.log_info("Cannot handle F1-U GW DL message. F1-U DU GW bearer does not exist.");
+      return;
+    }
+    logger.log_debug("Passing PDU to DU bearer. {}", dl_tnl_info);
+    notifier->on_new_pdu(std::move(msg));
+  }
+
+private:
+  bool stopped = false;
+
+  // On local connector, the local IP address does not exist.
+  // We can then hard-code the address to any valid IP.
+  const std::string       ul_ip_addr = "127.0.10.1";
+  up_transport_layer_info ul_tnl_info;
+
+  ocuup::f1u_bearer_logger                logger;
+  odu::f1u_du_gateway_bearer_rx_notifier* notifier = nullptr;
+  ocuup::f1u_bearer_disconnector&         disconnector;
+
+public:
+  /// Holds notifier that will point to NR-U bearer on the UL path
+  f1u_cu_up_gateway_bearer_rx_notifier& cu_rx;
+
+  /// Holds the DL UP TNL info associated with the F1-U bearer.
+  std::optional<up_transport_layer_info> dl_tnl_info;
+
+  /// Holds the DL UP TNL info associated with the F1-U bearer.
+  task_executor& ul_exec;
+};
+
+class f1u_gateway_du_bearer : public odu::f1u_du_gateway_bearer
+{
+public:
+  f1u_gateway_du_bearer(uint32_t                                ue_index,
+                        drb_id_t                                drb_id,
+                        const gtpu_teid_t&                      dl_teid_,
+                        gtpu_teid_pool&                         dl_teid_pool_,
+                        odu::f1u_du_gateway_bearer_rx_notifier* f1u_rx_,
+                        const up_transport_layer_info&          ul_up_tnl_info_,
+                        odu::f1u_bearer_disconnector&           disconnector_) :
+    f1u_rx(f1u_rx_),
+    ul_up_tnl_info(ul_up_tnl_info_),
+    dl_tnl_info(transport_layer_address::create_from_string(dl_ip_addr), dl_teid_),
+    dl_teid_pool(dl_teid_pool_),
+    logger("DU-F1-U", {ue_index, drb_id, dl_tnl_info}),
+    disconnector(disconnector_)
+  {
+  }
+
+  ~f1u_gateway_du_bearer() override { stop(); }
+
+  void stop() override
+  {
+    if (not stopped) {
+      disconnector.remove_du_bearer(dl_tnl_info);
+      if (!dl_teid_pool.release_teid(dl_tnl_info.gtp_teid)) {
+        logger.log_warning("Failed to release DL GTP-TEID. teid={}", dl_tnl_info.gtp_teid);
+      }
+    }
+    stopped = true;
+  }
+
+  expected<std::string> get_bind_address() const override { return dl_tnl_info.tp_address.to_string(); }
+
+  void attach_cu_notifier(f1u_cu_up_gateway_bearer_rx_notifier& handler_)
+  {
+    std::unique_lock<std::mutex> lock(notifier_mutex);
+    notifier = &handler_;
+  }
+
+  void detach_cu_notifier()
+  {
+    std::unique_lock<std::mutex> lock(notifier_mutex);
+    notifier = nullptr;
+  }
+
+  void on_new_pdu(nru_ul_message msg) override
+  {
+    std::unique_lock<std::mutex> lock(notifier_mutex);
+    if (notifier == nullptr) {
+      logger.log_info("Cannot handle NR-U UL message. CU-UP bearer does not exist.");
+      return;
+    }
+    notifier->on_new_pdu(std::move(msg));
+  }
+  bool                                    stopped = false;
+  odu::f1u_du_gateway_bearer_rx_notifier* f1u_rx  = nullptr;
+
+  // On local connector, the local IP address does not exist.
+  // We can then hard-code the address to any valid IP.
+  const std::string       dl_ip_addr = "127.0.10.2";
+  up_transport_layer_info ul_up_tnl_info;
+  up_transport_layer_info dl_tnl_info;
+  gtpu_teid_pool&         dl_teid_pool;
+
+  odu::f1u_bearer_logger logger;
+
+  f1u_cu_up_gateway_bearer_rx_notifier* notifier = nullptr;
+  std::mutex                            notifier_mutex;
+  odu::f1u_bearer_disconnector&         disconnector;
+};
+
+/// \brief Object used to connect the DU and CU-UP F1-U bearers
+/// On the co-located case this is done by connecting both entities directly.
+///
+/// Note that CU and DU bearer creation and removal can be performed from different threads and are therefore
+/// protected by a common mutex.
+class f1u_local_connector final : public odu::f1u_du_gateway, public f1u_cu_up_gateway
+{
+public:
+  f1u_local_connector() :
+    logger_cu(ocudulog::fetch_basic_logger("CU-F1-U")), logger_du(ocudulog::fetch_basic_logger("DU-F1-U"))
+  {
+  }
+
+  // The local connector does not need to stop the UDP gateway or the GTP-U Demux,
+  // so this function is a NO-OP.
+  void stop() override {}
+
+  odu::f1u_du_gateway* get_f1u_du_gateway() { return this; }
+  f1u_cu_up_gateway&   get_f1u_cu_up_gateway() { return *this; }
+
+  std::unique_ptr<f1u_cu_up_gateway_bearer> create_cu_bearer(uint32_t                              ue_index,
+                                                             s_nssai_t                             snssai,
+                                                             drb_id_t                              drb_id,
+                                                             five_qi_t                             five_qi,
+                                                             const ocuup::f1u_config&              config,
+                                                             const gtpu_teid_t&                    ul_teid,
+                                                             f1u_cu_up_gateway_bearer_rx_notifier& rx_notifier,
+                                                             task_executor&                        ul_exec) override;
+
+  void attach_dl_teid(const up_transport_layer_info& ul_up_tnl_info,
+                      const up_transport_layer_info& dl_up_tnl_info) override;
+
+  void disconnect_cu_bearer(const up_transport_layer_info& ul_up_tnl_info) override;
+
+  std::unique_ptr<odu::f1u_du_gateway_bearer> create_du_bearer(uint32_t                                ue_index,
+                                                               drb_id_t                                drb_id,
+                                                               s_nssai_t                               s_nssai,
+                                                               five_qi_t                               five_qi,
+                                                               odu::f1u_config                         config,
+                                                               const gtpu_teid_t&                      dl_up_tnl_info,
+                                                               gtpu_teid_pool&                         dl_teid_pool,
+                                                               const up_transport_layer_info&          ul_up_tnl_info,
+                                                               odu::f1u_du_gateway_bearer_rx_notifier& du_rx,
+                                                               timer_factory                           timers,
+                                                               task_executor& ue_executor) override;
+
+  void remove_du_bearer(const up_transport_layer_info& dl_up_tnl_info) override;
+
+  expected<std::string> get_du_bind_address(gnb_du_id_t gnb_du_id) const override
+  {
+    return fmt::format("127.0.0.{}", 1 + static_cast<uint32_t>(gnb_du_id));
+  }
+
+private:
+  ocudulog::basic_logger& logger_cu;
+  ocudulog::basic_logger& logger_du;
+  // Key is the UL UP TNL Info (CU-CP address and UL TEID reserved by CU-CP)
+  std::unordered_map<gtpu_teid_t, f1u_gateway_cu_bearer*, gtpu_teid_hasher_t> cu_map;
+  // Key is the DL UP TNL Info (DU address and DL TEID reserved by DU)
+  std::unordered_map<gtpu_teid_t, f1u_gateway_du_bearer*, gtpu_teid_hasher_t> du_map;
+
+  std::mutex map_mutex; // shared mutex for access to cu_map and du_map
+};
+
+} // namespace ocudu

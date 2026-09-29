@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "crc_calculator_lut_impl.h"
+#include "ocudu/phy/upper/channel_coding/crc_calculator.h"
+
+namespace ocudu {
+
+/// \brief CRC calculator implementation based on the \e vmull_p64 instruction.
+///
+/// Port of the \e soft-crc implementation copyrighted by Intel Corporation and licensed under BSD.
+/// Source: https://github.com/intel/soft-crc
+///
+/// "Fast CRC Computation for Generic Polynomials Using PCLMULQDQ Instruction"
+/// URL: http://download.intel.com/design/intarch/papers/323102.pdf
+class crc_calculator_neon_impl : public crc_calculator
+{
+public:
+  /// Default constructor from a polynomial.
+  crc_calculator_neon_impl(crc_generator_poly poly_) : poly(poly_), crc_calc_lut(poly) {}
+
+  // See interface for documentation.
+  crc_calculator_checksum_t calculate_byte(span<const uint8_t> data) const override;
+
+  // See interface for documentation.
+  crc_calculator_checksum_t calculate_bit(span<const uint8_t> data) const override;
+
+  // See interface for documentation.
+  crc_calculator_checksum_t calculate(const bit_buffer& data) const override;
+
+  // See interface for documentation.
+  crc_generator_poly get_generator_poly() const override { return poly; }
+
+private:
+  /// Polynomial selection.
+  crc_generator_poly poly;
+  /// CRC calculator based on look-up table for unsupported methods and polynomials.
+  crc_calculator_lut_impl crc_calc_lut;
+};
+
+} // namespace ocudu

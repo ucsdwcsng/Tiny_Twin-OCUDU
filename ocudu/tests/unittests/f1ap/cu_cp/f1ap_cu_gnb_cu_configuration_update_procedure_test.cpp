@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "f1ap_cu_test_helpers.h"
+#include "tests/test_doubles/f1ap/f1ap_test_messages.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/asn1/f1ap/f1ap_pdu_contents.h"
+#include "ocudu/ran/cause/f1ap_cause.h"
+#include "ocudu/support/async/async_test_utils.h"
+#include "ocudu/support/test_utils.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+using namespace ocucp;
+using namespace asn1::f1ap;
+
+const std::chrono::milliseconds procedure_timeout{100};
+
+class f1ap_cu_gnb_cu_configuration_update_test : public f1ap_cu_test
+{
+protected:
+  f1ap_cu_gnb_cu_configuration_update_test() : f1ap_cu_test(f1ap_configuration{.proc_timeout = procedure_timeout}) {}
+
+  void start_procedure(const f1ap_gnb_cu_configuration_update& req)
+  {
+    t = f1ap->handle_gnb_cu_configuration_update(req);
+    t_launcher.emplace(t);
+  }
+
+  bool was_gnb_cu_configuration_update_sent(const f1ap_gnb_cu_configuration_update& req) const
+  {
+    if (this->f1ap_pdu_notifier.last_f1ap_msg.pdu.type().value != f1ap_pdu_c::types::init_msg) {
+      return false;
+    }
+    if (this->f1ap_pdu_notifier.last_f1ap_msg.pdu.init_msg().value.type().value !=
+        asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::gnb_cu_cfg_upd) {
+      return false;
+    }
+    const auto& asn1_req = this->f1ap_pdu_notifier.last_f1ap_msg.pdu.init_msg().value.gnb_cu_cfg_upd();
+
+    return asn1_req->cells_to_be_activ_list.size() == req.cells_to_be_activated_list.size() &&
+           asn1_req->cells_to_be_deactiv_list.size() == req.cells_to_be_deactivated_list.size() &&
+           asn1_req->cells_to_be_barred_list.size() == req.cells_to_be_barred_list.size();
+  }
+
+  bool was_gnb_cu_configuration_update_response_received() const
+  {
+    if (not t.ready()) {
+      return false;
+    }
+    return t.get().success;
+  }
+
+  bool was_gnb_cu_configuration_update_failure_received() const
+  {
+    if (not t.ready()) {
+      return false;
+    }
+
+    return !t.get().success;
+  }
+
+  async_task<f1ap_gnb_cu_configuration_update_response>                        t;
+  std::optional<lazy_task_launcher<f1ap_gnb_cu_configuration_update_response>> t_launcher;
+};
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_request_sent_then_procedure_waits_for_response)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+
+  // The GNB CU CONFIGURATION UPDATE was sent to DU and F1AP-CU is waiting for response.
+  ASSERT_TRUE(was_gnb_cu_configuration_update_sent(req));
+  ASSERT_FALSE(t.ready());
+}
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_request_contains_cells_to_bar_then_barred_list_is_encoded)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure with one cell to bar and one to unbar.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  req.cells_to_be_barred_list          = {
+      {nr_cell_global_id_t{plmn_identity::test_value(), nr_cell_identity::create(3).value()}, true},
+      {nr_cell_global_id_t{plmn_identity::test_value(), nr_cell_identity::create(4).value()}, false}};
+  this->start_procedure(req);
+
+  // The sent message carries the Cells to be Barred List with the CGIs and barred values of the request.
+  ASSERT_TRUE(was_gnb_cu_configuration_update_sent(req));
+  const auto& asn1_req = this->f1ap_pdu_notifier.last_f1ap_msg.pdu.init_msg().value.gnb_cu_cfg_upd();
+  ASSERT_TRUE(asn1_req->cells_to_be_barred_list_present);
+  ASSERT_EQ(asn1_req->cells_to_be_barred_list.size(), 2U);
+  const auto& barred_item = asn1_req->cells_to_be_barred_list[0]->cells_to_be_barred_item();
+  ASSERT_EQ(barred_item.nr_cgi.nr_cell_id.to_number(), req.cells_to_be_barred_list[0].cgi.nci.value());
+  ASSERT_EQ(barred_item.cell_barred.value, asn1::f1ap::cell_barred_opts::barred);
+  const auto& unbarred_item = asn1_req->cells_to_be_barred_list[1]->cells_to_be_barred_item();
+  ASSERT_EQ(unbarred_item.nr_cgi.nr_cell_id.to_number(), req.cells_to_be_barred_list[1].cgi.nci.value());
+  ASSERT_EQ(unbarred_item.cell_barred.value, asn1::f1ap::cell_barred_opts::not_barred);
+}
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_response_received_then_procedure_successful)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure and return back the response from the DU.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+  f1ap_message response = test_helpers::generate_gnb_cu_configuration_update_acknowledgement({});
+  f1ap->handle_message(response);
+
+  // The GNB CU CONFIGURATION UPDATE ACKNOWLEDGEMENT was received and the F1AP-CU completed the procedure.
+  ASSERT_TRUE(was_gnb_cu_configuration_update_response_received());
+}
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test,
+       when_response_with_cells_failed_to_activate_received_then_procedure_successful)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure and return back the response from the DU.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+  f1ap_message response =
+      test_helpers::generate_gnb_cu_configuration_update_acknowledgement({f1ap_cell_failed_to_activate{
+          nr_cell_global_id_t{plmn_identity::test_value(), nr_cell_identity::create(0).value()},
+          f1ap_cause_radio_network_t::cell_not_available}});
+  f1ap->handle_message(response);
+
+  // The GNB CU CONFIGURATION UPDATE ACKNOWLEDGEMENT was received and the F1AP-CU completed the procedure.
+  ASSERT_TRUE(was_gnb_cu_configuration_update_response_received());
+}
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_ue_setup_failure_received_then_procedure_unsuccessful)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure and return back the failure response from the DU.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+
+  f1ap_message response = test_helpers::generate_gnb_cu_configuration_update_failure();
+  f1ap->handle_message(response);
+
+  // The GNB CU CONFIGURATION UPDATE FAILURE was received and the F1AP-CU completed the procedure with failure.
+  ASSERT_TRUE(was_gnb_cu_configuration_update_failure_received());
+}
+
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_ue_setup_procedure_timeouts_then_procedure_unsuccessful)
+{
+  // Start GNB CU CONFIGURATION UPDATE procedure and return back the failure response from the DU.
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+
+  for (unsigned i = 0; i != procedure_timeout.count(); ++i) {
+    ASSERT_FALSE(was_gnb_cu_configuration_update_failure_received());
+    this->tick();
+  }
+  ASSERT_TRUE(was_gnb_cu_configuration_update_failure_received());
+}
+
+/// If the F1AP is stopped (e.g. DU removal) before a GNB-CU Configuration Update procedure starts, the request
+/// must not be sent, since its transaction is cancelled before the procedure even gets to send it.
+TEST_F(f1ap_cu_gnb_cu_configuration_update_test, when_f1ap_already_stopped_then_request_is_not_sent)
+{
+  async_task<void>         stop_task = f1ap->stop();
+  lazy_task_launcher<void> stop_launcher(stop_task);
+  ASSERT_TRUE(stop_task.ready());
+
+  f1ap_gnb_cu_configuration_update req = create_gnb_cu_configuration_update();
+  this->start_procedure(req);
+
+  ASSERT_FALSE(was_gnb_cu_configuration_update_sent(req));
+  ASSERT_TRUE(was_gnb_cu_configuration_update_failure_received());
+}

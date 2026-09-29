@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ru/ofh/ru_ofh_executor_mapper.h"
+#include <memory>
+#include <vector>
+
+namespace ocudu {
+
+class task_executor;
+
+/// Configuration of the Open Fronthaul RU executor mapper.
+struct ru_ofh_executor_mapper_config {
+  /// The list of RU TX ports configured for each sector.
+  std::vector<std::vector<unsigned>> dl_eaxc_per_sector;
+  /// Executor dedicated to IQ sample compression and OFH message serialization.
+  task_executor* downlink_executor;
+  /// Executor dedicated to IQ sample decompression and OFH message deserialization.
+  task_executor* uplink_executor;
+  /// Set of executors dedicated to Ethernet messages reception and transmission for all configured sectors.
+  std::vector<task_executor*> txrx_executors;
+  /// A single timing executor for all sectors.
+  task_executor* timing_executor = nullptr;
+};
+
+/// \brief Creates an executor mapper for the Open Fronthaul RU implementation.
+///
+/// \remark An assertion is triggered if number of downlink and uplink executors doesn't match the number of sectors.
+std::unique_ptr<ru_ofh_executor_mapper> create_ofh_ru_executor_mapper(const ru_ofh_executor_mapper_config& config);
+
+} // namespace ocudu

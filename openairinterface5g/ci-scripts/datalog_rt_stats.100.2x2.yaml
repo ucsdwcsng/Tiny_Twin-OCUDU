@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+ColNames :
+  - Metric
+  - Average; Max; Count
+  - Average vs Reference Deviation (Reference Value; Acceptability Deviation Threshold)
+Ref : 
+  feprx : 150.0
+  feptx_prec : 0.0
+  feptx_ofdm : 60.0
+  feptx_total : 150.0
+  L1 Tx processing : 543.0
+  DLSCH encoding : 200.0
+  L1 Rx processing : 611.0
+  PUSCH inner-receiver : 360.0
+  DL & UL scheduling timing : 17.0
+  Slot Indication : 13.0
+  feprx : 151.0
+  feptx_ofdm (per port, half_slot) : 57
+  feptx_total : 148
+DeviationThreshold :
+  feprx : 0.25
+  feptx_prec : 0.25
+  feptx_ofdm : 0.25
+  feptx_total : 0.25
+  L1 Tx processing : 0.25
+  DLSCH encoding : 0.25
+  L1 Rx processing : 0.25
+  PUSCH inner-receiver : 0.25
+  DL & UL scheduling timing : 0.25
+  Slot Indication : 0.50
+  feprx : 0.25
+  feptx_ofdm (per port, half_slot) : 0.25
+  feptx_total : 0.25

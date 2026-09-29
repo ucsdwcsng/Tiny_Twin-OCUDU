@@ -1,0 +1,105 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/upper/channel_coding/crc_calculator.h"
+#include <array>
+#include <cstdint>
+#include <map>
+
+namespace ocudu {
+
+/// CRC calculator based on look-up tables.
+class crc_calculator_lut_impl : public crc_calculator
+{
+private:
+  /// Look up tables for the CRC calculator.
+  struct crc_table_s : public std::array<uint32_t, 256> {
+    /// Order of the cyclic generator polynomial.
+    unsigned order;
+
+    /// String of \c order consecutive ones (used for isolating meaningful bits).
+    uint32_t crcmask;
+
+    /// \brief Bitmask describing the generator polynomial.
+    ///
+    /// Example: <tt>polynom = 0x61</tt> corresponds to the polynomial \f$D^6 + D^5 + 1\f$.
+    uint32_t polynom;
+
+    /// Constructs the CRC table for the given order and generator polynomial.
+    crc_table_s(unsigned poly, unsigned order_);
+  };
+
+  /// \brief Gets a CRC calculator table.
+  ///
+  /// New tables are generated if no table is found for the given polynomial.
+  static const crc_table_s& get_crc_table(crc_generator_poly);
+
+  /// Current CRC table.
+  const crc_table_s& table;
+  /// Generator polynomial order.
+  const unsigned order;
+  /// String of \c order consecutive ones (used for isolating meaningful bits).
+  const uint32_t crcmask;
+  /// Identifier of the cyclic generator polynomial.
+  const crc_generator_poly poly;
+
+public:
+  /// Initializes the CRC calculator with the provided cyclic generator polynomial.
+  explicit crc_calculator_lut_impl(crc_generator_poly poly_);
+
+  /// Includes the given \c byte into the CRC computation.
+  uint32_t put_byte(uint32_t crc, uint8_t byte) const
+  {
+    unsigned idx;
+    if (order == 24) {
+      idx = ((crc >> 16) & 0xffU) ^ byte;
+    } else if (order > 8) {
+      // For more than 8 bits
+      unsigned ord = order - 8U;
+      idx          = ((crc >> (ord)) & 0xffU) ^ byte;
+    } else {
+      // For 8 bits or less
+      unsigned ord = 8U - order;
+      idx          = ((crc << (ord)) & 0xffU) ^ byte;
+    }
+
+    return (crc << 8U) ^ table[idx];
+  }
+
+  /// Reverses the \c nbits least significant bits of \c crc.
+  uint32_t reversecrcbit(uint32_t crc, unsigned nbits) const
+  {
+    uint64_t m, rmask = 0x1;
+
+    for (m = 0; m < nbits; m++) {
+      if ((rmask & crc) == 0x01)
+        crc = (crc ^ table.polynom) >> 1;
+      else
+        crc = crc >> 1;
+    }
+    return (crc & table.crcmask);
+  }
+
+  /// Reads the current value of \c crc.
+  crc_calculator_checksum_t get_checksum(uint32_t crc) const
+  {
+    return static_cast<crc_calculator_checksum_t>(crc & crcmask);
+  }
+
+  // See interface for the documentation.
+  crc_calculator_checksum_t calculate_byte(span<const uint8_t> input) const override;
+
+  // See interface for the documentation.
+  crc_calculator_checksum_t calculate_bit(span<const uint8_t> input) const override;
+
+  // See interface for the documentation.
+  crc_calculator_checksum_t calculate(const bit_buffer& data) const override;
+
+  // See interface for the documentation.
+  crc_generator_poly get_generator_poly() const override { return poly; }
+};
+
+} // namespace ocudu

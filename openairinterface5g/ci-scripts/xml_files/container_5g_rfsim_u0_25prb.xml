@@ -1,0 +1,235 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-fdd-u0-25prb</htmlTabRef>
+  <htmlTabName>VNF-PNF nFAPI FDD u0 25PRB gNB</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-ue-asan</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_u0_25prb</yaml_path>
+    <services>mysql oai-amf oai-smf oai-pcf oai-upf oai-ext-dn</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G VNF+PNF+nrUE RF sim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_u0_25prb</yaml_path>
+    <services>oai-vnf oai-pnf oai-nr-ue</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE (Wait for IP)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Verify 2nd PDU session is up</desc>
+    <id>rfsim5g_ue_pdu_2</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Ping ext-dn from UE PDU session 1 interface</desc>
+    <node>localhost</node>
+    <command>docker exec rfsim5g-oai-nr-ue ping -I oaitun_ue1 -c 10 192.168.72.135</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Ping ext-dn from UE PDU session 2 interface</desc>
+    <node>localhost</node>
+    <command>docker exec rfsim5g-oai-nr-ue ping -I oaitun_ue1p2 -c 10 192.168.72.135</command>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/1Mbps/UDP)(6 sec) QFI 1 (default) flow on PDU session 1 (port 5201)</desc>
+    <iperf_args>-u -b 1M -t 6 -B 12.1.1.2 -p 5201</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/1Mbps/UDP)(6 sec) QFI 2 flow on PDU session 1 (port 52080)</desc>
+    <iperf_args>-u -b 1M -t 6 -B 12.1.1.2 -p 52080</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/1Mbps/UDP)(6 sec) QFI 3 flow on PDU session 1 (port 52081)</desc>
+    <iperf_args>-u -b 1M -t 6 -B 12.1.1.2 -p 52081</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/1Mbps/UDP)(6 sec) default flow on PDU session 2 (port 5201)</desc>
+    <iperf_args>-u -b 1M -t 6 -B 12.1.2.2 -p 5201</iperf_args>
+    <id>rfsim5g_ue_pdu_2</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/1Mbps/UDP)(6 sec) QFI 1 (default) flow on PDU session 1 (port 5201)</desc>
+    <iperf_args>-u -b 1M -t 6 -R -B 12.1.1.2 -p 5201</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/1Mbps/UDP)(6 sec) QFI 2 flow on PDU session 1 (port 52080)</desc>
+    <iperf_args>-u -b 1M -t 6 -R -B 12.1.1.2 -p 52080</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/1Mbps/UDP)(6 sec) QFI 3 flow on PDU session 1 (port 52081)</desc>
+    <iperf_args>-u -b 1M -t 6 -R -B 12.1.1.2 -p 52081</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>10</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/3Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 3M -t 20 -R</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/1Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 1M -t 20</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Trigger PDU Session Release via gNB telnet</desc>
+    <node>acamas</node>
+    <command>echo ci pdu_session_release 2 | ncat 192.168.71.140 9090</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Add PDU Session via UE telnet</desc>
+    <node>acamas</node>
+    <command>echo ci add_pdu_session 6,7 | ncat 192.168.71.150 8091</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Trigger PDU Session Release via gNB telnet</desc>
+    <node>acamas</node>
+    <command>echo ci pdu_session_release 6 | ncat 192.168.71.140 9090</command>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_u0_25prb</yaml_path>
+    <analysis>
+      <services>oai-vnf=RetxCheck=0,0,0,0 oai-vnf=EndsWithBye oai-pnf=EndsWithBye oai-nr-ue</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-ue-asan</images>
+  </testCase>
+
+</testCaseList>

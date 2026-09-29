@@ -1,0 +1,185 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "pdu_session_resource_release_routine.h"
+#include "pdu_session_routine_helpers.h"
+#include "ocudu/adt/format.h"
+
+using namespace ocudu;
+using namespace ocudu::ocucp;
+using namespace asn1::rrc_nr;
+
+pdu_session_resource_release_routine::pdu_session_resource_release_routine(
+    const ngap_pdu_session_resource_release_command& release_cmd_,
+    e1ap_bearer_context_manager&                     e1ap_bearer_ctxt_mng_,
+    f1ap_ue_context_manager&                         f1ap_ue_ctxt_mng_,
+    rrc_ue_interface*                                rrc_ue_,
+    cu_cp_rrc_ue_interface&                          cu_cp_notifier_,
+    ue_task_scheduler&                               task_sched_,
+    up_resource_manager&                             up_resource_mng_,
+    ocudulog::basic_logger&                          logger_) :
+  release_cmd(release_cmd_),
+  e1ap_bearer_ctxt_mng(e1ap_bearer_ctxt_mng_),
+  f1ap_ue_ctxt_mng(f1ap_ue_ctxt_mng_),
+  rrc_ue(rrc_ue_),
+  cu_cp_notifier(cu_cp_notifier_),
+  task_sched(task_sched_),
+  up_resource_mng(up_resource_mng_),
+  logger(logger_)
+{
+}
+
+// Handle RRC reconfiguration result.
+static bool handle_rrc_reconfiguration_response(ngap_pdu_session_resource_release_response&      response_msg,
+                                                const ngap_pdu_session_resource_release_command& release_cmd,
+                                                bool                                             rrc_reconfig_result,
+                                                const ocudulog::basic_logger&                    logger)
+{
+  // Let all PDU sessions fail if response is negative.
+  if (!rrc_reconfig_result) {
+    // TODO: decide how to manage negative RRC reconfig result
+  }
+
+  return rrc_reconfig_result;
+}
+
+void pdu_session_resource_release_routine::operator()(
+    coro_context<async_task<ngap_pdu_session_resource_release_response>>& ctx)
+{
+  CORO_BEGIN(ctx);
+
+  logger.debug("ue={}: \"{}\" initialized", release_cmd.ue_index, name());
+
+  // Perform initial sanity checks on incoming message.
+  if (!up_resource_mng.validate_request(release_cmd)) {
+    logger.warning("ue={}: \"{}\" Invalid PduSessionResourceReleaseCommand", release_cmd.ue_index, name());
+    CORO_EARLY_RETURN(handle_pdu_session_resource_release_response(false));
+  }
+
+  {
+    // Calculate next user-plane configuration based on incoming release command.
+    next_config = up_resource_mng.calculate_update(release_cmd);
+  }
+
+  // Inform the CU-UP about the release of the bearer context.
+  if (next_config.pdu_sessions_to_remove_list.size() == up_resource_mng.get_nof_pdu_sessions()) {
+    bearer_context_release_command.ue_index = release_cmd.ue_index;
+    bearer_context_release_command.cause    = e1ap_cause_radio_network_t::unspecified;
+
+    /// NOTE: Only the Bearer Context at the CU-UP will be released. We don't want to release the UE.
+
+    // Request BearerContextRelease.
+    CORO_AWAIT(e1ap_bearer_ctxt_mng.handle_bearer_context_release_command(bearer_context_release_command));
+
+  } else { // Inform CU-UP about the release of a bearer.
+
+    // Prepare BearerContextModificationRequest and call E1 notifier.
+    bearer_context_modification_request.ue_index = release_cmd.ue_index;
+
+    for (const auto& pdu_session_res_to_release : next_config.pdu_sessions_to_remove_list) {
+      e1ap_ng_ran_bearer_context_mod_request bearer_context_mod_request;
+      bearer_context_mod_request.pdu_session_res_to_rem_list.push_back(pdu_session_res_to_release);
+      bearer_context_modification_request.ng_ran_bearer_context_mod_request = bearer_context_mod_request;
+    }
+
+    // Call E1AP procedure and wait for BearerContextModificationResponse.
+    CORO_AWAIT_VALUE(
+        bearer_context_modification_response,
+        e1ap_bearer_ctxt_mng.handle_bearer_context_modification_request(bearer_context_modification_request));
+
+    // Handle BearerContextModificationResponse.
+    if (not bearer_context_modification_response.success) {
+      logger.warning("ue={}: \"{}\" failed to release bearer(s) at CU-UP", release_cmd.ue_index, name());
+    }
+  }
+
+  // Release DRB resources at DU.
+  {
+    // Prepare UeContextModificationRequest and call F1 notifier.
+    ue_context_mod_request.ue_index = release_cmd.ue_index;
+    for (const auto& drb_id : next_config.drb_to_remove_list) {
+      ue_context_mod_request.drbs_to_be_released_list.push_back(drb_id);
+    }
+
+    CORO_AWAIT_VALUE(ue_context_modification_response,
+                     f1ap_ue_ctxt_mng.handle_ue_context_modification_request(ue_context_mod_request));
+
+    // Handle UEContextModificationResponse.
+    if (not ue_context_modification_response.success) {
+      logger.warning("ue={}: \"{}\" failed to release bearer(s) at DU", release_cmd.ue_index, name());
+    }
+
+    // Store updated cell group config.
+    rrc_ue->update_cell_group_config(ue_context_modification_response.du_to_cu_rrc_info.cell_group_cfg.copy());
+  }
+
+  {
+    // Prepare RRCReconfiguration and call RRC UE notifier.
+    {
+      // Get NAS PDUs as received by AMF.
+      std::vector<byte_buffer> nas_pdus;
+      if (!release_cmd.nas_pdu.empty()) {
+        nas_pdus.push_back(release_cmd.nas_pdu);
+      }
+
+      if (!fill_rrc_reconfig_args(rrc_reconfig_args,
+                                  {},
+                                  next_config.pdu_sessions_to_modify_list,
+                                  next_config.drb_to_remove_list,
+                                  ue_context_modification_response.du_to_cu_rrc_info,
+                                  nas_pdus,
+                                  rrc_ue->generate_meas_config(),
+                                  false,
+                                  false,
+                                  std::nullopt,
+                                  {},
+                                  std::nullopt,
+                                  logger)) {
+        logger.warning("ue={}: \"{}\" Failed to fill RrcReconfiguration", release_cmd.ue_index, name());
+        CORO_EARLY_RETURN(handle_pdu_session_resource_release_response(false));
+      }
+    }
+
+    CORO_AWAIT_VALUE(rrc_reconfig_result, rrc_ue->handle_rrc_reconfiguration_request(rrc_reconfig_args));
+
+    // Handle RRCReconfiguration result.
+    if (not handle_rrc_reconfiguration_response(response_msg, release_cmd, rrc_reconfig_result, logger)) {
+      logger.warning("ue={}: \"{}\" RRC reconfiguration failed", release_cmd.ue_index, name());
+      CORO_EARLY_RETURN(handle_pdu_session_resource_release_response(false));
+    }
+  }
+
+  CORO_RETURN(handle_pdu_session_resource_release_response(true));
+}
+
+ngap_pdu_session_resource_release_response
+pdu_session_resource_release_routine::handle_pdu_session_resource_release_response(bool success)
+{
+  // Prepare update for UP resource manager.
+  up_config_update_result result;
+  for (const auto& pdu_session_to_remove : next_config.pdu_sessions_to_remove_list) {
+    result.pdu_sessions_removed_list.push_back(pdu_session_to_remove);
+  }
+  up_resource_mng.apply_config_update(result);
+
+  if (success) {
+    // Fill PDUSessionResponse with the released PDU sessions.
+    for (const auto& setup_item : release_cmd.pdu_session_res_to_release_list_rel_cmd) {
+      ngap_pdu_session_res_released_item_rel_res item;
+      item.pdu_session_id = setup_item.pdu_session_id;
+
+      response_msg.released_pdu_sessions.emplace(setup_item.pdu_session_id, item);
+    }
+
+    logger.debug("ue={}: \"{}\" finalized", release_cmd.ue_index, name());
+  } else {
+    logger.info("ue={}: \"{}\" failed", release_cmd.ue_index, name());
+
+    // Trigger UE context release request.
+    task_sched.schedule_async_task(cu_cp_notifier.handle_ue_context_release(
+        {release_cmd.ue_index, {}, ngap_cause_radio_network_t::radio_conn_with_ue_lost}));
+  }
+
+  return response_msg;
+}

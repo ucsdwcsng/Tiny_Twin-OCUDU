@@ -1,0 +1,16 @@
+// Copyright (c) Microsoft Corporation. Licensed under the MIT license.
+//
+// EdgeRIC-on-Janus DL MCS telemetry (Report path). One message per UE per
+// (sampled) grant, emitted from the mac_sched_dl_mcs_ctrl hook at the PDSCH
+// MCS-selection point. The xApp uses cqi + cur_mcs to compute an MCS policy and
+// echoes tti back on the control path for RANtime staleness gating.
+syntax = "proto2";
+
+message dl_mcs_report {
+   required uint32 rnti        = 1;
+   required uint32 du_ue_index = 2;
+   required uint32 tti         = 3;   // RANtime slot counter
+   required uint32 cqi         = 4;   // wideband CQI
+   required uint32 mcs_table   = 5;   // 0 qam64, 1 qam256, 2 qam64LowSe
+   required uint32 cur_mcs     = 6;   // link-adaptation chosen DL MCS (reference)
+}

@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include <yaml-cpp/yaml.h>
+
+namespace ocudu {
+namespace app_services {
+
+struct metrics_appconfig;
+
+/// Fills the given node with the metrics application configuration helper values.
+void fill_metrics_appconfig_in_yaml_schema(YAML::Node& node, const metrics_appconfig& config);
+
+} // namespace app_services
+} // namespace ocudu

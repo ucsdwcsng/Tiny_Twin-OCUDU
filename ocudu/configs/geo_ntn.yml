@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# This file contains the configuration for the geo_ntn scenario
+cell_cfg:
+  ntn:
+    cell_specific_koffset: 150 # sets the maximum possible channel delay
+    ntn_ul_sync_validity_dur: 900 # GEO ephemeris barely changes, so the assistance info stays valid the longest
+    ta_common: 0
+    ephemeris_info: # ecef ephemeris information for the satellite
+      pos_x: 20922195
+      pos_y: 1967783
+      pos_z: 19770302
+      vel_x: 0
+      vel_y: 0
+      vel_z: 0
+  sib: # system information block 19 scheduling, SIB19 is the NTN information block
+    si_window_length: 5
+    si_sched_info:
+      - si_period: 16
+        sib_mapping: 19
+  pucch: # increases the scheduling period of PUCCH to allow for the larger channel delay
+    sr_period_ms: 320
+  csi:
+    csi_rs_period: 80
+  pdsch: # disables HARQ processing
+    max_nof_harq_retxs: 0
+  prach:
+    max_msg3_harq_retx: 0
+
+cu_cp:
+  rrc: # sets the RRC guard time to 12.8 seconds to allow for the larger channel delay
+    rrc_procedure_guard_time_ms: 12800

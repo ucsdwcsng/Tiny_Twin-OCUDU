@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+find_package(yaml-cpp)
+if (NOT yaml-cpp_FOUND)
+  CPMAddPackage("gh:jbeder/yaml-cpp#yaml-cpp-0.7.0@0.7.0")
+else()
+  if (NOT TARGET yaml-cpp::yaml-cpp)
+    add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+  endif()
+endif()
+
+add_library(params_yaml_static config_yaml.cpp)
+target_link_libraries(params_yaml_static PUBLIC yaml-cpp::yaml-cpp)
+if (ENABLE_TESTS)
+  add_subdirectory(tests)
+endif()
+
+add_library(params_yaml MODULE config_yaml.cpp)
+target_link_libraries(params_yaml PUBLIC yaml-cpp::yaml-cpp)
+set_target_properties(params_yaml PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

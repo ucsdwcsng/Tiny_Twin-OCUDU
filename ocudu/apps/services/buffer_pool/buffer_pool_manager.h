@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "apps/services/buffer_pool/buffer_pool_appconfig.h"
+#include "apps/services/buffer_pool/metrics/buffer_pool_metrics_builder.h"
+#include "ocudu/adt/detail/byte_buffer_segment_pool.h"
+
+namespace ocudu {
+namespace app_services {
+
+/// Buffer pool manager for the applications.
+class buffer_pool_manager
+{
+public:
+  explicit buffer_pool_manager(const buffer_pool_appconfig& config)
+  {
+    init_byte_buffer_segment_pool(config.nof_segments, config.segment_size, config.use_hugepages);
+  }
+
+  /// Returns current size of the segment pool central cache.
+  static size_t get_central_cache_size()
+  {
+    auto& pool = detail::get_default_byte_buffer_segment_pool();
+    return pool.get_central_cache_approx_size();
+  }
+
+  ///\brief Adds the buffer pool metrics configuration to the metrics service.
+  ///
+  /// \param metrics[in,out]     - Vector of application metrics configs. The service can extend it with its own config.
+  /// \param notifier[in]        - Application metrics notifier interface.
+  /// \param metrics_cfg[in]     - Buffer pool metrics configuration.
+  /// \param metrics_gateway[in] - Gateway for JSON metrics.
+  void add_metrics_to_metrics_service(std::vector<app_services::metrics_config>& app_metrics,
+                                      const buffer_pool_metrics_config&          metrics_cfg,
+                                      app_services::metrics_notifier&            notifier,
+                                      remote_server_metrics_gateway*             metrics_gateway)
+  {
+    if (!metrics_cfg.enable_metrics) {
+      return;
+    }
+
+    app_metrics.emplace_back(
+        build_buffer_pool_metrics_config(notifier, metrics_cfg.common_metrics_cfg, metrics_gateway));
+  }
+};
+
+} // namespace app_services
+} // namespace ocudu

@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ue_bearer_manager.h"
+#include "../procedures/f1ap_du_event_manager.h"
+#include "f1c_du_bearer_impl.h"
+
+using namespace ocudu;
+using namespace odu;
+
+void ue_bearer_manager::add_srb0_f1c_bearer(f1c_rx_sdu_notifier&       f1c_rx_sdu_notif,
+                                            const nr_cell_global_id_t& pcell_cgi,
+                                            const byte_buffer&         du_cu_rrc_container,
+                                            f1ap_event_manager&        ev_mng)
+{
+  f1c_bearers.emplace(0,
+                      std::make_unique<f1c_srb0_du_bearer>(ue_ctx,
+                                                           pcell_cgi,
+                                                           du_cu_rrc_container,
+                                                           f1ap_notifier,
+                                                           f1c_rx_sdu_notif,
+                                                           ev_mng,
+                                                           du_configurator,
+                                                           ctrl_exec,
+                                                           ue_exec,
+                                                           timers));
+}
+
+void ue_bearer_manager::add_f1c_bearer(srb_id_t srb_id, f1c_rx_sdu_notifier& rx_sdu_notif)
+{
+  ocudu_assert(srb_id != srb_id_t::srb0, "This function is only for SRB1, SRB2 or SRB3");
+
+  f1c_bearers.emplace(srb_id_to_uint(srb_id),
+                      std::make_unique<f1c_other_srb_du_bearer>(
+                          ue_ctx, srb_id, f1ap_notifier, rx_sdu_notif, du_configurator, ctrl_exec, ue_exec, timers));
+}

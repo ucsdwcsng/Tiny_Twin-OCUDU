@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+# Refer to https://gitlab.com/ocudu/ocudu/-/raw/dev/LICENSE?ref_type=heads
+
+cu_cp:
+  amf:
+    addrs: 192.168.71.132
+    port: 38412
+    bind_addrs: 192.168.71.140
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "20899"
+            tai_slice_support_list:
+              - sst: 1
+
+ru_sdr:
+  device_driver: zmq
+  device_args: tx_port=tcp://0.0.0.0:4558,rx_port=tcp://192.168.71.150:4556
+  srate: 23.04
+  tx_gain: 25
+  rx_gain: 25
+  amplitude_control:
+    tx_gain_backoff: 22
+
+cell_cfg:
+  dl_arfcn: 632628
+  band: 78
+  channel_bandwidth_MHz: 20
+  common_scs: 30
+  plmn: "20899"
+  tac: 1
+  pci: 1
+  tdd_ul_dl_cfg:
+    dl_ul_tx_period: 5
+    nof_dl_slots: 3
+    nof_dl_symbols: 10
+    nof_ul_slots: 1
+    nof_ul_symbols: 2
+  csi:
+    csi_rs_enabled: false
+  pucch:
+    formats: f0_and_f2
+    nof_cell_csi_res: 0
+
+log:
+  filename: stdout
+  all_level: info
+
+pcap:
+  mac_enable: false
+  mac_filename: /tmp/gnb_mac.pcap
+  ngap_enable: false
+  ngap_filename: /tmp/gnb_ngap.pcap

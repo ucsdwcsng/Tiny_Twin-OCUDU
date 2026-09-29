@@ -1,0 +1,139 @@
+# EdgeRIC runtime (Step 3): jrt-controller + jbpf reverse proxy for the jbpf-enabled gNB. Adapted from scout-jbpf's
+# Helm chart (jrtc-apps/containers/Helm: jrtc.yaml, gnb-statefulset.yaml, jrtc.yaml values) to docker compose.
+#
+# Layer it LAST, on top of the single-UE file or a generated N-UE file (ZMQ broker, channel emulation and multi-UE are
+# untouched):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.jrtc.yml build gnb                  # ocudu/gnb:jbpf
+#   docker compose -f docker-compose.yml -f docker-compose.jrtc.yml up -d                      # 1 UE
+#   docker compose -f docker-compose.yml -f docker-compose.2ue.yml -f docker-compose.jrtc.yml up -d   # 2 UEs
+#   (down with the same -f list)
+#
+# Runtime layout:
+#   - jrtc (jrt-controller) is the jbpf IO primary. It must be up before the gNB: jbpf_init() in the gNB connects to
+#     its IPC socket in /tmp/jbpf and fails otherwise (hence depends_on: service_healthy).
+#   - The gNB joins jrtc's IPC namespace (ipc: service:jrtc), so both see the same /dev/shm. When the gNB registers,
+#     jrtc allocates the gNB's jbpf IO memory there with shm_open() (jbpf_io_<fd>, jbpf_io_mem_size_mb = 1 GB; no
+#     hugepages needed) and the gNB maps it. shm_size must exceed 1 GB per connected gNB.
+#   - /tmp/jbpf (jbpf run path/namespace) is the shared named volume jbpf-run: jrtc's IPC socket jrt_controller,
+#     shared-memory metadata jbpf_io_<fd> and the gNB's LCM socket jbpf_lcm_ipc.
+#   - jrtc, jrtc-decoder and jbpf-proxy share one network namespace (like scout's pod), so jrtc-ctl reaches the app
+#     REST API (3001), the decoder (20789) and the gNB proxy (30450) at its built-in default 127.0.0.1 -- no fwd.py.
+#     The proxy talks to the gNB only through the LCM unix socket on the shared volume.
+
+x-jrtc-image: &jrtc_image
+  # jrt-controller built with jbpf v0.1.0 (same C API as ocudu/external/jbpf); pinned to the digest tested here.
+  image: ghcr.io/microsoft/jrt-controller/jrt-controller-azurelinux@sha256:4195d15cd2d78a9551aeff613f4ee84c93e35b6678f785d97c6e68ee935cc890
+
+services:
+  jrtc:
+    <<: *jrtc_image
+    container_name: jrtc
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - IPC_LOCK
+      - SYS_NICE
+    ipc: shareable
+    shm_size: 4gb
+    ulimits:
+      memlock: -1
+    # The image's default entrypoint rebuilds jrt-controller; run the prebuilt binary with its environment instead.
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["source /jrtc/setup_jrtc_env.sh && exec /jrtc/out/bin/jrtc --config=/jrtc-config/config"]
+    configs:
+      - source: jrtc_config.yml
+        target: /jrtc-config/config
+    volumes:
+      - jbpf-run:/tmp/jbpf
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/3001"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      ran:
+        ipv4_address: ${JRTC_IP:-10.53.1.251}
+
+  jrtc-decoder:
+    <<: *jrtc_image
+    container_name: jrtc_decoder
+    network_mode: service:jrtc
+    ipc: service:jrtc
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["source /jrtc/setup_jrtc_env.sh && exec /jrtc/out/bin/jrtc-ctl decoder run --decoder-data-enabled --log-level debug --json-data-enabled"]
+    volumes:
+      - jbpf-run:/tmp/jbpf
+    depends_on:
+      jrtc:
+        condition: service_healthy
+
+  gnb:
+    image: ocudu/gnb:jbpf
+    build:
+      args:
+        ENABLE_JBPF: "On"
+    ipc: service:jrtc
+    cap_add:
+      - IPC_LOCK
+    ulimits:
+      memlock: -1
+    volumes:
+      - jbpf-run:/tmp/jbpf
+    depends_on:
+      jrtc:
+        condition: service_healthy
+
+  jbpf-proxy:
+    container_name: jbpf_proxy
+    # srsran_reverse_proxy is built into the jbpf gNB image (docker/Dockerfile, ENABLE_JBPF=On).
+    image: ocudu/gnb:jbpf
+    pull_policy: never
+    network_mode: service:jrtc
+    command: ["srsran_reverse_proxy", "--host-port", "30450", "--address", "/tmp/jbpf/jbpf_lcm_ipc"]
+    volumes:
+      - jbpf-run:/tmp/jbpf
+    depends_on:
+      jrtc:
+        condition: service_healthy
+      gnb:
+        condition: service_started
+
+configs:
+  jrtc_config.yml:
+    # scout-jbpf Helm templates/jrtc.yaml ConfigMap with its values.yaml defaults.
+    content: |
+      jbpf_io_config:
+        jbpf_namespace: jbpf
+        jbpf_path: /tmp
+      jrtc_router_config:
+        ipc_name: jrt_controller
+      logging:
+        jrtc_level: info
+        jbpf_level: info
+  # Replaces the base file's gnb_compose_config.yml (same keys, plus the jbpf section) so this override composes with
+  # any gNB command, including the broker one of docker-compose.<N>ue.yml. Keep the first three sections in sync with
+  # docker-compose.yml. jbpf keys follow scout-jbpf's ocudu-jbpf/deploy/gnb_ocudu_jbpf.yml.
+  gnb_compose_config.yml:
+    content: |
+      cu_cp:
+        amf:
+          addrs: ${OPEN5GS_IP:-10.53.1.2}
+          bind_addrs: ${GNB_IP:-10.53.1.3}
+      metrics:
+        autostart_stdout_metrics: true
+        enable_json: true
+      remote_control:
+        bind_addr: 0.0.0.0
+        enabled: true
+      jbpf:
+        jbpf_run_path: "/tmp"
+        jbpf_namespace: "jbpf"
+        jbpf_enable_ipc: 1
+        jbpf_ipc_mem_name: "jrt_controller"
+        jbpf_io_mem_size_mb: 1024
+        jbpf_enable_lcm_ipc: 1
+        jbpf_lcm_ipc_name: "jbpf_lcm_ipc"
+
+volumes:
+  jbpf-run:

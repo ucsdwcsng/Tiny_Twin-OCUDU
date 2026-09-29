@@ -1,0 +1,130 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "short_block_encoder_impl.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ocuduvec/binary.h"
+#include "ocudu/support/ocudu_assert.h"
+
+using namespace ocudu;
+
+// Maximum message length.
+static constexpr unsigned MAX_IN_BITS = 11;
+// Maximum codeblock length.
+static constexpr unsigned MAX_BLOCK_BITS = 32;
+
+static constexpr std::array<std::array<uint8_t, MAX_BLOCK_BITS>, MAX_IN_BITS> BASIS_SEQUENCES = {
+    {{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+     {1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0},
+     {0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0},
+     {0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0},
+     {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0},
+     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0},
+     {0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0},
+     {0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0},
+     {0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0},
+     {0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0},
+     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0}}};
+
+static void validate_spans(span<uint8_t> output, span<const uint8_t> input, unsigned bits_per_symbol)
+{
+  unsigned in_size  = input.size();
+  unsigned out_size = output.size();
+  ocudu_assert((in_size > 0) && (in_size <= MAX_IN_BITS), "The input length should be between 1 and 11 bits.");
+  if (in_size > 2) {
+    ocudu_assert(out_size > in_size,
+                 "The number of output bits (i.e., {}) must be larger than the number of bits to encode (i.e., {}).",
+                 out_size,
+                 in_size);
+  } else {
+    // Output length must be no less than the number of bits per symbol of the block modulation.
+    ocudu_assert(out_size >= bits_per_symbol, "Invalid output length.");
+  }
+}
+
+// Encoder function for a single bit.
+static void encode_1(span<uint8_t> output, span<const uint8_t> input)
+{
+  std::fill(output.begin(), output.end(), PLACEHOLDER_ONE);
+  output[0] = input[0];
+  if (output.size() > 1) {
+    output[1] = PLACEHOLDER_REPEAT;
+  }
+}
+
+// Encoder function for sequences of 2 bits.
+static void encode_2(span<uint8_t> output, span<const uint8_t> input)
+{
+  std::fill(output.begin(), output.end(), PLACEHOLDER_ONE);
+
+  uint8_t c0 = input[0];
+  uint8_t c1 = input[1];
+  uint8_t c2 = c0 ^ c1;
+
+  output[0] = c0;
+  output[1] = c1;
+  if (output.size() == 3) {
+    output[2] = c2;
+  } else {
+    // validate_spans ensures that output.size() is a multiple of 3.
+    unsigned step = output.size() / 3;
+
+    output[step]           = c2;
+    output[step + 1]       = c0;
+    output[2UL * step]     = c1;
+    output[2UL * step + 1] = c2;
+  }
+}
+
+// Encoder function for sequences of length between 3 and 11 bits.
+static void encode_3_11(span<uint8_t> output, span<const uint8_t> input)
+{
+  // Ensure output is initialized to zero.
+  std::fill(output.begin(), output.end(), 0);
+
+  for (unsigned c_i = 0, length = input.size(); c_i != length; ++c_i) {
+    if (input[c_i] == 1) {
+      ocuduvec::binary_xor(output, BASIS_SEQUENCES[c_i], output);
+    }
+  }
+}
+
+// Matches the rate of a short block according to TS38.212 Section 5.4.3.
+static void rate_match(span<uint8_t> output, span<const uint8_t> input)
+{
+  unsigned output_size = output.size();
+  unsigned input_size  = input.size();
+
+  for (unsigned idx = 0; idx != output_size; ++idx) {
+    output[idx] = input[idx % input_size];
+  }
+}
+
+void short_block_encoder_impl::encode(span<uint8_t> output, span<const uint8_t> input, modulation_scheme mod)
+{
+  unsigned bits_per_symbol = get_bits_per_symbol(mod);
+  validate_spans(output, input, bits_per_symbol);
+
+  static_vector<uint8_t, MAX_BLOCK_BITS> tmp(0);
+
+  switch (input.size()) {
+    case 1:
+      tmp.resize(bits_per_symbol);
+      encode_1(tmp, input);
+      break;
+    case 2:
+      tmp.resize(3UL * bits_per_symbol);
+      encode_2(tmp, input);
+      break;
+    default:
+      tmp.resize(MAX_BLOCK_BITS);
+      encode_3_11(tmp, input);
+  }
+  rate_match(output, tmp);
+}
+
+std::unique_ptr<short_block_encoder> ocudu::create_short_block_encoder()
+{
+  return std::make_unique<short_block_encoder_impl>();
+}

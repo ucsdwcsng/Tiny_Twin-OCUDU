@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+include:
+  - local: .gitlab/ci-shared/docker.yml
+  - local: .gitlab/ci/deploy/image-matrix.yml
+  - local: .gitlab/ci/deploy/image-build.yml
+  - local: .gitlab/ci/deploy/image-build-rh.yml
+  - local: .gitlab/ci/deploy/promote-stable-preflight.yml
+
+################################################################################
+# Stages
+################################################################################
+stages:
+  - publish
+  - promote-stable
+  - preflight
+
+################################################################################
+# Legacy all-binary Ubuntu image (docker-compose / dev builds)
+################################################################################
+
+ocudu image:
+  extends: .docker-builder
+  stage: publish
+  rules:
+    - if: $ON_MR
+      when: manual
+      allow_failure: true
+    - if: $ON_WEB
+      when: manual
+      allow_failure: true
+    - if: $ON_API
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+  retry: 2
+  variables:
+    REGISTRY_URI: ${OCUDU_REGISTRY_URI}
+    REGISTRY_ORG: /${OCUDU_IMAGE_PREFIX}
+    CONTEXT: ${CI_PROJECT_DIR}
+    DOCKERFILE: docker
+    MODE: publish
+    ATTESTATION_FILE: /usr/local/share/ocudu.spdx
+    OS: ubuntu
+    OS_VERSION: "24.04"
+    DOCKER_UHD_VERSION: "4.9.0.0"
+    DOCKER_DPDK_VERSION: "24.11.2"
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "100G"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "100G"
+  timeout: 3 hours
+  tags:
+    - $OCUDU_RUNNER_TAG-${PLATFORM}
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+      if [ "${OS}" = "ubuntu" ]; then
+        export NAME="ocudu_nightly_${SUFFIX}"
+      else
+        export NAME="ocudu_nightly_${OS}_${OS_VERSION}_${SUFFIX}"
+      fi
+      export VERSION="$(git show -s --date=format:%Y%m%d --format=%cd ${CI_COMMIT_SHA})_${CI_COMMIT_SHORT_SHA}"
+      echo "CI_SHARED_OCUDU_IMAGE_VERSION=${VERSION}" >> variables.env
+      export BUILD_ARGS="OS=${OS};OS_VERSION=${OS_VERSION};UHD_VERSION=${DOCKER_UHD_VERSION};DPDK_VERSION=${DOCKER_DPDK_VERSION};MARCH=${MARCH};NUM_JOBS=${CPU_JOBS};EXTRA_CMAKE_ARGS=\"${EXTRA_CMAKE_ARGS}\""
+  artifacts:
+    reports:
+      dotenv: variables.env
+  parallel: &matrix-ocudu-image-variants
+    matrix:
+      - SUFFIX: avx2
+        MARCH: x86-64-v3
+        TAG: amd64-avx2
+        PLATFORM: amd64
+      - SUFFIX: avx2_debug
+        EXTRA_CMAKE_ARGS: -DFORCE_DEBUG_INFO=On
+        MARCH: x86-64-v3
+        TAG: amd64-avx2
+        PLATFORM: amd64
+      - SUFFIX: avx512
+        MARCH: x86-64-v4
+        TAG: amd64-avx2-avx512
+        PLATFORM: amd64
+      - SUFFIX: avx512_debug
+        EXTRA_CMAKE_ARGS: -DFORCE_DEBUG_INFO=On
+        MARCH: x86-64-v4
+        TAG: amd64-avx2-avx512
+        PLATFORM: amd64
+      - SUFFIX: arm64
+        MARCH: neoverse-n1+crc+crypto+ssbs
+        TAG: arm64
+        PLATFORM: arm64
+      - SUFFIX: arm64_debug
+        EXTRA_CMAKE_ARGS: -DFORCE_DEBUG_INFO=On
+        MARCH: neoverse-n1+crc+crypto+ssbs
+        TAG: arm64
+        PLATFORM: arm64
+  needs: []
+
+ocudu image alternative os:
+  extends: ocudu image
+  rules:
+    - if: $ON_MR
+      when: manual
+      allow_failure: true
+    - if: $ON_WEB
+      when: manual
+      allow_failure: true
+    - if: $ON_API
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Alternative OSs/
+  variables:
+    MODE: build
+  parallel:
+    matrix:
+      - OS: debian
+        OS_VERSION: "13"
+        SUFFIX: amd64
+        MARCH: x86-64-v3
+        PLATFORM: amd64
+      - OS: fedora
+        OS_VERSION: "44"
+        SUFFIX: amd64
+        MARCH: x86-64-v3
+        PLATFORM: amd64
+  needs: []
+
+ocudu image update latest:
+  extends: .docker manifest
+  stage: publish
+  rules:
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+  retry: 2
+  variables:
+    REGISTRY_URI: ${OCUDU_REGISTRY_URI}
+    REGISTRY_ORG: /${OCUDU_IMAGE_PREFIX}
+  script:
+    - |
+      export NAME="ocudu_nightly_${SUFFIX}"
+      export VERSION="${CI_SHARED_OCUDU_IMAGE_VERSION}"
+      docker manifest create ${REGISTRY_URI}/${NAME}:latest --amend ${REGISTRY_URI}/${NAME}:${VERSION}
+      docker manifest push ${REGISTRY_URI}/${NAME}:latest
+      echo "Image ${RETINA_REGISTRY_URI}/${NAME}:latest pushed"
+  parallel: *matrix-ocudu-image-variants
+  needs:
+    - job: ocudu image
+      artifacts: true

@@ -1,0 +1,114 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/support/ocudu_assert.h"
+#include <algorithm>
+#include <string>
+
+namespace ocudu {
+namespace ofh {
+
+/// Maximum allowed bit width of compressed IQ data.
+constexpr unsigned MAX_IQ_WIDTH = 16U;
+
+/// Bit width used by quantization of input complex IQ samples.
+constexpr unsigned Q_BIT_WIDTH = MAX_IQ_WIDTH;
+
+/// Number of compression types supported.
+constexpr unsigned NOF_COMPRESSION_TYPES_SUPPORTED = 7U;
+
+/// Compression type used to (de)compress IQ samples.
+enum class compression_type {
+  /// No compression.
+  none,
+  /// Block floating point compression (BFP).
+  BFP,
+  /// Block scaling compression.
+  block_scaling,
+  /// Mu-law compression.
+  mu_law,
+  /// Modulation compression.
+  modulation,
+  /// BFP + selective RE sending.
+  bfp_selective,
+  /// Modulation compression + selective RE sending.
+  mod_selective,
+  /// Reserved value.
+  reserved
+};
+
+/// Converts and returns the given compression type into an integer.
+constexpr unsigned to_underlying(compression_type c)
+{
+  return static_cast<unsigned>(c);
+}
+
+/// IQ data compression parameters.
+struct ru_compression_params {
+  /// IQ data compression used in the packet.
+  compression_type type;
+  /// Width of I and Q sample in the packet.
+  unsigned data_width;
+};
+
+constexpr compression_type to_compression_type(unsigned compr_value)
+{
+  return (compr_value < static_cast<unsigned>(compression_type::reserved)) ? static_cast<compression_type>(compr_value)
+                                                                           : compression_type::reserved;
+}
+
+inline compression_type to_compression_type(const std::string& compr)
+{
+  std::string compr_lower = compr;
+  std::transform(compr.begin(), compr.end(), compr_lower.begin(), [](char c) { return std::tolower(c); });
+
+  if (compr_lower == "none") {
+    return compression_type::none;
+  }
+  if (compr_lower == "bfp") {
+    return compression_type::BFP;
+  }
+  if (compr_lower == "bfp selective") {
+    return compression_type::bfp_selective;
+  }
+  if (compr_lower == "block scaling") {
+    return compression_type::block_scaling;
+  }
+  if (compr_lower == "mu law") {
+    return compression_type::mu_law;
+  }
+  if (compr_lower == "modulation") {
+    return compression_type::modulation;
+  }
+  if (compr_lower == "modulation selective") {
+    return compression_type::mod_selective;
+  }
+
+  ocudu_assert(0, "Unknown compression method={}", compr);
+  return compression_type::none;
+}
+
+constexpr const char* to_string(compression_type c)
+{
+  switch (c) {
+    case compression_type::none:
+      return "none";
+    case compression_type::BFP:
+      return "BFP";
+    case compression_type::bfp_selective:
+      return "BFP selective";
+    case compression_type::block_scaling:
+      return "Block scaling";
+    case compression_type::mu_law:
+      return "Mu law";
+    case compression_type::modulation:
+      return "Modulation";
+    default:
+      return "Modulation selective";
+  }
+}
+
+} // namespace ofh
+} // namespace ocudu

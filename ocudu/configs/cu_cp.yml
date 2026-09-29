@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# Example config for a locally deployed CU-CP listening on the localhost interface for a CU-UP and DU connection
+
+cu_cp:
+  amf:
+    addrs: 127.0.1.100
+    bind_addrs: 127.0.0.1
+    supported_tracking_areas:
+      - tac: 7
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+  # Logical cells declared to the CU-CP. When present, the list acts as the activation whitelist: cells
+  # reported by a DU with a sector ID not declared here are not activated. Omit the list to accept and
+  # activate every reported cell. Optional per-cell keys: admin_state (locked|unlocked, default unlocked)
+  # and cell_barred (default false).
+  # logical_cells:
+  #   - sector_id: 0
+  e1ap:
+    bind_addrs: 127.0.20.1
+  f1ap:
+    bind_addrs: 127.0.10.1
+
+log:
+  filename: /tmp/cu_cp.log
+  all_level: warning
+
+pcap:
+  ngap_enable: true
+  ngap_filename: /tmp/cu_cp_ngap.pcap
+  f1ap_enable: true
+  f1ap_filename: /tmp/cu_cp_f1ap.pcap
+  e1ap_enable: true
+  e1ap_filename: /tmp/cu_cp_e1ap.pcap

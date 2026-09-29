@@ -1,0 +1,53 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "du_ue_reset_procedure.h"
+#include "../du_ue/du_ue_manager.h"
+#include "await_all_ues.h"
+#include "ue_deletion_procedure.h"
+#include "ocudu/adt/format.h"
+
+using namespace ocudu;
+using namespace odu;
+
+du_ue_reset_procedure::du_ue_reset_procedure(const std::vector<du_ue_index_t>&                  ues_to_reset_,
+                                             du_ue_manager&                                     ue_mng_,
+                                             const du_manager_params&                           du_params_,
+                                             const std::optional<f1_reset_request::cause_type>& cause_) :
+  ues_to_reset(ues_to_reset_), ue_mng(ue_mng_), du_params(du_params_), cause(cause_)
+{
+}
+
+void du_ue_reset_procedure::operator()(coro_context<async_task<void>>& ctx)
+{
+  CORO_BEGIN(ctx);
+
+  // Launch tasks to remove UEs in their respective schedulers.
+  CORO_AWAIT(reset_ues());
+
+  if (cause.has_value()) {
+    // Trigger F1 Reset towards CU.
+    CORO_AWAIT(du_params.f1ap.conn_mng.handle_f1_reset_request(f1_reset_request{ues_to_reset, cause.value()}));
+  }
+
+  CORO_RETURN();
+}
+
+async_task<void> du_ue_reset_procedure::reset_ues()
+{
+  if (ues_to_reset.empty()) {
+    // Need to delete all UEs. Update ues_to_reset with current UEs.
+    auto& ue_db = ue_mng.get_du_ues();
+    ues_to_reset.reserve(ue_db.size());
+    for (const auto& u : ue_db) {
+      ues_to_reset.push_back(u.ue_index);
+    }
+  }
+
+  // Remove UEs from within their own task scheduler.
+  // Note: This is needed to ensure sequential handling of the UE procedures and state.
+  return await_all_ues(ue_mng, ues_to_reset, [this](du_ue& u) {
+    return launch_async<ue_deletion_procedure>(u.ue_index, ue_mng, du_params);
+  });
+}

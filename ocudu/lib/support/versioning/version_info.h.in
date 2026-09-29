@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+namespace ocudu {
+
+#define OCUDU_VERSION_STRING "@OCUDU_VERSION_STRING@"
+
+} // namespace ocudu

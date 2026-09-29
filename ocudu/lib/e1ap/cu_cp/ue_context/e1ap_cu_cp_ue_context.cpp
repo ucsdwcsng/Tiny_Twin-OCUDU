@@ -1,0 +1,141 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "e1ap_cu_cp_ue_context.h"
+#include "ocudu/support/ocudu_assert.h"
+
+using namespace ocudu;
+using namespace ocudu::ocucp;
+
+e1ap_ue_context* e1ap_ue_context_list::add_ue(cu_cp_ue_index_t ue_index, gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id)
+{
+  ocudu_assert(ue_index != cu_cp_ue_index_t::invalid, "Invalid ue_index={}", ue_index);
+  ocudu_assert(cu_cp_ue_e1ap_id != gnb_cu_cp_ue_e1ap_id_t::invalid,
+               "Invalid cu_cp_ue_e1ap_id={}",
+               fmt::underlying(cu_cp_ue_e1ap_id));
+
+  if (ue_index_to_ue_e1ap_id.find(ue_index) != ue_index_to_ue_e1ap_id.end()) {
+    logger.error("ue={} cu_cp_ue_e1ap_id={}: UE already exists", ue_index, fmt::underlying(cu_cp_ue_e1ap_id));
+    return nullptr;
+  }
+
+  auto ret = ues.emplace(std::piecewise_construct,
+                         std::forward_as_tuple(cu_cp_ue_e1ap_id),
+                         std::forward_as_tuple(ue_index, cu_cp_ue_e1ap_id, timers));
+  if (not ret.second) {
+    logger.error("{}: Failed to create E1AP UE context", e1ap_ue_ids{ue_index, cu_cp_ue_e1ap_id});
+    return nullptr;
+  }
+  ue_index_to_ue_e1ap_id.emplace(ue_index, cu_cp_ue_e1ap_id);
+
+  logger.info("{} cu_cp_ue_e1ap_id={}: Created new E1AP UE context",
+              ret.first->second.ue_ids,
+              fmt::underlying(cu_cp_ue_e1ap_id));
+  return &ret.first->second;
+}
+
+void e1ap_ue_context_list::remove_ue(cu_cp_ue_index_t ue_index)
+{
+  ocudu_assert(ue_index != cu_cp_ue_index_t::invalid, "Invalid ue_index={}", ue_index);
+
+  auto id_it = ue_index_to_ue_e1ap_id.find(ue_index);
+  if (id_it == ue_index_to_ue_e1ap_id.end()) {
+    logger.warning("ue={}: E1AP UE Context not found", ue_index);
+    return;
+  }
+  gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = id_it->second;
+
+  // Remove UE from lookup
+  ue_index_to_ue_e1ap_id.erase(ue_index);
+
+  auto ue_it = ues.find(cu_cp_ue_e1ap_id);
+  if (ue_it == ues.end()) {
+    logger.error("{}: UE context not found", e1ap_ue_ids{ue_index, cu_cp_ue_e1ap_id});
+    return;
+  }
+
+  // Remove UE from the main map.
+  logger.debug("{}: Removed E1AP UE context", ue_it->second.get_ue_ids());
+  ues.erase(ue_it);
+}
+
+gnb_cu_cp_ue_e1ap_id_t e1ap_ue_context_list::allocate_gnb_cu_cp_ue_e1ap_id()
+{
+  if (ue_index_to_ue_e1ap_id.size() >= max_nof_supported_ues) {
+    return gnb_cu_cp_ue_e1ap_id_t::invalid;
+  }
+
+  // Check if the next_cu_cp_ue_e1ap_id is available
+  if (ues.find(next_cu_cp_ue_e1ap_id) == ues.end()) {
+    gnb_cu_cp_ue_e1ap_id_t ret = next_cu_cp_ue_e1ap_id;
+    // increase the next cu-cp ue e1ap id
+    increase_next_cu_cp_ue_e1ap_id();
+    return ret;
+  }
+
+  // Find holes in the allocated IDs by iterating over all ids starting with the next_cu_cp_ue_e1ap_id to find the
+  // available id
+  while (true) {
+    // Only iterate over ue_index_to_ue_e1ap_id (size=MAX NOF CU UEs)
+    // to avoid iterating over all possible values of gnb_cu_cp_ue_e1ap_id_t (size=2^32-1)
+    auto it = std::find_if(ue_index_to_ue_e1ap_id.begin(), ue_index_to_ue_e1ap_id.end(), [this](auto& u) {
+      return u.second == next_cu_cp_ue_e1ap_id;
+    });
+
+    // return the id if it is not already used
+    if (it == ue_index_to_ue_e1ap_id.end()) {
+      gnb_cu_cp_ue_e1ap_id_t ret = next_cu_cp_ue_e1ap_id;
+      // increase the next cu-cp ue e1ap id
+      increase_next_cu_cp_ue_e1ap_id();
+      return ret;
+    }
+
+    // increase the next cu-cp ue e1ap id and try again
+    increase_next_cu_cp_ue_e1ap_id();
+  }
+
+  return gnb_cu_cp_ue_e1ap_id_t::invalid;
+}
+
+void e1ap_ue_context_list::update_ue_index(cu_cp_ue_index_t new_ue_index, cu_cp_ue_index_t old_ue_index)
+{
+  ocudu_assert(new_ue_index != cu_cp_ue_index_t::invalid, "Invalid new_ue_index={}", new_ue_index);
+  ocudu_assert(old_ue_index != cu_cp_ue_index_t::invalid, "Invalid old_ue_index={}", old_ue_index);
+  // no need to update if the ue indexes are equal
+  if (new_ue_index == old_ue_index) {
+    return;
+  }
+
+  // Fetch CU-CP-UE-E1AP-ID.
+  auto id_it = ue_index_to_ue_e1ap_id.find(old_ue_index);
+  ocudu_assert(id_it != ue_index_to_ue_e1ap_id.end(), "ue={}: GNB-CU-CP-UE-E1AP-ID not found", old_ue_index);
+  gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = id_it->second;
+
+  auto ue_it = ues.find(cu_cp_ue_e1ap_id);
+  ocudu_sanity_check(
+      ue_it != ues.end(), "cu_cp_ue_e1ap_id={}: UE context not found", fmt::underlying(cu_cp_ue_e1ap_id));
+  e1ap_ue_context& ue = ue_it->second;
+
+  // Update UE context
+  ue.ue_ids.ue_index = new_ue_index;
+
+  // Update lookup
+  ue_index_to_ue_e1ap_id.erase(old_ue_index);
+  ue_index_to_ue_e1ap_id.emplace(new_ue_index, cu_cp_ue_e1ap_id);
+
+  // Update logger
+  ue.logger.set_prefix({ue.ue_ids.ue_index, ue.ue_ids.cu_cp_ue_e1ap_id, ue.ue_ids.cu_up_ue_e1ap_id});
+  ue.logger.log_debug("Updated UE index from ue_index={}", old_ue_index);
+}
+
+void e1ap_ue_context_list::increase_next_cu_cp_ue_e1ap_id()
+{
+  if (next_cu_cp_ue_e1ap_id == gnb_cu_cp_ue_e1ap_id_t::max) {
+    // reset cu-cp ue e1ap id counter
+    next_cu_cp_ue_e1ap_id = gnb_cu_cp_ue_e1ap_id_t::min;
+  } else {
+    // increase cu-cp ue e1ap id counter
+    next_cu_cp_ue_e1ap_id = int_to_gnb_cu_cp_ue_e1ap_id(to_underlying(next_cu_cp_ue_e1ap_id) + 1);
+  }
+}

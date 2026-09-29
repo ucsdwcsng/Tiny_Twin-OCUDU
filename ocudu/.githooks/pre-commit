@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Same file selection as run-clang-format-diff.sh, so we only ever
+# re-stage files clang-format was actually allowed to touch
+FILE_EXTENSION_REGEX='.*\.(cpp|cc|c\+\+|cxx|c|cl|h|hh|hpp)$'
+files=$(git diff --name-only --relative --diff-filter=d HEAD | grep -E "$FILE_EXTENSION_REGEX" || true)
+
+# Apply clang-format to files changed vs HEAD
+"$REPO_ROOT/.gitlab/ci/static/run-clang-format-diff.sh" HEAD
+
+# Re-stage only the files clang-format may have reformatted
+if [ -n "$files" ]; then
+    git diff --name-only -- $files | xargs -r git add
+fi

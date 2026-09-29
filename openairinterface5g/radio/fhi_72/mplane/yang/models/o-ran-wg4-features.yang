@@ -1,0 +1,532 @@
+module o-ran-wg4-features {
+  yang-version 1.1;
+  namespace "urn:o-ran:wg4feat:1.0";
+  prefix "o-ran-feat";
+
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the set of re-usable type definitions for WG4 specific
+    features.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 16.0.0
+      new features:
+
+      1) PRG-SIZE-SUPP-SE-21-WITH-ST6
+      2) PRG-SIZE-SUPP-SE-21-WITH-ST5
+      3) USER-GROUP-OPTIMIZATION
+      4) BF-DELAY-PROFILE
+      5) DMRS-BF-EQ
+      6) DMRS-BF-NEQ
+      7) RRM-MEAS-REPORTING
+      8) USER-GROUP-SELF-ASSEMBLY
+      9) UEID-PERSISTENCE
+      10) CONTINUITY-BLOCK-SIZE
+      11) SELECTED-BF-METHOD-CONFIGURATION
+      12) DMRS-BF-NEQ-UNALTERED-FREQ-OFFSET
+      13) DMRS-BF-NEQ-UNALTERED-TAE
+      14) SE10-MEMBER-CANDIDATE-LIST
+      15) MACSEC-BYPASS-POLICY
+      16) SE27-ODU-CONTROLLED-DIMENSIONALITY-REDUCTION
+      17) SE20-MULTI-SD-PUNC-PATTERN-SUPPORT
+      18) CONFIGURABLE-VSWR-THRESHOLDS
+      19) CLIENT-AUTH-SSH-PUBLIC-KEY
+      20) POINT-A-OFFSET-TO-ABSOLUTE-FREQUENCY-CENTER";
+
+    reference "ORAN-WG4.M.0-v16.00";
+  }
+
+  revision "2024-04-15" {
+    description
+      "version 15.0.0
+      new features:
+
+      1) PRG-SIZE-SUPP-SE-21-WITH-ST6
+      2) PRG-SIZE-SUPP-SE-21-WITH-ST5
+      3) BF-DELAY-PROFILE
+      4) USER-GROUP-OPTIMIZATION
+      5) MULTIPLE-BEAMID-TABLES-SUPPORTED
+      6) PER-PORT-PTP-CONFIG
+      7) PER-PORT-SYNCE-CONFIG
+      8) MPLANE-TRX-CONTROL
+      9) PER-INT-TCP-MSS
+      10) DEEP-HIBERNATE";
+
+    reference "ORAN-WG4.M.0-v15.00";
+  }
+
+  revision "2023-12-11" {
+    description
+      "version 14.0.0
+      new features:
+
+      1) SE23-PRB-BLOCK-MODE-SUPPORT
+      2) MPLANE-DATA-LAYER-CONTROL
+      3) SHARED-CELL-STATS";
+
+    reference "ORAN-WG4.M.0-v14.00";
+  }
+
+  revision "2023-08-14" {
+    description
+      "version 13.0.0
+      new features:
+
+      1) CALL-HOME-REACTIVATION-SUPPORTED
+      2) SEQ-ID-CHECKING-CONFIGURABLE
+      3) TRX-CONTROL
+      4) ADVANCED-SLEEP-MODE";
+
+    reference "ORAN-WG4.M.0-v13.00";
+  }
+
+  revision "2023-04-10" {
+    description
+      "version 12.0.0
+      new features:
+
+      1) EXTENDED-PRACH-CONFIGURATION
+      2) NON-SCHEDULED-UEID
+      3) SE11-WITH-CONTINUITY-BIT-SUPPORT
+      4) UPLANE-MESSAGE-PROCESSING-LIMITS";
+
+    reference "ORAN-WG4.M.0-v12.00";
+  }
+
+  revision "2022-12-05" {
+    description
+      "version 11.0.0
+      new features:
+
+      1) UPLANE-ONLY-DL-MODE
+      2) SUPERVISION-WITH-SESSION-ID
+      3) INTEGRITY-CHECK-AT-SW-DOWNLOAD
+      4) ST4-SLOT-CONFIG-MSG-SUPPORT";
+
+    reference "ORAN-WG4.M.0-v11.00";
+  }
+
+
+  revision "2022-08-15" {
+    description
+      "version 10.0.0
+      new features:
+      1) SHARED-ORU-MULTI-ODU
+      2) SHARED-ORU-MULTI-OPERATOR";
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 8.0.0
+      new features:
+      1) Typographical corrections in descriptions
+      2) Add new features:
+         BEAM-UPDATE-CONTENTION-CONTROL
+         MULTIPLE-SCS-IN-EAXC
+         ENHANCED-T-COMBINE
+         CHANNEL-INFORMATION-COMPRESSION
+         CHANNEL-INFORMATION-PRB-GROUP
+         MULTIPLE-TRANSPORT-SESSION-TYPE";
+    reference "ORAN-WG4.M.0-v08.00";
+  }
+
+  revision "2021-07-26" {
+    description
+      "version 7.0.0
+
+      new features:
+      1) EXT-ANT-DELAY-CONTRO
+      2) CPLANE-MESSAGE-PROCESSING-LIMITS";
+
+    reference "ORAN-WG4.M.0-v07.00";
+  }
+
+  revision "2021-03-22" {
+    description
+      "version 6.0.0
+
+      1) Features added to handle updated transmission window control:
+      STATIC-TRANSMISSION-WINDOW-CONTROL
+      DYNAMIC-TRANSMISSION-WINDOW-CONTROL
+      UNIFORMLY-DISTRIBUTED-TRANSMISSION
+      ORDERED-TRANSMISSION
+      INDEPENDENT-TRANSMISSION-WINDOW-CONTROL
+      ";
+
+    reference "ORAN-WG4.M.0-v06.00";
+  }
+
+  revision "2020-12-10" {
+    description
+      "version 5.0.0
+
+      1) initial version.";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  feature NON-PERSISTENT-MPLANE {
+    description
+      "Indicates that the Radio Unit supports the optional
+      capability to improve the operation with a SMO using a non-
+      persistent NETCONF session.";
+  }
+
+  feature STATIC-TRANSMISSION-WINDOW-CONTROL {
+    description
+      "O-RU supports U-plane transmission window control (scheduled transmission
+       and optionally uniformly distributed transmission) configuration over M-plane";
+  }
+
+  feature DYNAMIC-TRANSMISSION-WINDOW-CONTROL {
+    description
+      "O-RU supports U-plane transmission window control (scheduled transmission
+       and optionally uniformly distributed transmission) configuration over C-plane";
+  }
+
+  feature UNIFORMLY-DISTRIBUTED-TRANSMISSION {
+    if-feature "STATIC-TRANSMISSION-WINDOW-CONTROL or DYNAMIC-TRANSMISSION-WINDOW-CONTROL";
+    description
+      "O-RU supports transmission of UL U-plane messages distributed uniformly over transmission window.";
+  }
+
+  feature ORDERED-TRANSMISSION {
+    description
+      "O-RU supports ordered transmission";
+  }
+
+  feature INDEPENDENT-TRANSMISSION-WINDOW-CONTROL {
+    if-feature "STATIC-TRANSMISSION-WINDOW-CONTROL or DYNAMIC-TRANSMISSION-WINDOW-CONTROL";
+    description
+      "O-RU supports independent U-plane transmission window per endpoint.
+
+       If this feature is not supported then for all endpoints with transmission control enabled
+       (see u-plane-transmission-control/transmission-window-control) must be configured for transmission
+       window offsets and window sizes that coincide for each symbol.
+
+       If INDEPENDENT-TRANSMISSION-WINDOW-CONTROL feature is not supported then all endpoints with
+       transmission control enabled that handle the same carrier type and SCS must be configured
+       (via M-plane or C-plane) with parameter values resulting in transmission windows that coincide
+       between the endpoints. That is, for every symbol N, the effective transmission window for symbol N
+       must be shared (start at the same time and end at the same time) by all the endpoints handling
+       same carrier type and SCS. This restriction applies only to endpoints that have transmission
+       control enabled.
+
+       If INDEPENDENT-TRANSMISSION-WINDOW-CONTROL feature is supported then restriction described
+       above does not apply and a different transmission window (window offset and window size)
+       can be used for every endpoint capable of transmission window control.";
+  }
+
+  feature EXT-ANT-DELAY-CONTROL {
+    description
+      "This feature indicates that the O-RU supports external antenna delay control";
+  }
+
+  feature CPLANE-MESSAGE-PROCESSING-LIMITS {
+    description
+      "Feature to indicate O-RU limitation of C-Plane message processing. Refer CUS-Plane specification
+      section 'O-RU C-Plane message limits' for more details on this feature.";
+  }
+
+  feature CHANNEL-INFORMATION-COMPRESSION {
+    description
+      "This feature indicates that the O-RU supports channel information compression.";
+  }
+
+  feature CHANNEL-INFORMATION-PRB-GROUP {
+    description
+      "Feature to indicate O-RU supports receiving and processing channel
+       information (e.g., ST6) with PRB group size greater than one PRB";
+  }
+
+  feature BEAM-UPDATE-CONTENTION-CONTROL {
+    description
+      "Feature to indicate O-RU requirements for beam weight update for a given beamId, to avoid beam update contentions.
+      Refer CUS-Plane specification section 'Weight-based dynamic beamforming' for more details on this feature.";
+  }
+
+  feature MULTIPLE-SCS-IN-EAXC {
+    description
+      "Presence of feature indicates that FHM supports combining for multiple SCS
+      or multiple c-plane-types/frameStructure in a single eAxC-id in UL direction.";
+  }
+
+  feature MULTIPLE-TRANSPORT-SESSION-TYPE {
+    description
+      "Feature to indicate O-RU supports to be configured with multiple transport-session-type
+      (Ethernet, ALIASMAC, UDP/IP)";
+  }
+
+  feature ENHANCED-T-COMBINE {
+      description
+      "Presence of feature indicates that FHM/Cascade O-RU can support t-combine-net and tx-duration";
+  }
+
+  feature SHARED-ORU-MULTI-OPERATOR {
+    description
+      "Feature to indicate the O-RU supports shared operation with one or more shared
+      resource operators (i.e., multiple MNOs) and implements enhanced NACM privileges per shared
+      resource operator.
+
+      Note, there is no linkage or dependency between the SHARED-CELL feature and the SHARED-ORU feature.";
+  }
+
+  feature SHARED-ORU-MULTI-ODU {
+    description
+      "Feature to indicate the O-RU supports independent supervision qualified based on odu-id, where
+      loss of supervision triggers selective carrier deactivation of carriers associated with odu-id.";
+  }
+
+  feature INTEGRITY-CHECK-AT-SW-DOWNLOAD {
+   description "Feature indicates that radio unit support performing integrity check at software download";
+  }
+
+   feature SUPERVISION-WITH-SESSION-ID {
+    description
+      "O-RUs supporting this feature reuse the session-id generated for each NETCONF
+      session in supervision-notification. The session-id is defined in RFC 6241.
+      For these O-RUs, the O-RU controller participating in the NETCONF supervision
+      procedure can subscribe to supervision-notification notification events,
+      filtering for the supervision-notification/session-id matching
+      session-id in the Hello Message received from NETCONF Server earlier.";
+  }
+
+  feature UPLANE-ONLY-DL-MODE {
+    description
+      "Presence of feature indicates that O-RU supports U-Plane-only DL mode.";
+  }
+
+  feature ST4-SLOT-CONFIG-MSG-SUPPORT {
+    description
+    "Feature to indicate O-RU support for Section Type 4 slot configuration message";
+  }
+  feature NON-SCHEDULED-UEID {
+    description
+    "Feature to indicate that O-RU supports 'non-scheduled-ueid' to indicate the ports in the section which are not scheduled for a given eAxcid";
+  }
+
+  feature EXTENDED-PRACH-CONFIGURATION {
+    description
+      "Presence of the feature indicates that O-RU supports extended number of PRACH patterns and occasions
+      provided by means of static PRACH.";
+  }
+
+  feature SE11-WITH-CONTINUITY-BIT-SUPPORT {
+    description
+    "Feature to indicate O-RU support for handling 'continuity' bit information in Section Extension 11";
+  }
+
+  feature UPLANE-MESSAGE-PROCESSING-LIMITS {
+    description
+    "Feature to indicate O-RU limitation of U-Plane message processing. Refer M-Plane specification
+    clause 15.10 for more details on this feature.";
+  }
+
+  feature CALL-HOME-REACTIVATION-SUPPORTED {
+    description
+    "Presence of the feature indicates that O-RU supports re-activation of timed out call home flows.";
+  }
+
+  feature SEQ-ID-CHECKING-CONFIGURABLE {
+    description
+    "Feature to indicate O-RU supports configuration of sequence number checking functionality.";
+  }
+
+  feature TRX-CONTROL {
+    description
+    "Feature to indicate O-RU support for handling RF channel reconfiguration by TRX Control.";
+  }
+
+  feature ADVANCED-SLEEP-MODE {
+    description
+    "Feature to indicate O-RU support for handling Advanced Sleep Modes.";
+  }
+
+  feature SE23-PRB-BLOCK-MODE-SUPPORT {
+    description
+    "Presence of the feature indicates that O-RU supports PRB-BLOCK mode of SE-23 as defined in CUS-Plane
+    specification Clause 7.7.23.1.";
+  }
+
+  feature MPLANE-DATA-LAYER-CONTROL {
+    description
+    "Feature to indicate O-RU support for M-Plane based data layer control energy saving feature.";
+  }
+
+  feature SHARED-CELL-STATS {
+    description
+    "Feature to indicate FHM/Cascade O-RU support for shared-cell-stats.";
+  }
+
+  feature PER-PORT-PTP-CONFIG {
+    description
+      "This feature indicates that the equipment supports per-port PTP configuration functionality";
+  }
+
+  feature PER-PORT-SYNCE-CONFIG {
+    description
+      "This feature indicates that the equipment supports per-port SYNCE configuration functionality";
+  }
+
+  feature PER-INT-TCP-MSS {
+    description
+      "This feature indicates that the RU supports a per-interfacece MSS
+      configuration for TCP.";
+  }
+
+  feature MULTIPLE-BEAMID-TABLES-SUPPORTED {
+    description
+    "Feature to indicate O-RU support for multiple beamId tables.";
+  }
+
+  feature MPLANE-TRX-CONTROL {
+    description
+    "Feature to indicate O-RU support for M-plane based TRX control for Network Energy Saving.";
+  }
+
+  feature DEEP-HIBERNATE {
+    description
+      "Feature to indicate O-RU support for M-Plane based deep-hibernate energy saving feature.";
+  }
+
+  feature PRG-SIZE-SUPP-SE-21-WITH-ST6 {
+    description
+    "Feature to indicate O-RU support for receiving prgSize information when Section Extension 21 is
+    sent with Section Type 6.";
+  }
+
+  feature PRG-SIZE-SUPP-SE-21-WITH-ST5 {
+    description
+    "Feature to indicate O-RU support for receiving prgSize information when Section Extension 21 is
+    sent with Section Type 5.";
+  }
+
+  feature USER-GROUP-OPTIMIZATION {
+    description
+      "Feature to indicate O-DU requirement to send all layers for a given user group i.e., UEs with same
+      time-frequency allocation using single C-Plane section description.";
+  }
+
+  feature BF-DELAY-PROFILE {
+    description
+    "Feature to indicate O-RU support for beamforming list and delay profiles(s) per endpoint.";
+  }
+
+  feature DMRS-BF-EQ {
+    description
+    "DMRS beamforming with equalization supported. See CUS-plane clause 12.6";
+  }
+
+  feature DMRS-BF-NEQ {
+    description
+    "DMRS beamforming without equalization supported. See CUS-plane clause 12.6";
+  }
+
+  feature RRM-MEAS-REPORTING {
+    description
+    "Reporting of RRM measurmenets supported. See CUS-plane clause 12.6.1.6";
+  }
+
+  feature USER-GROUP-SELF-ASSEMBLY {
+    description
+    "Feature to indicate user group self assembly. See CUS-Plane clause 7.7.24.7.";
+  }
+
+  feature UEID-PERSISTENCE {
+    description
+    "Feature to indicate if ueId persistance over multiple slots is supported. See CUS-Plane clause 7.7.24.10.";
+  }
+
+  feature CONTINUITY-BLOCK-SIZE {
+    description
+    "The O-RUs capability for reporting one or more values of continuity block sizes. See CUS-plane clause 12.6.1.2.1";
+  }
+
+  feature SELECTED-BF-METHOD-CONFIGURATION {
+    description
+    "Feature to indicate O-RU support for configuration of a subset of beamforming methods from an
+    endpoint-bf-profile-group that shall be used by a specific endpoint.";
+  }
+
+  feature DMRS-BF-NEQ-UNALTERED-FREQ-OFFSET  {
+    description
+    "Feature to indicate that DMRS-BF-NEQ beamforming performed by the O-RU does not change frequency offset,
+    hence it can be measured by the O-DU.";
+  }
+
+  feature DMRS-BF-NEQ-UNALTERED-TAE {
+    description
+    "Feature to indicate that DMRS-BF-NEQ beamforming performed by the O-RU does not change TAE,
+    hence TAE can be measured by the O-DU. Refer CUS specification clause 9.2.2.1 for details.";
+  }
+
+  feature SE10-MEMBER-CANDIDATE-LIST {
+    description
+    "Reporting of member-list of endpoints for SE-10 supporting endpoint. See CUS-plane clause 7.7.10.1";
+  }
+
+  feature MACSEC-BYPASS-POLICY {
+    description
+      "O-RU supports MACsec bypass policy";
+  }
+
+  feature SE27-ODU-CONTROLLED-DIMENSIONALITY-REDUCTION {
+    description
+    "Presence of the feature indicates that O-RU supports O-DU controlled dimensionality reduction using SE27 as defined in CUS-Plane
+    specification Clause 7.7.27.";
+  }
+
+  feature SE20-MULTI-SD-PUNC-PATTERN-SUPPORT {
+    description
+    "Feature to indicate O-RU support for handling multiple section description puncturing pattern in
+    Section Extension 20 per endpoint.";
+  }
+
+  feature CONFIGURABLE-VSWR-THRESHOLDS {
+    description
+    "Feature to indicate O-RU support for configurable VSWR thresholds.";
+  }
+
+  feature CLIENT-AUTH-SSH-PUBLIC-KEY {
+    description
+    "O-RU supports an optional feature to authenticate SSH client via SSHPUBLICKEY method.";
+  }
+
+  feature POINT-A-OFFSET-TO-ABSOLUTE-FREQUENCY-CENTER {
+    description
+    "Feature to indicate if leaf rx-array-carriers/point-a-offset-to-absolute-frequency-center is supported. See CUS-Plane clause 7.7.24.1.";
+  }
+}

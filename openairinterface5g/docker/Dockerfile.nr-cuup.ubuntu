@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for Ubuntu24.04
+#
+#---------------------------------------------------------------------
+
+ARG UBUNTU_IMAGE=ubuntu:noble
+FROM ran-base:latest AS gnb-base
+
+FROM ran-build:latest AS gnb-build
+
+
+FROM ${UBUNTU_IMAGE} AS oai-nr-cuup
+ARG BUILD_OPTION
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe
+
+RUN apt-get update && \
+    apt-get upgrade --yes && \
+    apt-get install --yes \
+        libsctp1 \
+        libconfig9 \
+        iproute2 \
+        net-tools \
+        openssl \
+        libyaml-cpp-dev && \
+# if the --sanitize option was used to build, additional packages are required
+    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+        libasan8 \
+        libubsan1; fi' && \
+    rm -rf /var/lib/apt/lists/*
+
+## Copy E2 SM models
+COPY --from=gnb-build /usr/local/lib/flexric /usr/local/lib/flexric
+
+WORKDIR /opt/oai-gnb/bin
+COPY --from=gnb-build \
+    /oai-ran/cmake_targets/ran_build/build/nr-cuup \
+    ./
+COPY ./docker/scripts/gnb_entrypoint.sh ./entrypoint.sh
+COPY --from=gnb-build \
+    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
+    /oai-ran/cmake_targets/ran_build/build/libparams_yaml.so \
+    /usr/local/lib/
+
+RUN ldconfig && ldd /opt/oai-gnb/bin/nr-cuup
+
+# Create directory for configuration files
+WORKDIR /opt/oai-gnb/etc
+
+WORKDIR /opt/oai-gnb
+
+COPY --from=gnb-base /usr/local/bin/yq /usr/local/bin/yq
+COPY --from=gnb-base /tini /tini
+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-gnb/bin/entrypoint.sh"]
+CMD ["/opt/oai-gnb/bin/nr-cuup", "-O", "/opt/oai-gnb/etc/gnb.conf"]

@@ -1,0 +1,411 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "resource_grid.h"
+#include "ocudu/ran/slot_pdu_capacity_constants.h"
+#include "ocudu/scheduler/resource_grid_util.h"
+#include "ocudu/support/compiler.h"
+
+using namespace ocudu;
+
+static subcarrier_spacing get_max_scs(const dl_config_common& dl_cfg)
+{
+  // Note: assumes sorted list, even though the corresponding TS struct \c scs-SpecificCarrierList might not be.
+  return dl_cfg.freq_info_dl.scs_carrier_list.back().scs;
+}
+
+/////////////////////////////////////////////////////////////////////////
+
+carrier_subslot_resource_grid::carrier_subslot_resource_grid(const scs_specific_carrier& carrier_cfg_) :
+  carrier_cfg(carrier_cfg_), slot_rbs(NOF_OFDM_SYM_PER_SLOT_NORMAL_CP * carrier_cfg.carrier_bandwidth)
+{
+}
+
+void carrier_subslot_resource_grid::clear()
+{
+  slot_rbs.reset();
+}
+
+void carrier_subslot_resource_grid::fill(ofdm_symbol_range symbols, crb_interval crbs)
+{
+  ocudu_sanity_check(rb_dims().contains(crbs), "CRB interval out-of-bounds");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  crbs.displace_by(-static_cast<int>(offset()));
+  for (unsigned sym = symbols.start(), sym_stop = symbols.stop(); sym != sym_stop; ++sym) {
+    slot_rbs.fill(crbs.start() + sym * nof_rbs(), crbs.stop() + sym * nof_rbs());
+  }
+}
+
+void carrier_subslot_resource_grid::fill(ofdm_symbol_range symbols, span<const uint16_t> crb_list)
+{
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  for (unsigned sym = symbols.start(), sym_stop = symbols.stop(); sym != sym_stop; ++sym) {
+    for (uint16_t crb : crb_list) {
+      ocudu_sanity_check(rb_dims().contains(crb), "CRB interval out-of-bounds");
+      crb -= offset();
+      slot_rbs.set(crb + sym * nof_rbs());
+    }
+  }
+}
+
+void carrier_subslot_resource_grid::clear(ofdm_symbol_range symbols, crb_interval crbs)
+{
+  ocudu_sanity_check(rb_dims().contains(crbs), "CRB interval out-of-bounds");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // Carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  crbs.displace_by(-static_cast<int>(offset()));
+  for (unsigned sym = symbols.start(), sym_stop = symbols.stop(); sym != sym_stop; ++sym) {
+    slot_rbs.fill(crbs.start() + sym * nof_rbs(), crbs.stop() + sym * nof_rbs(), false);
+  }
+}
+
+void carrier_subslot_resource_grid::clear(ofdm_symbol_range symbols, span<const uint16_t> crb_list)
+{
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  for (unsigned i = symbols.start(); i < symbols.stop(); ++i) {
+    for (uint16_t crb : crb_list) {
+      ocudu_sanity_check(rb_dims().contains(crb), "CRB interval out-of-bounds");
+      crb -= offset();
+      slot_rbs.reset(crb + i * nof_rbs());
+    }
+  }
+}
+
+bool carrier_subslot_resource_grid::collides(ofdm_symbol_range                    symbols,
+                                             crb_interval                         crbs,
+                                             const carrier_subslot_resource_grid* ignore_rg) const
+{
+  ocudu_sanity_check(rb_dims().contains(crbs), "CRB interval out-of-bounds");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  crbs.displace_by(-static_cast<int>(offset()));
+  for (unsigned sym = symbols.start(), sym_stop = symbols.stop(); sym != sym_stop; ++sym) {
+    if (ignore_rg != nullptr) {
+      // Collision if some RB is set in this grid but not in ignore_rg, within the given range.
+      const size_t start_pos = crbs.start() + sym * nof_rbs();
+      const size_t stop_pos  = crbs.stop() + sym * nof_rbs();
+      if (not slot_rbs.is_subset_of(ignore_rg->slot_rbs, start_pos, stop_pos)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (slot_rbs.any(crbs.start() + sym * nof_rbs(), crbs.stop() + sym * nof_rbs())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool carrier_subslot_resource_grid::collides(ofdm_symbol_range symbols, span<const uint16_t> crb_list) const
+{
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  for (unsigned i = symbols.start(); i < symbols.stop(); ++i) {
+    for (uint16_t crb : crb_list) {
+      ocudu_sanity_check(rb_dims().contains(crb), "CRB interval out-of-bounds");
+      crb -= offset();
+      if (slot_rbs.test(crb + i * nof_rbs())) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+crb_bitmap carrier_subslot_resource_grid::used_crbs(crb_interval bwp_crb_lims, ofdm_symbol_range symbols) const
+{
+  ocudu_sanity_check(not symbols.empty(), "used_crbs called on an empty OFDM symbol range");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+  slot_rb_bitmap slot_rbs_selected_symbols = slot_rbs.slice(symbols.start() * nof_rbs(), symbols.stop() * nof_rbs());
+  auto crb_bits = fold_and_accumulate<MAX_NOF_PRBS>(slot_rbs_selected_symbols, nof_rbs()).convert_to<crb_bitmap>();
+  crb_bits.fill(0, bwp_crb_lims.start());
+  crb_bits.fill(bwp_crb_lims.stop(), crb_bits.size());
+  return crb_bits;
+}
+
+prb_bitmap carrier_subslot_resource_grid::used_prbs(crb_interval bwp_crb_lims, ofdm_symbol_range symbols) const
+{
+  ocudu_sanity_check(not symbols.empty(), "used_crbs called on an empty OFDM symbol range");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+  slot_rb_bitmap slot_rbs_selected_symbols = slot_rbs.slice(symbols.start() * nof_rbs(), symbols.stop() * nof_rbs());
+  auto           prb_bits                  = fold_and_accumulate<MAX_NOF_PRBS>(
+                      slot_rbs_selected_symbols, nof_rbs(), bwp_crb_lims.start(), bwp_crb_lims.length())
+                      .convert_to<prb_bitmap>();
+  return prb_bits;
+}
+
+bool carrier_subslot_resource_grid::all_set(ofdm_symbol_range symbols, crb_interval crbs) const
+{
+  ocudu_sanity_check(rb_dims().contains(crbs), "CRB interval out-of-bounds");
+  ocudu_sanity_check(symbols.stop() <= NOF_OFDM_SYM_PER_SLOT_NORMAL_CP, "OFDM symbols out-of-bounds");
+
+  // carrier bitmap RB bit=0 corresponds to CRB=carrier offset. Thus, we need to shift the CRB interval.
+  crbs.displace_by(-(int)offset());
+  for (unsigned i = symbols.start(); i < symbols.stop(); ++i) {
+    if (!slot_rbs.all(crbs.start() + i * nof_rbs(), crbs.stop() + i * nof_rbs())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+cell_slot_resource_grid::carrier_resource_grid::carrier_resource_grid(const scs_specific_carrier& carrier_cfg) :
+  subslot_rbs(carrier_cfg)
+{
+}
+
+cell_slot_resource_grid::cell_slot_resource_grid(span<const scs_specific_carrier> scs_carriers)
+{
+  std::fill(numerology_to_grid_idx.begin(), numerology_to_grid_idx.end(), std::numeric_limits<unsigned>::max());
+
+  carrier_grids.reserve(scs_carriers.size());
+  for (const auto& scs_carrier : scs_carriers) {
+    carrier_grids.emplace_back(scs_carrier);
+    numerology_to_grid_idx[to_numerology_value(scs_carrier.scs)] = carrier_grids.size() - 1;
+  }
+}
+
+static_vector<subcarrier_spacing, NOF_NUMEROLOGIES> cell_slot_resource_grid::active_scs() const
+{
+  static_vector<subcarrier_spacing, NOF_NUMEROLOGIES> ret;
+  for (unsigned u = 0; u != numerology_to_grid_idx.size(); ++u) {
+    if (numerology_to_grid_idx[u] < std::numeric_limits<unsigned>::max()) {
+      ret.push_back(to_subcarrier_spacing(u));
+    }
+  }
+  return ret;
+}
+
+void cell_slot_resource_grid::clear()
+{
+  for (auto& carrier : carrier_grids) {
+    carrier.subslot_rbs.clear();
+  }
+}
+
+void cell_slot_resource_grid::fill(grant_info grant)
+{
+  auto& carrier = get_carrier(grant.scs);
+  carrier.subslot_rbs.fill(grant.symbols, grant.crbs);
+}
+
+void cell_slot_resource_grid::fill(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, span<const uint16_t> crbs)
+{
+  auto& carrier = get_carrier(scs);
+  carrier.subslot_rbs.fill(ofdm_symbols, crbs);
+}
+
+void cell_slot_resource_grid::clear(grant_info grant)
+{
+  auto& carrier = get_carrier(grant.scs);
+  carrier.subslot_rbs.clear(grant.symbols, grant.crbs);
+}
+
+void cell_slot_resource_grid::clear(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, span<const uint16_t> crbs)
+{
+  auto& carrier = get_carrier(scs);
+  carrier.subslot_rbs.clear(ofdm_symbols, crbs);
+}
+
+bool cell_slot_resource_grid::collides(grant_info grant, const cell_slot_resource_grid* ignore_rg) const
+{
+  const carrier_resource_grid& carrier = get_carrier(grant.scs);
+  if (ignore_rg == nullptr) {
+    return carrier.subslot_rbs.collides(grant.symbols, grant.crbs);
+  }
+
+  const carrier_resource_grid& ignore_carrier = ignore_rg->get_carrier(grant.scs);
+  return carrier.subslot_rbs.collides(grant.symbols, grant.crbs, &ignore_carrier.subslot_rbs);
+}
+
+bool cell_slot_resource_grid::collides(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, crb_interval crbs) const
+{
+  const carrier_resource_grid& carrier = get_carrier(scs);
+  return carrier.subslot_rbs.collides(ofdm_symbols, crbs);
+}
+
+bool cell_slot_resource_grid::collides(subcarrier_spacing   scs,
+                                       ofdm_symbol_range    ofdm_symbols,
+                                       span<const uint16_t> crbs) const
+{
+  const carrier_resource_grid& carrier = get_carrier(scs);
+  return carrier.subslot_rbs.collides(ofdm_symbols, crbs);
+}
+
+crb_bitmap cell_slot_resource_grid::used_crbs(const bwp_configuration& bwp_cfg, ofdm_symbol_range symbols) const
+{
+  const carrier_resource_grid& carrier = get_carrier(bwp_cfg.scs);
+  return carrier.subslot_rbs.used_crbs(bwp_cfg.crbs, symbols);
+}
+
+crb_bitmap
+cell_slot_resource_grid::used_crbs(subcarrier_spacing scs, crb_interval crb_lims, ofdm_symbol_range symbols) const
+{
+  const carrier_resource_grid& carrier = get_carrier(scs);
+  return carrier.subslot_rbs.used_crbs(crb_lims, symbols);
+}
+
+prb_bitmap
+cell_slot_resource_grid::used_prbs(subcarrier_spacing scs, crb_interval crb_lims, ofdm_symbol_range symbols) const
+{
+  const carrier_resource_grid& carrier = get_carrier(scs);
+  return carrier.subslot_rbs.used_prbs(crb_lims, symbols);
+}
+
+bool cell_slot_resource_grid::all_set(grant_info grant) const
+{
+  const auto& carrier = get_carrier(grant.scs);
+  return carrier.subslot_rbs.all_set(grant.symbols, grant.crbs);
+}
+
+bool cell_slot_resource_grid::all_set(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, crb_interval crbs) const
+{
+  const auto& carrier = get_carrier(scs);
+  return carrier.subslot_rbs.all_set(ofdm_symbols, crbs);
+}
+
+cell_slot_resource_grid::carrier_resource_grid& cell_slot_resource_grid::get_carrier(subcarrier_spacing scs)
+{
+  size_t idx = numerology_to_grid_idx[to_numerology_value(scs)];
+  ocudu_sanity_check(idx < carrier_grids.size(), "Invalid numerology={}", fmt::underlying(scs));
+  return carrier_grids[idx];
+}
+
+const cell_slot_resource_grid::carrier_resource_grid& cell_slot_resource_grid::get_carrier(subcarrier_spacing scs) const
+{
+  size_t idx = numerology_to_grid_idx[to_numerology_value(scs)];
+  ocudu_sanity_check(idx < carrier_grids.size(), "Invalid numerology={}", fmt::underlying(scs));
+  return carrier_grids[idx];
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+cell_slot_resource_allocator::cell_slot_resource_allocator(const cell_configuration& cfg_) :
+  cfg(cfg_),
+  dl_res_grid(cfg.params.dl_cfg_common.freq_info_dl.scs_carrier_list),
+  ul_res_grid(cfg.params.ul_cfg_common.freq_info_ul.scs_carrier_list)
+{
+}
+
+cell_slot_resource_allocator::cell_slot_resource_allocator(const cell_configuration&  cfg_,
+                                                           span<scs_specific_carrier> dl_scs_carriers,
+                                                           span<scs_specific_carrier> ul_scs_carriers) :
+  cfg(cfg_), dl_res_grid(dl_scs_carriers), ul_res_grid(ul_scs_carriers)
+{
+  result.ul.pucchs.reserve(MAX_PUCCH_PDUS_PER_SLOT);
+}
+
+void cell_slot_resource_allocator::slot_indication(slot_point sl)
+{
+  // Clear previous results.
+  clear();
+
+  // Initiate new slot in the same grid ring location.
+  slot                     = sl;
+  result.success           = true;
+  result.dl.nof_dl_symbols = cfg.get_nof_dl_symbol_per_slot(sl);
+  result.ul.nof_ul_symbols = cfg.get_nof_ul_symbol_per_slot(sl);
+}
+
+void cell_slot_resource_allocator::clear()
+{
+  result.dl.dl_pdcchs.clear();
+  result.dl.ul_pdcchs.clear();
+  result.dl.bc.ssb_info.clear();
+  result.dl.bc.sibs.clear();
+  result.dl.rar_grants.clear();
+  result.dl.paging_grants.clear();
+  result.dl.ue_grants.clear();
+  result.dl.csi_rs.clear();
+  result.ul.puschs.clear();
+  result.ul.prachs.clear();
+  result.ul.pucchs.clear();
+  result.ul.srss.clear();
+  result.failed_attempts.dl_pdcch            = 0;
+  result.failed_attempts.ul_pdcch            = 0;
+  result.failed_attempts.common_dl_pdcch     = 0;
+  result.failed_attempts.common_ul_pdcch     = 0;
+  result.failed_attempts.uci                 = 0;
+  result.failed_attempts.fallback_uci_allocs = 0;
+  dl_res_grid.clear();
+  ul_res_grid.clear();
+  result.success = false;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+cell_resource_allocator::cell_resource_allocator(const cell_configuration& cfg_) :
+  cfg(cfg_),
+  max_dl_slot_alloc_delay(SCHEDULER_MAX_K0),
+  max_ul_slot_alloc_delay(get_max_slot_ul_alloc_delay(cfg.ntn_cs_koffset))
+{
+  // Create cell_slot_resource_allocator objects.
+  std::vector<scs_specific_carrier> dl_scs_carriers;
+  std::vector<scs_specific_carrier> ul_scs_carriers;
+  subcarrier_spacing                max_scs = cfg.params.dl_cfg_common.freq_info_dl.scs_carrier_list.back().scs;
+  max_scs = std::max(max_scs, cfg.params.ul_cfg_common.freq_info_ul.scs_carrier_list.back().scs);
+
+  const unsigned ring_size =
+      get_allocator_ring_size_gt_min(RING_MAX_HISTORY_SIZE + get_max_slot_ul_alloc_delay(cfg.ntn_cs_koffset));
+  slots.reserve(ring_size);
+  unsigned nof_slots_per_subframe = get_nof_slots_per_subframe(max_scs);
+  for (unsigned i = 0; i != ring_size; ++i) {
+    for (const auto& carrier : cfg.params.dl_cfg_common.freq_info_dl.scs_carrier_list) {
+      unsigned current_slot_dur = nof_slots_per_subframe / get_nof_slots_per_subframe(carrier.scs);
+      if (i % current_slot_dur == 0) {
+        dl_scs_carriers.emplace_back(carrier);
+      }
+    }
+    for (const auto& carrier : cfg.params.ul_cfg_common.freq_info_ul.scs_carrier_list) {
+      unsigned current_slot_dur = nof_slots_per_subframe / get_nof_slots_per_subframe(carrier.scs);
+      if (i % current_slot_dur == 0) {
+        ul_scs_carriers.emplace_back(carrier);
+      }
+    }
+    slots.emplace_back(cfg, dl_scs_carriers, ul_scs_carriers);
+    dl_scs_carriers.clear();
+    ul_scs_carriers.clear();
+  }
+}
+
+void cell_resource_allocator::slot_indication(slot_point sl_tx)
+{
+  ocudu_sanity_check(not last_slot_ind.valid() or last_slot_ind + 1 == sl_tx, "Slot indication was skipped");
+  ocudu_sanity_check(sl_tx.numerology() == to_numerology_value(get_max_scs(cfg.params.dl_cfg_common)),
+                     "Invalid slot numerology");
+
+  if (OCUDU_UNLIKELY(not last_slot_ind.valid())) {
+    // First call to slot_indication. Set slot of all slot cell resource grids.
+    for (unsigned i = 0, sz = slots.size(); i != sz; ++i) {
+      slots[(sl_tx + i).count()].slot_indication(sl_tx + i);
+    }
+  } else {
+    // Reset old slot state and set its new future slot.
+    slot_point slot_to_reset = sl_tx - static_cast<unsigned>(RING_MAX_HISTORY_SIZE);
+    auto&      old_slot_res  = slots[slot_to_reset.count()];
+    old_slot_res.slot_indication(slot_to_reset + slots.size());
+  }
+  last_slot_ind = sl_tx;
+}
+
+void cell_resource_allocator::stop()
+{
+  for (auto& slot : slots) {
+    slot.clear();
+  }
+  last_slot_ind = {};
+}

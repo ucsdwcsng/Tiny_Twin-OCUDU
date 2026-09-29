@@ -1,0 +1,286 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ngap_handover_preparation_procedure.h"
+#include "../ngap_asn1_converters.h"
+#include "ocudu/asn1/ngap/common.h"
+#include "ocudu/ngap/ngap_message.h"
+
+using namespace ocudu;
+using namespace ocucp;
+using namespace asn1::ngap;
+
+constexpr std::chrono::milliseconds ng_cancel_ack_timeout{5000};
+
+ngap_handover_preparation_procedure::ngap_handover_preparation_procedure(
+    const ngap_handover_preparation_request& request_,
+    const ngap_ue_ids&                       ue_ids_,
+    ngap_message_notifier&                   amf_notifier_,
+    ngap_rrc_ue_notifier&                    rrc_ue_notifier_,
+    ngap_cu_cp_notifier&                     cu_cp_notifier_,
+    ngap_ue_transaction_manager&             ev_mng_,
+    timer_factory                            timers,
+    ngap_ue_logger&                          logger_) :
+  request(request_),
+  ue_ids(ue_ids_),
+  amf_notifier(amf_notifier_),
+  rrc_ue_notifier(rrc_ue_notifier_),
+  cu_cp_notifier(cu_cp_notifier_),
+  ev_mng(ev_mng_),
+  logger(logger_),
+  tng_reloc_prep_timer(timers.create_timer())
+{
+}
+
+void ngap_handover_preparation_procedure::operator()(coro_context<async_task<ngap_handover_preparation_response>>& ctx)
+{
+  CORO_BEGIN(ctx);
+  logger.log_info("\"{}\" started...", name());
+
+  if (ue_ids.amf_ue_id == amf_ue_id_t::invalid || ue_ids.ran_ue_id == ran_ue_id_t::invalid) {
+    logger.log_error("\"{}\" failed. Cause: Invalid NGAP id pair", name());
+    CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+  }
+
+  // The PDU Session Resource List IE of the HANDOVER REQUIRED carries at least one item (TS 38.413 section 9.2.3.1),
+  // so a UE without a PDU session cannot be handed over.
+  if (request.pdu_sessions.empty()) {
+    logger.log_warning("\"{}\" failed. Cause: UE has no PDU session", name());
+    CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+  }
+
+  // Subscribe to respective publisher to receive HANDOVER COMMAND/HANDOVER PREPARATION FAILURE message.
+  transaction_sink.subscribe_to(ev_mng.handover_preparation_outcome, tng_reloc_prep_ms);
+
+  // Get required context from RRC UE.
+  get_required_handover_context();
+
+  // Send Handover Required to AMF.
+  if (!send_handover_required()) {
+    logger.log_warning("\"{}\" failed", name());
+    CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+  }
+
+  CORO_AWAIT(transaction_sink);
+
+  if (transaction_sink.timeout_expired()) {
+    logger.log_warning("\"{}\" timed out after {}ms", name(), tng_reloc_prep_ms.count());
+    // Initialize Handover Cancellation procedure.
+    ho_cancel_transaction_sink.subscribe_to(ev_mng.handover_cancel_outcome, ng_cancel_ack_timeout);
+
+    if (!send_handover_cancel()) {
+      logger.log_warning("\"{}\" failed", name());
+      CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+    }
+
+    CORO_AWAIT(ho_cancel_transaction_sink);
+
+    if (ho_cancel_transaction_sink.timeout_expired()) {
+      logger.log_warning("\"{}\" Handover Cancel timed out after {}ms", name(), ng_cancel_ack_timeout.count());
+    }
+    if (transaction_sink.successful()) {
+      logger.log_debug("\"{}\" Handover Cancel Ack received", name());
+    }
+    CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+  }
+
+  if (transaction_sink.failed()) {
+    logger.log_warning("\"{}\" failed. Cause: Received HandoverPreparationFailure", name());
+    CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+  }
+
+  if (transaction_sink.successful()) {
+    // Unpack transparent container to get RRC Handover Command.
+    rrc_ho_cmd = get_rrc_handover_command();
+    if (rrc_ho_cmd.rrc_container.empty()) {
+      logger.log_warning("\"{}\" failed. Cause: Received invalid HandoverCommand", name());
+      CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+    }
+
+    // Forward RRC Handover Command to DU Processor.
+    CORO_AWAIT_VALUE(rrc_reconfig_success, cu_cp_notifier.on_new_rrc_handover_command(std::move(rrc_ho_cmd)));
+    if (!rrc_reconfig_success) {
+      logger.log_warning("\"{}\" failed. Cause: Received invalid HandoverCommand", name());
+      CORO_EARLY_RETURN(ngap_handover_preparation_response{false});
+    }
+
+    logger.log_info("\"{}\" finished successfully", name());
+  }
+
+  // Forward procedure result to DU manager.
+  CORO_RETURN(ngap_handover_preparation_response{true});
+}
+
+void ngap_handover_preparation_procedure::get_required_handover_context()
+{
+  ho_ue_context.pdu_sessions  = request.pdu_sessions;
+  ho_ue_context.rrc_container = rrc_ue_notifier.on_handover_preparation_message_required();
+}
+
+bool ngap_handover_preparation_procedure::send_handover_required()
+{
+  ngap_message msg = {};
+  // Set NGAP PDU contents.
+  msg.pdu.set_init_msg();
+  msg.pdu.init_msg().load_info_obj(ASN1_NGAP_ID_HO_PREP);
+  ho_required_s& ho_required = msg.pdu.init_msg().value.ho_required();
+
+  ho_required->amf_ue_ngap_id = to_underlying(ue_ids.amf_ue_id);
+  ho_required->ran_ue_ngap_id = to_underlying(ue_ids.ran_ue_id);
+
+  // Only intra5gs supported.
+  ho_required->handov_type = handov_type_opts::intra5gs;
+
+  ho_required->cause.set_radio_network();
+  ho_required->cause.radio_network() = cause_radio_network_opts::ho_desirable_for_radio_reason;
+
+  fill_asn1_target_ran_node_id(ho_required->target_id);
+  fill_asn1_pdu_session_res_list(ho_required->pdu_session_res_list_ho_rqd);
+  ho_required->source_to_target_transparent_container = fill_asn1_source_to_target_transparent_container();
+
+  // Forward message to AMF.
+  if (!amf_notifier.on_new_message(msg)) {
+    logger.log_warning("Cannot send HandoverRequired");
+    return false;
+  }
+
+  // Notify the CU-CP about the transmission of a handover required.
+  cu_cp_notifier.on_transmission_of_handover_required();
+  return true;
+}
+
+bool ngap_handover_preparation_procedure::send_handover_cancel()
+{
+  ngap_message msg = {};
+  // Set NGAP PDU contents.
+  msg.pdu.set_init_msg();
+  msg.pdu.init_msg().load_info_obj(ASN1_NGAP_ID_HO_CANCEL);
+  ho_cancel_s& ho_cancel = msg.pdu.init_msg().value.ho_cancel();
+
+  ho_cancel->amf_ue_ngap_id = to_underlying(ue_ids.amf_ue_id);
+  ho_cancel->ran_ue_ngap_id = to_underlying(ue_ids.ran_ue_id);
+
+  ho_cancel->cause.set_radio_network();
+  ho_cancel->cause.set_radio_network() = cause_radio_network_opts::ho_cancelled;
+
+  // Forward message to AMF.
+  if (!amf_notifier.on_new_message(msg)) {
+    logger.log_warning("Cannot send HandoverCancel");
+    return false;
+  }
+
+  return true;
+}
+
+void ngap_handover_preparation_procedure::fill_asn1_target_ran_node_id(target_id_c& target_id)
+{
+  auto& target_node = target_id.set_target_ran_node_id();
+  target_node.global_ran_node_id.set(global_ran_node_id_c::types::global_gnb_id);
+  auto& global_gnb   = target_node.global_ran_node_id.global_gnb_id();
+  global_gnb.plmn_id = request.target_id.plmn.to_bytes();
+  global_gnb.gnb_id.set_gnb_id();
+  global_gnb.gnb_id.gnb_id().from_number(request.target_id.gnb_id.id, request.target_id.gnb_id.bit_length);
+  target_node.sel_tai.plmn_id = request.target_id.plmn.to_bytes();
+  target_node.sel_tai.tac.from_number(request.target_id.tac);
+}
+
+void ngap_handover_preparation_procedure::fill_asn1_pdu_session_res_list(
+    pdu_session_res_list_ho_rqd_l& pdu_session_res_list)
+{
+  for (const auto& pdu_session : ho_ue_context.pdu_sessions) {
+    pdu_session_res_item_ho_rqd_s pdu_session_item;
+    pdu_session_item.pdu_session_id = to_underlying(pdu_session.first);
+
+    // Pack PDU into temporary buffer.
+    ho_required_transfer_s ho_required_transfer = {};
+    byte_buffer            ho_required_transfer_packed;
+    asn1::bit_ref          bref(ho_required_transfer_packed);
+    if (ho_required_transfer.pack(bref) != asn1::OCUDUASN_SUCCESS) {
+      logger.log_error("Failed to pack PDU");
+      return;
+    }
+    pdu_session_item.ho_required_transfer = std::move(ho_required_transfer_packed);
+    pdu_session_res_list.push_back(pdu_session_item);
+  }
+}
+
+byte_buffer ngap_handover_preparation_procedure::fill_asn1_source_to_target_transparent_container()
+{
+  struct source_ngran_node_to_target_ngran_node_transparent_container_s transparent_container;
+  transparent_container.rrc_container = std::move(ho_ue_context.rrc_container);
+  for (const auto& pdu_session : ho_ue_context.pdu_sessions) {
+    pdu_session_res_info_item_s pdu_session_res_info_item;
+    pdu_session_res_info_item.pdu_session_id = to_underlying(pdu_session.first);
+    for (const auto& drb_item : pdu_session.second) {
+      drbs_to_qos_flows_map_item_s asn1_drb_item;
+      asn1_drb_item.drb_id = to_underlying(drb_item.drb_id);
+      for (const auto& assoc_qos_flow : drb_item.associated_qos_flow_list) {
+        asn1_drb_item.associated_qos_flow_list.push_back(
+            cu_cp_assoc_qos_flow_to_ngap_assoc_qos_flow_item(assoc_qos_flow));
+
+        // Every QoS flow reported in the DRB-to-QoS-flow mapping must also appear in the QoS Flow Information List.
+        qos_flow_info_item_s qos_flow_info_item = {};
+        qos_flow_info_item.qos_flow_id          = to_underlying(assoc_qos_flow.qos_flow_id);
+        // Propose the QoS flow for DL data forwarding, leaving it to the target to decide which flows it accepts and
+        // over which forwarding tunnels (TS 38.300 section 9.2.3.2.3).
+        qos_flow_info_item.dl_forwarding_present = true;
+        qos_flow_info_item.dl_forwarding         = dl_forwarding_opts::dl_forwarding_proposed;
+        pdu_session_res_info_item.qos_flow_info_list.push_back(qos_flow_info_item);
+      }
+      pdu_session_res_info_item.drbs_to_qos_flows_map_list.push_back(asn1_drb_item);
+    }
+    transparent_container.pdu_session_res_info_list.push_back(pdu_session_res_info_item);
+  }
+  nr_cgi_s& target_nr_cgi = transparent_container.target_cell_id.set_nr_cgi();
+
+  target_nr_cgi.plmn_id = request.target_id.plmn.to_bytes();
+  target_nr_cgi.nr_cell_id.from_number(request.nci.value());
+
+  last_visited_cell_item_s        last_visited_cell_item;
+  last_visited_ngran_cell_info_s& ngran_cell = last_visited_cell_item.last_visited_cell_info.set_ngran_cell();
+  ngran_cell.global_cell_id.set_nr_cgi();
+  ngran_cell.cell_type.cell_size = cell_size_opts::small;
+
+  transparent_container.ue_history_info.push_back(last_visited_cell_item);
+
+  byte_buffer   buf{};
+  asn1::bit_ref bref{buf};
+  if (transparent_container.pack(bref) == asn1::OCUDUASN_ERROR_ENCODE_FAIL) {
+    logger.log_error("Failed to pack transparent container.");
+    return {};
+  }
+  return buf;
+}
+
+cu_cp_rrc_handover_command ngap_handover_preparation_procedure::get_rrc_handover_command() const
+{
+  cu_cp_rrc_handover_command ho_command;
+  ho_command.ue_index = request.ue_index;
+
+  const auto& target_to_source_container_packed = transaction_sink.response()->target_to_source_transparent_container;
+
+  asn1::ngap::target_ngran_node_to_source_ngran_node_transparent_container_s target_to_source_container;
+  asn1::cbit_ref bref({target_to_source_container_packed.begin(), target_to_source_container_packed.end()});
+
+  if (target_to_source_container.unpack(bref) != asn1::OCUDUASN_SUCCESS) {
+    logger.log_error("Couldn't unpack target to source transparent container");
+    return ho_command;
+  }
+  ho_command.rrc_container = std::move(target_to_source_container.rrc_container);
+
+  // Unpack the Handover Command Transfer of every PDU session, to learn where the data still held for the UE has to be
+  // forwarded to (TS 38.413 section 9.3.4.10).
+  for (const auto& asn1_pdu_session : transaction_sink.response()->pdu_session_res_ho_list) {
+    asn1::ngap::ho_cmd_transfer_s asn1_ho_cmd_transfer;
+    asn1::cbit_ref transfer_bref({asn1_pdu_session.ho_cmd_transfer.begin(), asn1_pdu_session.ho_cmd_transfer.end()});
+    if (asn1_ho_cmd_transfer.unpack(transfer_bref) != asn1::OCUDUASN_SUCCESS) {
+      logger.log_warning("Couldn't unpack Handover Command Transfer of psi={}", asn1_pdu_session.pdu_session_id);
+      continue;
+    }
+    ho_command.data_forwarding_info_from_target.emplace(uint_to_pdu_session_id(asn1_pdu_session.pdu_session_id),
+                                                        asn1_to_data_forwarding_info_from_target(asn1_ho_cmd_transfer));
+  }
+
+  return ho_command;
+}

@@ -1,0 +1,106 @@
+# Copyright (c) Microsoft Corporation
+# SPDX-License-Identifier: MIT
+
+name: CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      configuration:
+        required: true
+        type: string
+      enable_sanitizers:
+        required: false
+        type: boolean
+      enable_coverage:
+        required: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+
+    runs-on: ${{inputs.platform}}
+    env:
+      BUILD_TYPE: ${{inputs.configuration}}
+
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@cb605e52c26070c328afc4562f0b4ada7618a84e # v2.10.4
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        submodules: 'recursive'
+
+    - name: Install prerequisites - Ubuntu-22.04
+      if: inputs.platform == 'ubuntu-22.04'
+      run: |
+        sudo apt-get install -y lcov
+
+    - name: Install prerequisites - macos-latest
+      if: inputs.platform == 'macos-latest'
+      run: |
+        brew install \
+          cmake \
+          ninja \
+          ccache
+
+    - name: Configure CMake
+      if: inputs.platform == 'windows-2019' || inputs.platform == 'windows-2022'
+      run: |
+        cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBTF_ENABLE_TESTS=TRUE -DBTF_WARNING_AS_ERROR=TRUE
+
+    - name: Configure CMake
+      if: inputs.platform == 'ubuntu-22.04' || inputs.platform == 'macos-latest'
+      run: |
+        if [ "${{inputs.enable_sanitizers}}" = "true" ]; then
+          export SANITIZER_FLAGS="-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all"
+        fi
+        if [ "${{inputs.enable_coverage}}" = "true" ]; then
+          export COVERAGE_FLAGS="-DCMAKE_CXX_FLAGS=\"--coverage\" -DCMAKE_C_FLAGS=\"--coverage\""
+        fi
+        cmake \
+          -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DCMAKE_CXX_FLAGS="${SANITIZER_FLAGS}" \
+          -DCMAKE_C_FLAGS="${SANITIZER_FLAGS}" \
+          -DBTF_ENABLE_TESTS=TRUE \
+          ${COVERAGE_FLAGS}
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Tests - Non-Windows
+      if: inputs.platform != 'windows-2019' && inputs.platform != 'windows-2022'
+      working-directory: ${{github.workspace}}
+      run: |
+        build/test/tests -d yes
+
+    - name: Tests - Windows
+      if: inputs.platform == 'windows-2019' || inputs.platform == 'windows-2022'
+      working-directory: ${{github.workspace}}
+      run: |
+        build/test/${{env.BUILD_TYPE}}/tests.exe -d yes
+
+    - name: Generate code coverage report
+      if: inputs.enable_coverage == true
+      run: |
+        mkdir -p coverage
+        lcov --capture --directory build --include '${{github.workspace}}/*' --output-file coverage/lcov.info --exclude '${{github.workspace}}/external/*' --exclude '${{github.workspace}}/build/*'
+
+    - name: Coveralls Parallel
+      if: inputs.enable_coverage == true
+      uses: coverallsapp/github-action@cfd0633edbd2411b532b808ba7a8b5e04f76d2c8 # v2.3.4
+      with:
+        github-token: ${{ secrets.github_token }}
+        flag-name: run-${{inputs.build_type}}-${{inputs.platform}}-${{inputs.arch}}
+        parallel: true

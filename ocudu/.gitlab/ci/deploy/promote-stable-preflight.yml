@@ -1,0 +1,370 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+.simd-label: &simd-label |
+  case "${MARCH}" in
+    x86-64-v3)                   SIMD=avx2 ;;
+    x86-64-v4)                   SIMD=avx512 ;;
+    neoverse-n1+crc+crypto+ssbs) SIMD=neon ;;
+    *)                           SIMD="${MARCH}" ;;
+  esac
+
+.promote-stable:
+  extends: .docker copy
+  stage: promote-stable
+  rules: &promote_rules
+    - if: $ON_MR
+      when: manual
+      allow_failure: true
+    - if: $ON_WEB
+      when: manual
+      allow_failure: true
+    - if: $ON_API
+      when: manual
+      allow_failure: true
+    - if: $ON_MAIN
+
+.preflight-stable:
+  stage: preflight
+  image: ${OCUDU_REGISTRY_URI}/rh-tool-cli:$RH_TOOL_CLI_VERSION
+  tags:
+    - ocudu-rhel-amd64
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - export PFLT_DOCKERCONFIG=/root/.docker/config.json
+  script:
+    - |
+      [ -z "${IMAGE_REF}" ] && echo "IMAGE_REF is mandatory" && exit 1
+      [ -z "${TARGETARCH}" ] && echo "TARGETARCH is mandatory" && exit 1
+      mkdir -p preflight-results
+      export PFLT_ARTIFACTS="${CI_PROJECT_DIR}/preflight-results"
+      export PFLT_LOGFILE="${CI_PROJECT_DIR}/preflight-results/preflight.log"
+      export PFLT_JUNIT=true
+      [ -z "${PFLT_PYXIS_API_TOKEN}" ] && echo "PFLT_PYXIS_API_TOKEN is mandatory" && exit 1
+      [ -z "${PFLT_CERTIFICATION_COMPONENT_ID}" ] && echo "PFLT_CERTIFICATION_COMPONENT_ID is mandatory" && exit 1
+      set +e
+      preflight check container "${IMAGE_REF}-stable" --platform "${TARGETARCH}" \
+        --docker-config "${PFLT_DOCKERCONFIG}" --submit \
+        > preflight-results/preflight-results.json \
+        2> preflight-results/preflight-stderr.log
+      PREFLIGHT_STATUS=$?
+      set -e
+      cat preflight-results/preflight-stderr.log
+      cat preflight-results/preflight-results.json
+      if [ "${PREFLIGHT_STATUS}" -ne 0 ]; then
+        echo "preflight command failed with exit code ${PREFLIGHT_STATUS}"
+        exit "${PREFLIGHT_STATUS}"
+      fi
+      jq -e '.passed == true' preflight-results/preflight-results.json >/dev/null
+  artifacts:
+    paths:
+      - preflight-results/
+    expire_in: 7 days
+    when: always
+  rules:
+    - if: $ON_MR
+    - if: $ON_WEB
+    - if: $ON_API
+    - if: $ON_MAIN
+
+.legacy-image-build:
+  extends:
+    - .docker-builder
+    - .matrix-legacy-image
+  stage: publish
+  timeout: 2 hours
+  variables:
+    REGISTRY_URI: ${OCUDU_REGISTRY_URI}
+    CONTEXT: ${CI_PROJECT_DIR}
+    DOCKERFILE: docker
+    MODE: publish
+    ATTESTATION_FILE: /usr/local/share/ocudu.spdx
+    OS: ubuntu
+    OS_VERSION: "24.04"
+    DOCKER_UHD_VERSION: "4.9.0.0"
+    DOCKER_DPDK_VERSION: "24.11.2"
+    EXTRA_CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Release"
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "100G"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "100G"
+  tags:
+    - ${OCUDU_RUNNER_TAG}-${PLATFORM}
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+      export NAME="ocudu_nightly_${SUFFIX}"
+      if [ -n "${PROMOTE_IMAGE_TAG:-}" ]; then
+        VERSION="${PROMOTE_IMAGE_TAG}"
+      else
+        VERSION="$(git show -s --date=format:%Y%m%d --format=%cd ${CI_COMMIT_SHA})_${CI_COMMIT_SHORT_SHA}"
+      fi
+      export VERSION
+      export BUILD_ARGS="OS=${OS};OS_VERSION=${OS_VERSION};UHD_VERSION=${DOCKER_UHD_VERSION};DPDK_VERSION=${DOCKER_DPDK_VERSION};OCUDU_IMAGE_VERSION=${VERSION};OCUDU_IMAGE_RELEASE=${CI_COMMIT_SHORT_SHA};MARCH=${MARCH};NUM_JOBS=${CPU_JOBS};EXTRA_CMAKE_ARGS=\"${EXTRA_CMAKE_ARGS}\""
+  rules: *promote_rules
+
+build-stable-source:legacy:
+  extends: .legacy-image-build
+
+promote-stable:legacy:
+  extends:
+    - .promote-stable
+    - .matrix-legacy-image
+  variables:
+    GIT_STRATEGY: fetch
+  before_script:
+    - |
+      if [ -n "${PROMOTE_IMAGE_TAG:-}" ]; then
+        VERSION="${PROMOTE_IMAGE_TAG}"
+      else
+        VERSION="$(git show -s --date=format:%Y%m%d --format=%cd ${CI_COMMIT_SHA})_${CI_COMMIT_SHORT_SHA}"
+      fi
+      IMAGE_REF="${OCUDU_REGISTRY_URI}/ocudu_nightly_${SUFFIX}:${VERSION}"
+      export SOURCE_IMAGE="${IMAGE_REF}"
+      export DESTINATION_IMAGE="${IMAGE_REF}-stable"
+  needs:
+    - job: build-stable-source:legacy
+      artifacts: false
+
+.promote-stable-ubuntu:
+  extends: .promote-stable
+  before_script:
+    - *simd-label
+    - |
+      if [ -n "${DRIVER}" ]; then
+        IMAGE_COMPONENT="${COMPONENT}-${DRIVER}"
+      else
+        IMAGE_COMPONENT="${COMPONENT}"
+      fi
+      DATE=$(date -u -d "${CI_PIPELINE_CREATED_AT}" +%Y%m%d)
+      if [ -n "${PROMOTE_IMAGE_TAG:-}" ]; then
+        VERSION="${PROMOTE_IMAGE_TAG}-${OS}-${OS_VERSION}-${SIMD}"
+      else
+        VERSION="${OS}-${OS_VERSION}-${SIMD}-${DATE}_${CI_COMMIT_SHORT_SHA}"
+      fi
+      IMAGE_REF="${CI_REGISTRY}/${CI_PROJECT_PATH}/images/${IMAGE_COMPONENT}:${VERSION}"
+      export SOURCE_IMAGE="${IMAGE_REF}"
+      export DESTINATION_IMAGE="${IMAGE_REF}-stable"
+
+promote-stable:ubuntu:gnb:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-gnb
+  needs:
+    - job: build-and-publish:gnb
+      artifacts: false
+
+promote-stable:ubuntu:du:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-du
+  needs:
+    - job: build-and-publish:du
+      artifacts: false
+
+promote-stable:ubuntu:cu:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-cu
+  needs:
+    - job: build-and-publish:cu
+      artifacts: false
+
+promote-stable:ubuntu:cu-cp:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-cu-cp
+  needs:
+    - job: build-and-publish:cu-cp
+      artifacts: false
+
+promote-stable:ubuntu:cu-up:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-cu-up
+  needs:
+    - job: build-and-publish:cu-up
+      artifacts: false
+
+promote-stable:ubuntu:ru-emulator:
+  extends:
+    - .promote-stable-ubuntu
+    - .matrix-image-ru-emulator
+  needs:
+    - job: build-and-publish:ru-emulator
+      artifacts: false
+
+.promote-stable-rh:
+  extends: .promote-stable
+  variables:
+    REGISTRY_AUTH_SERVER: docker.io
+    REGISTRY_AUTH_USERNAME: ${DOCKERHUB_USERNAME}
+    REGISTRY_AUTH_PASSWORD: ${DOCKERHUB_WRITE_TOKEN}
+  before_script:
+    - *simd-label
+    - unset DOCKER_AUTH_CONFIG
+    - |
+      if [ -n "${IMAGE_REPOSITORY:-}" ]; then
+        IMAGE_COMPONENT="${IMAGE_REPOSITORY}"
+      elif [ -n "${DRIVER}" ]; then
+        IMAGE_COMPONENT="${COMPONENT}-${DRIVER}"
+      else
+        IMAGE_COMPONENT="${COMPONENT}"
+      fi
+      if [ -n "${DRIVER}" ]; then
+        TAG_DRIVER="-${DRIVER}"
+      else
+        TAG_DRIVER=""
+      fi
+      DATE=$(date -u -d "${CI_PIPELINE_CREATED_AT}" +%Y%m%d)
+      if [ -n "${PROMOTE_IMAGE_TAG:-}" ]; then
+        VERSION="${PROMOTE_IMAGE_TAG}-ubi9-9.6${TAG_DRIVER}-${SIMD}"
+      else
+        VERSION="ubi9-9.6${TAG_DRIVER}-${SIMD}-${DATE}_${CI_COMMIT_SHORT_SHA}"
+      fi
+      IMAGE_REF="${RH_DOCKERHUB_REGISTRY_URI}/${IMAGE_COMPONENT}:${VERSION}"
+      export SOURCE_IMAGE="${IMAGE_REF}"
+      export DESTINATION_IMAGE="${IMAGE_REF}-stable"
+
+promote-stable:rh:gnb:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-gnb
+  needs:
+    - job: build-and-publish-rh:gnb
+      artifacts: false
+
+promote-stable:rh:du:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-du
+  needs:
+    - job: build-and-publish-rh:du
+      artifacts: false
+
+promote-stable:rh:cu:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-cu
+  needs:
+    - job: build-and-publish-rh:cu
+      artifacts: false
+
+promote-stable:rh:cu-cp:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-cu-cp
+  needs:
+    - job: build-and-publish-rh:cu-cp
+      artifacts: false
+
+promote-stable:rh:cu-up:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-cu-up
+  needs:
+    - job: build-and-publish-rh:cu-up
+      artifacts: false
+
+promote-stable:rh:ru-emulator:
+  extends:
+    - .promote-stable-rh
+    - .matrix-image-rh-ru-emulator
+  needs:
+    - job: build-and-publish-rh:ru-emulator
+      artifacts: false
+
+.preflight-rh:
+  extends: .preflight-stable
+  variables:
+    REGISTRY_AUTH_SERVER: docker.io
+    REGISTRY_AUTH_USERNAME: ${DOCKERHUB_USERNAME}
+    REGISTRY_AUTH_PASSWORD: ${DOCKERHUB_READ_TOKEN}
+  before_script:
+    - *simd-label
+    - unset DOCKER_AUTH_CONFIG
+    - echo "${REGISTRY_AUTH_PASSWORD}" | docker login "${REGISTRY_AUTH_SERVER}" -u "${REGISTRY_AUTH_USERNAME}" --password-stdin
+    - export PFLT_DOCKERCONFIG=/root/.docker/config.json
+    - |
+      if [ -n "${IMAGE_REPOSITORY:-}" ]; then
+        IMAGE_COMPONENT="${IMAGE_REPOSITORY}"
+      elif [ -n "${DRIVER}" ]; then
+        IMAGE_COMPONENT="${COMPONENT}-${DRIVER}"
+      else
+        IMAGE_COMPONENT="${COMPONENT}"
+      fi
+      if [ -n "${DRIVER}" ]; then
+        TAG_DRIVER="-${DRIVER}"
+      else
+        TAG_DRIVER=""
+      fi
+      DATE=$(date -u -d "${CI_PIPELINE_CREATED_AT}" +%Y%m%d)
+      if [ -n "${PROMOTE_IMAGE_TAG:-}" ]; then
+        VERSION="${PROMOTE_IMAGE_TAG}-ubi9-9.6${TAG_DRIVER}-${SIMD}"
+      else
+        VERSION="ubi9-9.6${TAG_DRIVER}-${SIMD}-${DATE}_${CI_COMMIT_SHORT_SHA}"
+      fi
+      export IMAGE_REF="${RH_DOCKERHUB_REGISTRY_URI}/${IMAGE_COMPONENT}:${VERSION}"
+    - |
+      CERTIFICATION_COMPONENT_ID=""
+      case "${COMPONENT}" in
+        gnb)         CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_GNB}" ;;
+        du)          CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_DU}" ;;
+        cu)          CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_CU}" ;;
+        cu-cp)       CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_CU_CP}" ;;
+        cu-up)       CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_CU_UP}" ;;
+        ru-emulator) CERTIFICATION_COMPONENT_ID="${PFLT_CERTIFICATION_COMPONENT_ID_RU_EMULATOR}" ;;
+      esac
+      export PFLT_CERTIFICATION_COMPONENT_ID="${CERTIFICATION_COMPONENT_ID}"
+
+preflight:rh:gnb:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-gnb
+  needs:
+    - job: promote-stable:rh:gnb
+      artifacts: false
+
+preflight:rh:du:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-du
+  needs:
+    - job: promote-stable:rh:du
+      artifacts: false
+
+preflight:rh:cu:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-cu
+  needs:
+    - job: promote-stable:rh:cu
+      artifacts: false
+
+preflight:rh:cu-cp:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-cu-cp
+  needs:
+    - job: promote-stable:rh:cu-cp
+      artifacts: false
+
+preflight:rh:cu-up:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-cu-up
+  needs:
+    - job: promote-stable:rh:cu-up
+      artifacts: false
+
+preflight:rh:ru-emulator:
+  extends:
+    - .preflight-rh
+    - .matrix-image-rh-ru-emulator
+  needs:
+    - job: promote-stable:rh:ru-emulator
+      artifacts: false

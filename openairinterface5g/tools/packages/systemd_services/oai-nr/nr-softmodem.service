@@ -1,0 +1,14 @@
+[Unit]
+Description=nr-softmodem
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/nr-softmodem -O /etc/openairinterface/nr/gnb.sa.band78.fr1.106PRB.usrpb210.conf -E --continuous-tx -A -2 --device.name oai_usrpdevif 
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

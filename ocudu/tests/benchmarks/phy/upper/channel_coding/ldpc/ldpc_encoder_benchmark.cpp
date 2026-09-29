@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/phy/upper/channel_coding/channel_coding_factories.h"
+#include "ocudu/support/benchmark_utils.h"
+#include "ocudu/support/error_handling.h"
+#include <getopt.h>
+#include <random>
+
+namespace {
+std::mt19937 rgen(0);
+std::string  enc_type        = "generic";
+unsigned     nof_repetitions = 1000;
+bool         silent          = false;
+} // namespace
+
+static void usage(const char* prog)
+{
+  fmt::print("Usage: {} [-R repetitions] [-s silent]\n", prog);
+  fmt::print("\t-R Repetitions [Default {}]\n", nof_repetitions);
+  fmt::print("\t-T Encoder type generic, avx2 or neon [Default {}]\n", enc_type);
+  fmt::print("\t-s Toggle silent operation [Default {}]\n", silent);
+  fmt::print("\t-h Show this message\n");
+}
+
+static void parse_args(int argc, char** argv)
+{
+  int opt = 0;
+  while ((opt = getopt(argc, argv, "R:T:sh")) != -1) {
+    switch (opt) {
+      case 'R':
+        nof_repetitions = std::strtol(optarg, nullptr, 10);
+        break;
+      case 'T':
+        enc_type = std::string(optarg);
+        break;
+      case 's':
+        silent = (!silent);
+        break;
+      case 'h':
+      default:
+        usage(argv[0]);
+        std::exit(0);
+    }
+  }
+}
+
+using namespace ocudu;
+using namespace ocudu::ldpc;
+
+int main(int argc, char** argv)
+{
+  parse_args(argc, argv);
+
+  benchmarker perf_meas_generic("LDPC encoder " + enc_type, nof_repetitions);
+
+  for (const ldpc_base_graph_type& bg : {ldpc_base_graph_type::BG1, ldpc_base_graph_type::BG2}) {
+    for (const lifting_size_t& ls : all_lifting_sizes) {
+      std::shared_ptr<ldpc_encoder_factory> encoder_factory = create_ldpc_encoder_factory_sw(enc_type);
+      report_fatal_error_if_not(encoder_factory, "encoder_factory");
+      std::unique_ptr<ldpc_encoder> encoder = encoder_factory->create();
+      report_fatal_error_if_not(encoder, "encoder");
+
+      // Set base-graph message and codeblock lengths.
+      unsigned min_cb_length_bg = 24;
+      unsigned max_cb_length_bg = 66;
+      unsigned msg_length_bg    = 22;
+      if (bg == ocudu::ldpc_base_graph_type::BG2) {
+        min_cb_length_bg = 12;
+        max_cb_length_bg = 50;
+        msg_length_bg    = 10;
+      }
+
+      // Compute lifted messages and codeblock lengths.
+      unsigned min_cb_length = min_cb_length_bg * ls;
+      unsigned max_cb_length = max_cb_length_bg * ls;
+      unsigned msg_length    = msg_length_bg * ls;
+
+      for (unsigned cb_length : {min_cb_length, max_cb_length}) {
+        // Generate message data.
+        dynamic_bit_buffer data(msg_length);
+        for (unsigned i_bit = 0; i_bit != msg_length; ++i_bit) {
+          data.insert(rgen() & 1, i_bit, 1);
+        }
+
+        ldpc_encoder::configuration encoder_config = {
+            .base_graph   = bg,
+            .lifting_size = ls,
+            .Nref         = 0,
+        };
+
+        fmt::memory_buffer descr_buffer;
+        fmt::format_to(std::back_inserter(descr_buffer),
+                       "BG={} LS={:<3} cb_len={}",
+                       fmt::underlying(bg),
+                       fmt::underlying(ls),
+                       cb_length);
+
+        perf_meas_generic.new_measure(to_string(descr_buffer), data.size(), [&]() {
+          const ldpc_encoder_buffer& rm_buffer = encoder->encode(data, encoder_config);
+          do_not_optimize(&rm_buffer);
+        });
+      }
+    }
+  }
+  perf_meas_generic.print_percentiles_throughput("bits");
+}

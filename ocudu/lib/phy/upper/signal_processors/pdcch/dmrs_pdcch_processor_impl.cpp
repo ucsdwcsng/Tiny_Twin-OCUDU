@@ -1,0 +1,87 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "dmrs_pdcch_processor_impl.h"
+#include "../dmrs_helper.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/phy/support/mask_types.h"
+#include "ocudu/phy/support/re_pattern.h"
+#include "ocudu/phy/support/resource_grid_mapper.h"
+#include "ocudu/ran/beamforming/beam_identifier_helpers.h"
+#include "ocudu/support/math/math_utils.h"
+
+using namespace ocudu;
+
+unsigned dmrs_pdcch_processor_impl::c_init(unsigned symbol, const dmrs_pdcch_processor::config_t& config)
+{
+  unsigned n_slot = config.slot.slot_index();
+  unsigned n_id   = config.n_id;
+
+  return ((get_nsymb_per_slot(config.cp) * n_slot + symbol + 1) * (2 * n_id + 1) * pow2(17) + 2 * n_id) % pow2(31);
+}
+
+void dmrs_pdcch_processor_impl::sequence_generation(span<cf_t>                            sequence,
+                                                    unsigned                              symbol,
+                                                    const dmrs_pdcch_processor::config_t& config) const
+{
+  // Initialize pseudo-random generator.
+  prg->init(c_init(symbol, config));
+
+  // Generate sequence.
+  dmrs_sequence_generate(
+      sequence, *prg, M_SQRT1_2 * config.amplitude, config.reference_point_k_rb, NOF_DMRS_PER_RB, config.rb_mask);
+}
+
+void dmrs_pdcch_processor_impl::mapping(resource_grid_writer&     grid,
+                                        const re_buffer_reader<>& d_pdcch,
+                                        const config_t&           config)
+{
+  // Resource element allocation within a resource block for PDCCH.
+  static constexpr re_prb_mask re_mask = {
+      false, true, false, false, false, true, false, false, false, true, false, false};
+
+  // Create PDCCH mapping pattern.
+  re_pattern pattern;
+  pattern.crb_mask = config.rb_mask;
+  pattern.symbols.fill(config.start_symbol_index, config.start_symbol_index + config.duration);
+  pattern.re_mask = re_mask;
+
+  // Actual mapping.
+  mapper->map(grid, d_pdcch, pattern, config.precoding_and_beamforming);
+}
+
+void dmrs_pdcch_processor_impl::map(resource_grid_writer& grid, const dmrs_pdcch_processor::config_t& config)
+{
+  ocudu_assert(config.precoding_and_beamforming.get_nof_layers() == 1,
+               "Number of layers (i.e., {}) must be one.",
+               config.precoding_and_beamforming.get_nof_layers());
+  ocudu_assert(config.precoding_and_beamforming.get_nof_beams() >= 1,
+               "Number of beams (i.e., {}) must be equal to or greater than one.",
+               config.precoding_and_beamforming.get_nof_beams());
+  ocudu_assert(config.precoding_and_beamforming.get_nof_prg() >= 1,
+               "Number of PRG (i.e., {}) must be equal to or greater than one.",
+               config.precoding_and_beamforming.get_nof_prg());
+
+  // Number of DM-RS per symbol.
+  unsigned nof_dmrs_symbol = config.rb_mask.count() * NOF_DMRS_PER_RB;
+
+  // Storage of modulated PDCCH data.
+  static_re_buffer<1, MAX_NOF_DMRS> d_pdcch(1, config.duration * nof_dmrs_symbol);
+
+  // Generate and map for each symbol of the PDCCH transmission.
+  for (unsigned i_symbol     = config.start_symbol_index,
+                i_symbol_end = config.start_symbol_index + config.duration,
+                i_re         = 0;
+       i_symbol != i_symbol_end;
+       ++i_symbol, i_re += nof_dmrs_symbol) {
+    // Get view for the current symbol.
+    span<cf_t> sequence = d_pdcch.get_slice(0).subspan(i_re, nof_dmrs_symbol);
+
+    // Generate sequence.
+    sequence_generation(sequence, i_symbol, config);
+  }
+
+  // Map sequence.
+  mapping(grid, d_pdcch, config);
+}

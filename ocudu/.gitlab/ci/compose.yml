@@ -1,0 +1,142 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# docker/Dockerfile ARG OS / OS_VERSION are forwarded via docker-compose.yml (${OS}, ${OS_VERSION}). CI pins ubuntu:24.04.
+gnb docker compose:
+  extends: .docker compose
+  stage: deploy
+  variables:
+    OS: ubuntu
+    OS_VERSION: "26.04"
+    DOCKER_UHD_VERSION: "4.9.0.1"
+    DOCKER_DPDK_VERSION: "25.11.2"
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/scripts/**/*
+          - docker/Dockerfile
+          - docker/docker-compose.yml
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/  # We already build the images in the nightly
+  script:
+    - &get_cpu_jobs |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - docker compose -f docker/docker-compose.yml build --build-arg NUM_JOBS=${CPU_JOBS} --build-arg UHD_VERSION=${DOCKER_UHD_VERSION} --build-arg DPDK_VERSION=${DOCKER_DPDK_VERSION} gnb
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v ocu'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v ocucp'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v ocuup'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v odu'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v odu_split_8'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v odu_split_7_2'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v odu_low'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v gnb'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v gnb_split_8'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v gnb_split_7_2'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps --entrypoint sh gnb -c 'command -v ru_emulator'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps gnb gnb cu_cp amf --no_core=true ru_sdr --device_driver uhd expert_execution threads upper_phy --max_pusch_and_srs_concurrency 1 | grep 'Failed to open device with address'"
+    - sh -c "docker compose -f docker/docker-compose.yml run --no-deps gnb gnb cu_cp amf --no_core=true hal --eal_args='--help'"
+  needs: []
+
+# validates gNB image on fedora:44 (dnf, GCC 15+). Run from the child pipeline when docker CI is included.
+gnb docker compose fedora 44:
+  extends: gnb docker compose
+  variables:
+    OS: fedora
+    OS_VERSION: "44"
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/scripts/**/*
+          - docker/Dockerfile
+          - docker/docker-compose.yml
+      allow_failure: true
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+
+# Manual only: validates gNB image on quay.io/centos/centos:stream10 (dnf, EPEL/CRB). Run from the child pipeline when docker CI is included.
+gnb docker compose centos stream10 manual:
+  extends: gnb docker compose
+  variables:
+    OS: quay.io/centos/centos
+    OS_VERSION: "stream10"
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/scripts/**/*
+          - docker/Dockerfile
+          - docker/docker-compose.yml
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+
+5gc docker compose:
+  extends: .docker compose
+  stage: deploy
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/open5gs/**/*
+          - docker/docker-compose.yml
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+  script:
+    - *get_cpu_jobs
+    - docker compose -f docker/docker-compose.yml build --build-arg NUM_JOBS=${CPU_JOBS} 5gc
+    - docker compose -f docker/docker-compose.yml run 5gc 5gc -v
+  needs: []
+
+grafana docker compose:
+  extends: .docker compose
+  stage: deploy
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/.env
+          - docker/grafana/**/*
+          - docker/docker-compose.ui.yml
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+  script:
+    - docker compose -f docker/docker-compose.ui.yml run --no-deps grafana --version
+  needs: []
+
+influxdb and telegraf docker compose:
+  extends: .docker compose
+  stage: deploy
+  rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - docker/.env
+          - docker/telegraf/**/*
+          - docker/docker-compose.ui.yml
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+  script:
+    - docker compose -f docker/docker-compose.ui.yml up influxdb telegraf -d --wait
+    - |
+      echo '{"timestamp": 1750248119.559, "fake_metric": {"field": 0}}' | nc -u -w1 localhost 55555
+    - |
+      if docker compose -f docker/docker-compose.ui.yml logs telegraf | grep -E 'E!|error'; then
+        docker compose -f docker/docker-compose.ui.yml down --volumes
+        exit 1
+      fi
+    - docker compose -f docker/docker-compose.ui.yml logs
+    - docker compose -f docker/docker-compose.ui.yml down --volumes
+  needs: []

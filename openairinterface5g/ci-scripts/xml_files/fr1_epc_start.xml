@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>epc-start-tab</htmlTabRef>
+  <htmlTabName>EPC-Start</htmlTabName>
+  <htmlTabIcon>log-in</htmlTabIcon>
+
+  <testCase>
+    <class>DeployCoreNetwork</class>
+    <desc>Initialize EPC</desc>
+    <cn_id>ltebox-nano</cn_id>
+  </testCase>
+
+</testCaseList>

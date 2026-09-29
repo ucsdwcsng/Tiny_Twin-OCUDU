@@ -1,0 +1,240 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/support/interpolator.h"
+#include "ocudu/phy/support/re_buffer.h"
+#include "ocudu/phy/support/time_alignment_estimator/time_alignment_estimator.h"
+#include "ocudu/phy/upper/signal_processors/channel_estimator/port_channel_estimator.h"
+#include "ocudu/phy/upper/signal_processors/channel_estimator/port_channel_estimator_parameters.h"
+#include <optional>
+
+namespace ocudu {
+
+/// \brief Port channel estimator that averages all OFDM symbols containing DM-RS.
+///
+/// This estimator considers the channel constant in time over the entire slot. As for the frequency domain, the channel
+/// coefficients corresponding to subcarriers containing DM-RS pilots are LSE-estimated, while the remaining
+/// coefficients are estimated by interpolating the previous ones.
+class port_channel_estimator_average_impl : public port_channel_estimator, private port_channel_estimator_results
+{
+public:
+  /// Maximum supported number of layers.
+  static constexpr unsigned MAX_LAYERS = 4;
+
+  /// \brief Maximum SINR in decibels.
+  ///
+  /// The SINR is bounded above to avoid a zero noise variance.
+  static constexpr float MAX_SINR_DB = 100;
+
+  /// Maximum number of virtual pilots used for estimation at the edges.
+  static constexpr unsigned MAX_V_PILOTS = 12;
+
+  /// Maximum number of pilots per OFDM symbol.
+  static constexpr unsigned MAX_NOF_PILOTS_SYMBOL = MAX_NOF_SUBCARRIERS + 2 * MAX_V_PILOTS;
+
+  /// Maximum number of OFDM symbols that contain DM-RS in a transmission.
+  static constexpr unsigned MAX_NOF_DMRS_SYMBOLS = pusch_constants::MAX_NOF_DMRS_SYMBOLS;
+
+  /// Constructor - Sets the internal interpolator and inverse DFT processor of size \c DFT_SIZE.
+  port_channel_estimator_average_impl(std::unique_ptr<interpolator>                    interp,
+                                      std::unique_ptr<time_alignment_estimator>        ta_estimator_,
+                                      port_channel_estimator_fd_smoothing_strategy     fd_smoothing_strategy_,
+                                      port_channel_estimator_td_interpolation_strategy td_interpolation_strategy_,
+                                      bool                                             compensate_cfo_ = true) :
+    fd_smoothing_strategy(fd_smoothing_strategy_),
+    td_interpolation_strategy(td_interpolation_strategy_),
+    compensate_cfo(compensate_cfo_),
+    freq_interpolator(std::move(interp)),
+    ta_estimator(std::move(ta_estimator_))
+  {
+    ocudu_assert(freq_interpolator, "Invalid interpolator.");
+    ocudu_assert(ta_estimator, "Invalid TA estimator.");
+  }
+
+  // See the port_channel_estimator interface for documentation.
+  const port_channel_estimator_results& compute(const resource_grid_reader& grid,
+                                                unsigned                    port,
+                                                const dmrs_symbol_list&     pilots,
+                                                const configuration&        cfg) override
+  {
+    cfg_local = cfg;
+    do_compute(grid, port, pilots);
+    return *this;
+  }
+
+private:
+  // See the port_channel_estimator_results interface for documentation.
+  void get_symbol_ch_estimate(span<cbf16_t> symbol, unsigned i_symbol, unsigned tx_layer) const override;
+
+  // See the port_channel_estimator_results interface for documentation.
+  void get_symbol_ch_estimate(span<cbf16_t>                              symbol,
+                              unsigned                                   i_symbol,
+                              unsigned                                   tx_layer,
+                              const bounded_bitset<MAX_NOF_SUBCARRIERS>& re_mask) const override;
+
+  // See the port_channel_estimator_results interface for documentation.
+  float get_epre() const override { return epre; }
+
+  // See the port_channel_estimator_results interface for documentation.
+  float get_noise_variance() const override { return noise_var; }
+
+  // See the port_channel_estimator_results interface for documentation.
+  float get_snr() const override { return snr_linear; }
+
+  // See the port_channel_estimator_results interface for documentation.
+  float get_rsrp(unsigned tx_layer) const override
+  {
+    ocudu_assert(tx_layer < cfg_local.dmrs_pattern.size(),
+                 "Layer index {} is larger than the maximum supported index {}.",
+                 tx_layer,
+                 cfg_local.dmrs_pattern.size() - 1);
+    return rsrp[tx_layer];
+  }
+
+  // See the port_channel_estimator_results interface for documentation.
+  std::optional<float> get_cfo_Hz() const override { return cfo_Hz; }
+
+  // See the port_channel_estimator_results interface for documentation.
+  phy_time_unit get_time_alignment() const override { return phy_time_unit::from_seconds(time_alignment_s); }
+
+  /// Actual implementation of the \c compute public method.
+  void do_compute(const resource_grid_reader& grid, unsigned port, const dmrs_symbol_list& pilots);
+
+  /// Specializes \ref compute for one hop.
+  void compute_hop(const resource_grid_reader& grid, unsigned port, const dmrs_symbol_list& pilots, unsigned hop);
+
+  /// \brief Preprocesses the pilots and computes the CFO.
+  ///
+  /// For the current hop, the function does the following:
+  /// - matches the received pilots with the expected ones (element-wise multiplication with complex conjugate);
+  /// - estimates the CFO (if the number of OFDM symbols with pilots is at least 2).
+  /// \param[in]  pilots            Transmitted pilots.
+  /// \param[in]  dmrs_mask         Boolean mask identifying the OFDM symbols carrying DM-RS within the slot.
+  /// \param[in]  first_hop_symbol  Index of the first OFDM symbol of the current hop, within the slot.
+  /// \param[in]  last_hop_symbol   Index of the last OFDM symbol of the current hop (not included), within the slot.
+  /// \param[in]  hop_offset        Number of OFDM symbols carrying DM-RS in the previous hop.
+  /// \param[in]  start_layer       Index of the first transmission layer to be preprocessed.
+  /// \param[in]  stop_layer        Index of the last transmission layer (not included) to be preprocessed.
+  /// \return A contribution to the CFO estimate. CFO is empty if the hop has only one OFDM symbol carrying DM-RS.
+  ///
+  /// \warning This method updates the content of the buffers \c pilots_lse and \c pilot_products.
+  std::optional<float> preprocess_pilots_and_estimate_cfo(const dmrs_symbol_list&                   pilots,
+                                                          const bounded_bitset<MAX_NSYMB_PER_SLOT>& dmrs_mask,
+                                                          unsigned                                  first_hop_symbol,
+                                                          unsigned                                  last_hop_symbol,
+                                                          unsigned                                  hop_offset,
+                                                          unsigned                                  start_layer,
+                                                          unsigned                                  stop_layer);
+
+  /// \brief Compensates the CFO.
+  ///
+  /// For the current hop:
+  /// - compensates the CFO for all pilots;
+  /// - accumulates all the matched, CFO-compensated received pilots from all OFDM symbols carrying DM-RS.
+  /// \param[in]  pilots            Transmitted pilots.
+  /// \param[in]  dmrs_mask         Boolean mask identifying the OFDM symbols carrying DM-RS within the slot.
+  /// \param[in]  first_hop_symbol  Index of the first OFDM symbol of the current hop, within the slot.
+  /// \param[in]  last_hop_symbol   Index of the last OFDM symbol of the current hop (not included), within the slot.
+  /// \param[in]  cfo               Estimated CFO.
+  ///
+  /// \warning This method updates the content of the buffers \c pilots_lse and \c pilot_products.
+  void compensate_cfo_and_accumulate(const dmrs_symbol_list&                   pilots,
+                                     const bounded_bitset<MAX_NSYMB_PER_SLOT>& dmrs_mask,
+                                     unsigned                                  first_hop_symbol,
+                                     unsigned                                  last_hop_symbol,
+                                     std::optional<float>                      cfo);
+
+  /// \brief Computes the starting time of the symbols inside a slot for the given subcarrier spacing.
+  ///
+  /// The symbol starting time is computed from the start of the slot and is expressed in units of OFDM symbol duration.
+  void initialize_symbol_start_epochs(cyclic_prefix cp, subcarrier_spacing scs);
+
+  /// \brief Applies the time domain interpolation strategy for a given OFDM symbol within the hop transmission.
+  /// \param[out] estimated_rg        Estimated resource grid OFDM symbol for a single channel.
+  /// \param[in]  dmrs_mask           Time-domain DM-RS mask.
+  /// \param[in]  freq_response_dmrs  Frequency-domain channel estimates for the given channel for each of the OFDM
+  ///                                 symbols containing DM-RS.
+  /// \param[in]  hop_first_symbol    Start symbol index for the hop within the slot.
+  /// \param[in]  hop_last_symbol     Last symbol index for the hop within the slot.
+  /// \param[in]  i_symbol            OFDM symbol index within the slot to calculate.
+  /// \param[in]  i_layer             Transmission layer.
+  void apply_td_domain_strategy(span<cbf16_t>                     estimated_rg,
+                                const symbol_slot_mask&           dmrs_mask,
+                                const re_measurement<const cf_t>& freq_response_dmrs,
+                                unsigned                          hop_first_symbol,
+                                unsigned                          hop_last_symbol,
+                                unsigned                          i_symbol,
+                                unsigned                          i_layer) const;
+
+  /// Frequency domain smoothing strategy.
+  port_channel_estimator_fd_smoothing_strategy fd_smoothing_strategy;
+
+  /// Time domain smoothing strategy.
+  port_channel_estimator_td_interpolation_strategy td_interpolation_strategy;
+
+  /// Boolean flag for activating CFO compensation (active when true).
+  bool compensate_cfo;
+
+  /// \brief Interpolator.
+  ///
+  /// When DM-RS pilots do not occupy all REs in an OFDM symbol, the interpolator is used to estimate the channel of the
+  /// REs without pilots.
+  std::unique_ptr<interpolator> freq_interpolator;
+
+  /// Time alignment estimator.
+  std::unique_ptr<time_alignment_estimator> ta_estimator;
+
+  /// Buffer of received signal samples corresponding to pilots.
+  dmrs_symbol_list rx_pilots;
+
+  /// Auxiliary buffer for processing the pilots.
+  static_re_buffer<MAX_LAYERS, MAX_NOF_SUBCARRIERS> pilot_products;
+
+  /// Second auxiliary buffer for processing the pilots.
+  static_re_measurement<cf_t, MAX_NOF_PILOTS_SYMBOL, MAX_NOF_DMRS_SYMBOLS, MAX_LAYERS> enlarged_pilots_lse;
+  modular_re_measurement<cf_t, MAX_NOF_DMRS_SYMBOLS, MAX_LAYERS>                       pilots_lse;
+
+  /// \brief Buffer of frequency response coefficients for each hop.
+  ///
+  /// The storage for the first hop needs to be bigger since it covers the cases with no frequency hopping.
+  /// @{
+  static_re_measurement<cf_t, MAX_NOF_SUBCARRIERS, MAX_NOF_DMRS_SYMBOLS, MAX_LAYERS>     freq_response_hop0;
+  static_re_measurement<cf_t, MAX_NOF_SUBCARRIERS, MAX_NOF_DMRS_SYMBOLS / 2, MAX_LAYERS> freq_response_hop1;
+  /// @}
+
+  /// Buffer for the OFDM symbols starting epochs within the current slot.
+  std::array<float, MAX_NSYMB_PER_SLOT> aux_symbol_start_epochs;
+  /// View on the used part of the symbols starting epochs buffer \c aux_symbol_start_epochs.
+  span<float> symbol_start_epochs;
+
+  /// Channel estimator configuration.
+  configuration cfg_local = {};
+
+  /// Estimated RSRP value per layer.
+  std::array<float, MAX_LAYERS> rsrp;
+
+  /// \brief Observed average DM-RS EPRE.
+  ///
+  /// \remark The EPRE is defined as the average received power (including noise) across all REs carrying DM-RS.
+  float epre = 0;
+
+  /// Estimated noise variance (single layer).
+  float noise_var = 0;
+
+  /// Estimated SNR (linear scale).
+  float snr_linear = 0;
+
+  /// Estimated time alignment in seconds.
+  float time_alignment_s = 0;
+
+  /// Estimated CFO, normalized with respect to the subcarrier spacing.
+  std::optional<float> cfo_normalized = std::nullopt;
+
+  /// Estimated CFO in hertz.
+  std::optional<float> cfo_Hz = std::nullopt;
+};
+
+} // namespace ocudu

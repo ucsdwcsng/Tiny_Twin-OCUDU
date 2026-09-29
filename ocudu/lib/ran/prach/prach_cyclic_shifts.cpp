@@ -1,0 +1,104 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/ran/prach/prach_cyclic_shifts.h"
+#include "ocudu/adt/span.h"
+#include "ocudu/ran/prach/prach_subcarrier_spacing.h"
+#include "ocudu/ran/prach/restricted_set_config.h"
+#include <array>
+
+using namespace ocudu;
+
+uint16_t ocudu::prach_cyclic_shifts_get(prach_subcarrier_spacing prach_scs,
+                                        restricted_set_config    restricted_set,
+                                        unsigned                 zero_correlation_zone)
+{
+  // TS38.211 Table 6.3.3.1-5 First column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_1_25_UNRESTRICTED = {
+      0, 13, 15, 18, 22, 26, 32, 38, 46, 59, 76, 93, 119, 167, 279, 419};
+  // TS38.211 Table 6.3.3.1-5 Second column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_1_25_TYPE_A = {
+      15, 18, 22, 26, 32, 38, 46, 55, 68, 82, 100, 128, 158, 202, 237, PRACH_CYCLIC_SHIFTS_RESERVED};
+  // TS38.211 Table 6.3.3.1-5 Third column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_1_25_TYPE_B = {15,
+                                                                             18,
+                                                                             22,
+                                                                             26,
+                                                                             32,
+                                                                             38,
+                                                                             46,
+                                                                             55,
+                                                                             68,
+                                                                             82,
+                                                                             100,
+                                                                             118,
+                                                                             137,
+                                                                             PRACH_CYCLIC_SHIFTS_RESERVED,
+                                                                             PRACH_CYCLIC_SHIFTS_RESERVED,
+                                                                             PRACH_CYCLIC_SHIFTS_RESERVED};
+
+  // TS38.211 Table 6.3.3.1-6 First column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_5_UNRESTRICTED = {
+      0, 13, 26, 33, 38, 41, 49, 55, 64, 76, 93, 119, 139, 209, 279, 419};
+  // TS38.211 Table 6.3.3.1-6 Second column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_5_TYPE_A = {
+      36, 57, 72, 81, 89, 94, 103, 112, 121, 132, 137, 152, 173, 195, 216, 237};
+  // TS38.211 Table 6.3.3.1-6 Third column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_5_TYPE_B = {36,
+                                                                          57,
+                                                                          60,
+                                                                          63,
+                                                                          65,
+                                                                          68,
+                                                                          71,
+                                                                          77,
+                                                                          81,
+                                                                          85,
+                                                                          97,
+                                                                          109,
+                                                                          122,
+                                                                          137,
+                                                                          PRACH_CYCLIC_SHIFTS_RESERVED,
+                                                                          PRACH_CYCLIC_SHIFTS_RESERVED};
+
+  // TS38.211 Table 6.3.3.1-7 First column.
+  static constexpr std::array<uint16_t, 16> NOF_CYCLIC_SHIFTS_OTHER_UNRESTRICTED = {
+      0, 2, 4, 6, 8, 10, 12, 13, 15, 17, 19, 23, 27, 34, 46, 69};
+
+  span<const uint16_t> table;
+
+  if (prach_scs == prach_subcarrier_spacing::kHz1_25) {
+    switch (restricted_set) {
+      case restricted_set_config::UNRESTRICTED:
+        table = NOF_CYCLIC_SHIFTS_1_25_UNRESTRICTED;
+        break;
+      case restricted_set_config::TYPE_A:
+        table = NOF_CYCLIC_SHIFTS_1_25_TYPE_A;
+        break;
+      case restricted_set_config::TYPE_B:
+        table = NOF_CYCLIC_SHIFTS_1_25_TYPE_B;
+        break;
+    }
+  } else if (prach_scs == prach_subcarrier_spacing::kHz5) {
+    switch (restricted_set) {
+      case restricted_set_config::UNRESTRICTED:
+        table = NOF_CYCLIC_SHIFTS_5_UNRESTRICTED;
+        break;
+      case restricted_set_config::TYPE_A:
+        table = NOF_CYCLIC_SHIFTS_5_TYPE_A;
+        break;
+      case restricted_set_config::TYPE_B:
+        table = NOF_CYCLIC_SHIFTS_5_TYPE_B;
+        break;
+    }
+  } else if (restricted_set == restricted_set_config::UNRESTRICTED) {
+    table = NOF_CYCLIC_SHIFTS_OTHER_UNRESTRICTED;
+  }
+
+  if (zero_correlation_zone >= table.size()) {
+    return PRACH_CYCLIC_SHIFTS_RESERVED;
+  }
+
+  return table[zero_correlation_zone];
+}

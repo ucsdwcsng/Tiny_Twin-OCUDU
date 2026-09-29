@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: MIT
+
+services:
+    oai-nr-ue:
+        image: ${REGISTRY-oaisoftwarealliance/}${NRUE_IMG:-oai-nr-ue}:${UE_TAG:-${TAG:-develop}}
+        logging:
+           options:
+              max-file: "1"
+        network_mode: host
+        container_name: oai-nr-ue
+        privileged: true
+        cpuset: 4,6,8,10,12,14,16,18,20,22,24,26,28
+        cap_drop:
+            - ALL
+        cap_add:
+            - NET_ADMIN  # for interface bringup
+            - NET_RAW    # for ping
+            - SYS_NICE   # for performance
+            - IPC_LOCK   # for memory locking
+            - SYS_PTRACE # for debugging
+        devices:
+             - /dev/net/tun:/dev/net/tun
+        ulimits:
+          core: -1 # for core dumps
+        #entrypoint: /bin/bash -c "sleep infinity"
+        environment:
+            TZ: UTC
+            #DISPLAY: $DISPLAY #Uncomment for GUI
+            USE_ADDITIONAL_OPTIONS: |
+               --thread-pool 4,6,8,10,12,14,16,18,20,22,24,26
+               --usrp-args type=x4xx,addr=192.168.10.2,clock_source=external,time_source=external
+               --ssb 1478 -r 273 --numerology 1 --band 78 -C 3750000000
+               --num-dl-actors 20
+               --ue-nb-ant-tx 1
+               --ue-nb-ant-rx 1
+               --ue-rxgain 25
+               --ue-txgain 13
+               --uicc0.imsi 001010000000003
+               --ue-fo-compensation -A 90
+               --usrp-tx-thread-config 1
+               --log_config.global_log_options level,nocolor,utc_time
+           # Unused options:
+           #   --T_stdout 2
+           #   --imscope
+           #   --ssb 1478 -r 273 --numerology 1 --band 78 -C 3750000000
+           #   --usrp-tx-thread-config 1
+           # --log_config.mac_log_level debug
+           #  --log_config.nr_mac_log_level debug
+           # --usrp-tx-thread-config 1 -d
+           # --ssb 194 -r 51 --numerology 1 --band 78 -C 3750000000 #20MHz
+           # --ssb 236 -r 106 --numerology 1 --band 78 -C 3750000000 #40MHz
+        volumes:
+            - ../../conf_files/ue.sa.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+            # UL throughput is worse with 256-qam table
+            - ../../../targets/PROJECTS/GENERIC-NR-5GC/CONF/uecap_ports1.xml:/opt/oai-nr-ue/uecap_ports1.xml
+            #For GUI
+            - ${HOME}/.Xauthority:/root/.Xauthority:rw
+            - /tmp/.X11-unix:/tmp/.X11-unix
+        healthcheck:
+            test: /bin/bash -c "pgrep nr-uesoftmodem"
+            interval: 10s
+            timeout: 5s
+            retries: 5

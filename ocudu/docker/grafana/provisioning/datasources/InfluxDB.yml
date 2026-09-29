@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: ${INFLUXDB3_EXTERNAL_URL}
+    uid: JOSE3g9KVz
+    secureJsonData:
+      token: ${INFLUXDB3_AUTH_TOKEN}
+    jsonData:
+      version: SQL
+      dbName: ${INFLUXDB3_BUCKET}
+      insecureGrpc: true
+      maxSeries: 100000

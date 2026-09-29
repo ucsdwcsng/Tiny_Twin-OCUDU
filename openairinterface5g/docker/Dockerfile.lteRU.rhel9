@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for RHEL9
+#
+#---------------------------------------------------------------------
+
+FROM ran-base:latest AS ru-base
+
+FROM ran-build:latest AS ru-build
+
+
+#start from scratch for target executable
+FROM registry.redhat.io/ubi9/ubi:latest AS oai-lte-ru
+ENV TZ=Europe/Paris
+
+RUN dnf update -y && \
+    dnf install -y \
+        tzdata \
+        procps-ng \
+        libusbx \
+        gdb \
+        python3 \
+        python3-pip \
+        net-tools \
+        iputils \
+        iproute && \
+    pip3 install six && \
+    pip3 install requests && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/local-lib.conf && \
+    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/local-lib.conf
+
+WORKDIR /opt/oai-lte-ru/bin
+COPY --from=ru-build \
+    /oai-ran/cmake_targets/ran_build/build/oairu ./
+COPY ./docker/scripts/lte_ru_entrypoint.sh ./entrypoint.sh
+
+COPY --from=ru-build \
+    /oai-ran/cmake_targets/ran_build/build/liboai_eth_transpro.so \
+    /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
+    /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
+    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
+    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
+    /usr/local/lib/
+
+COPY --from=ru-base \
+    /lib64/libconfig.so.11 \
+    /lib64/libboost_chrono.so.1.75.0 \
+    /lib64/libboost_date_time.so.1.75.0 \
+    /lib64/libboost_filesystem.so.1.75.0 \
+    /lib64/libboost_program_options.so.1.75.0 \
+    /lib64/libboost_serialization.so.1.75.0 \
+    /lib64/libboost_thread.so.1.75.0 \
+    /lib64/libboost_system.so.1.75.0 \
+    /lib64/libboost_unit_test_framework.so.1.75.0 \
+    /lib64/libboost_atomic.so.1.75.0 \
+    /lib64/libboost_timer.so.1.75.0 \
+    /lib64/libboost_regex.so.1.75.0 \
+    /lib64/
+
+# Copying from the ran-build image the USRP needed packages
+COPY --from=ru-base /usr/local/bin/uhd_find_devices /usr/local/bin
+COPY --from=ru-base /usr/local/lib64/libuhd.so.4.8.0 /usr/local/lib64
+COPY --from=ru-base /usr/local/lib64/uhd/utils/uhd_images_downloader.py /opt/oai-lte-ru/bin
+
+WORKDIR /usr/local/share/uhd/rfnoc
+COPY --from=ru-base /usr/local/share/uhd/rfnoc/ .
+
+RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
+    ldconfig && \
+    echo "---- ldd on executable oairu ----" && \
+    ldd /opt/oai-lte-ru/bin/oairu && \
+    echo "---- ldd on shared libraries ----" && \
+    ldd /usr/local/lib/liboai_eth_transpro.so \
+        /usr/local/lib/librfsimulator.so \
+        /usr/local/lib/liboai_usrpdevif.so \
+        /usr/local/lib/libparams_libconfig.so \
+        /usr/local/lib/libdfts.so \
+        /usr/local/lib64/libuhd.so.4.8.0
+
+WORKDIR /opt/oai-lte-ru
+
+COPY --from=ru-base /tini /tini
+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-lte-ru/bin/entrypoint.sh"]
+CMD ["/opt/oai-lte-ru/bin/oairu", "-O", "/opt/oai-lte-ru/etc/rru.conf"]

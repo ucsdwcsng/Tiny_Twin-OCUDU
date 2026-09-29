@@ -1,0 +1,169 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "rlc_pcap_impl.h"
+#include "pcap_dlts.h"
+#include <netinet/in.h>
+
+using namespace ocudu;
+
+/// PCAP tags as defined in Wireshark's "packet-rlc-nr.h".
+static constexpr const char* PCAP_RLC_NR_START_STRING    = "rlc-nr";
+static constexpr uint8_t     PCAP_RLC_NR_PAYLOAD_TAG     = 0x01;
+static constexpr uint8_t     PCAP_RLC_NR_DIRECTION_TAG   = 0x02;
+static constexpr uint8_t     PCAP_RLC_NR_UEID_TAG        = 0x03;
+static constexpr uint8_t     PCAP_RLC_NR_BEARER_TYPE_TAG = 0x04;
+static constexpr uint8_t     PCAP_RLC_NR_BEARER_ID_TAG   = 0x05;
+
+int nr_pcap_pack_rlc_context_to_buffer(const pcap_rlc_pdu_context& context, uint8_t* buffer, unsigned length);
+
+rlc_pcap_impl::rlc_pcap_impl(const std::string& filename_,
+                             bool               capture_srb,
+                             bool               capture_drb,
+                             task_executor&     backend_exec) :
+  logger(ocudulog::fetch_basic_logger("ALL")),
+  srb_enabled(capture_srb),
+  drb_enabled(capture_drb),
+  writer(PCAP_EXPORT_PDU_DLT, "RLC", filename_, "udp", backend_exec)
+{
+}
+
+rlc_pcap_impl::~rlc_pcap_impl()
+{
+  close();
+}
+
+void rlc_pcap_impl::flush()
+{
+  writer.flush();
+}
+
+void rlc_pcap_impl::close()
+{
+  writer.close();
+}
+
+void rlc_pcap_impl::push_pdu(const pcap_rlc_pdu_context& context, const span<uint8_t> pdu)
+{
+  if (!is_write_enabled() || pdu.empty()) {
+    return;
+  }
+
+  // Filter DRBs if disabled
+  if (!drb_enabled && context.bearer_type == PCAP_RLC_BEARER_TYPE_DRB) {
+    return;
+  }
+
+  // Filter SRBs if disabled
+  if (!srb_enabled &&
+      (context.bearer_type == PCAP_RLC_BEARER_TYPE_SRB || context.bearer_type == PCAP_RLC_BEARER_TYPE_CCCH)) {
+    return;
+  }
+
+  // Encode RLC header.
+  uint8_t context_header[PCAP_CONTEXT_HEADER_MAX] = {};
+  int     offset = nr_pcap_pack_rlc_context_to_buffer(context, &context_header[0], PCAP_CONTEXT_HEADER_MAX);
+  if (offset < 0) {
+    logger.warning("Discarding RLC PCAP PDU. Cause: Failed to generate header.");
+    return;
+  }
+
+  // Copy byte buffer.
+  byte_buffer buf;
+  if (not buf.append(pdu)) {
+    logger.warning("Discarding RLC PCAP PDU. Cause: Failed to allocate memory for PCAP PDU.");
+    return;
+  }
+
+  writer.write_pdu(pcap_pdu_data{
+      0xbeef, 0xdead, PCAP_RLC_NR_START_STRING, span<const uint8_t>(context_header, offset), std::move(buf)});
+}
+
+void rlc_pcap_impl::push_pdu(const pcap_rlc_pdu_context& context, const byte_buffer_slice& pdu)
+{
+  if (!is_write_enabled() || pdu.empty()) {
+    return;
+  }
+
+  // Filter DRBs if disabled
+  if (!drb_enabled && context.bearer_type == PCAP_RLC_BEARER_TYPE_DRB) {
+    return;
+  }
+
+  // Filter SRBs if disabled
+  if (!srb_enabled &&
+      (context.bearer_type == PCAP_RLC_BEARER_TYPE_SRB || context.bearer_type == PCAP_RLC_BEARER_TYPE_CCCH)) {
+    return;
+  }
+
+  // Encode RLC header.
+  uint8_t context_header[PCAP_CONTEXT_HEADER_MAX] = {};
+  int     offset = nr_pcap_pack_rlc_context_to_buffer(context, &context_header[0], PCAP_CONTEXT_HEADER_MAX);
+  if (offset < 0) {
+    logger.warning("Discarding RLC PCAP PDU. Cause: Failed to generate header.");
+    return;
+  }
+
+  // Copy byte buffer.
+  byte_buffer buf;
+  if (not buf.append(pdu)) {
+    logger.warning("Discarding RLC PCAP PDU. Cause: Failed to allocate memory for PCAP PDU.");
+    return;
+  }
+
+  writer.write_pdu(pcap_pdu_data{
+      0xbeef, 0xdead, PCAP_RLC_NR_START_STRING, span<const uint8_t>(context_header, offset), std::move(buf)});
+}
+
+/// Helper function to serialize RLC NR context
+int nr_pcap_pack_rlc_context_to_buffer(const pcap_rlc_pdu_context& context, uint8_t* buffer, unsigned length)
+{
+  int      offset = {};
+  uint16_t tmp16  = {};
+
+  if (buffer == nullptr || length < PCAP_CONTEXT_HEADER_MAX) {
+    ocudulog::fetch_basic_logger("ALL").error("Writing buffer null or length to small\n");
+    return -1;
+  }
+
+  /*****************************************************************/
+  /* Context information (same as written by UDP heuristic clients */
+  buffer[offset++] = context.rlc_mode;
+  buffer[offset++] = context.sequence_number_length;
+
+  /* Direction */
+  buffer[offset++] = PCAP_RLC_NR_DIRECTION_TAG;
+  buffer[offset++] = context.direction;
+
+  /* UEID */
+  buffer[offset++] = PCAP_RLC_NR_UEID_TAG;
+  tmp16            = htons(context.ueid);
+  std::memcpy(buffer + offset, &tmp16, 2);
+  offset += 2;
+
+  /* Bearer type */
+  buffer[offset++] = PCAP_RLC_NR_BEARER_TYPE_TAG;
+  buffer[offset++] = context.bearer_type;
+
+  /* Bearer ID */
+  buffer[offset++] = PCAP_RLC_NR_BEARER_ID_TAG;
+  buffer[offset++] = context.bearer_id;
+
+  /* Data tag immediately preceding PDU */
+  buffer[offset++] = PCAP_RLC_NR_PAYLOAD_TAG;
+  return offset;
+}
+
+std::unique_ptr<rlc_pcap> ocudu::create_rlc_pcap(const std::string& filename,
+                                                 task_executor&     backend_exec,
+                                                 bool               srb_pdus_enabled,
+                                                 bool               drb_pdus_enabled)
+{
+  ocudu_assert(not filename.empty(), "File name is empty");
+  return std::make_unique<rlc_pcap_impl>(filename, srb_pdus_enabled, drb_pdus_enabled, backend_exec);
+}
+
+std::unique_ptr<rlc_pcap> ocudu::create_null_rlc_pcap()
+{
+  return std::make_unique<null_rlc_pcap>();
+}

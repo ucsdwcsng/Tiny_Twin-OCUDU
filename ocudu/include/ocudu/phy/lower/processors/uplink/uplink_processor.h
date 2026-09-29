@@ -1,0 +1,55 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+namespace ocudu {
+
+class uplink_processor_notifier;
+class uplink_processor_baseband;
+class prach_processor_request_handler;
+class puxch_processor_request_handler;
+class prach_processor_notifier;
+class puxch_processor_notifier;
+class lower_phy_cfo_controller;
+
+/// \brief Uplink processor main interface.
+///
+/// Provides a single access point to all uplink-related interfaces, that is uplink_processor_notifier,
+/// uplink_processor_request_handler and uplink_processor_baseband.
+///
+/// \note All implementations of this interface must trigger an assertion error if the uplink processor is not connected
+/// to a notifier before calling get_prach_request_handler(), get_puxch_request_handler() or get_baseband().
+class lower_phy_uplink_processor
+{
+public:
+  /// Default destructor.
+  virtual ~lower_phy_uplink_processor() = default;
+
+  /// Connects the uplink processor with notifiers.
+  virtual void connect(uplink_processor_notifier& notifier,
+                       prach_processor_notifier&  prach_notifier,
+                       puxch_processor_notifier&  puxch_notifier) = 0;
+
+  /// Stops the processor.
+  virtual void stop() = 0;
+
+  /// Gets the PRACH request handler.
+  virtual prach_processor_request_handler& get_prach_request_handler() = 0;
+
+  /// Gets the PUxCH request handler.
+  virtual puxch_processor_request_handler& get_puxch_request_handler() = 0;
+
+  /// Gets the carrier frequency offset controller interface.
+  virtual lower_phy_cfo_controller& get_cfo_control() = 0;
+
+  /// Gets the carrier center frequency controller interface.
+  virtual lower_phy_center_freq_controller& get_carrier_center_frequency_control() = 0;
+
+  /// \brief Gets the uplink processor baseband interface.
+  /// \return A reference to the internal uplink processor baseband interface.
+  virtual uplink_processor_baseband& get_baseband() = 0;
+};
+
+} // namespace ocudu

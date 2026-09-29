@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+namespace ocudu {
+namespace odu {
+
+struct o_du_low_metrics;
+
+/// O-RAN DU low metrics collector used for collecting metrics from the O-DU low.
+class o_du_low_metrics_collector
+{
+public:
+  virtual ~o_du_low_metrics_collector() = default;
+
+  /// Collects the metrics from the O-DU low and writes them into the given metrics argument.
+  virtual void collect_metrics(o_du_low_metrics& metrics) = 0;
+};
+
+} // namespace odu
+} // namespace ocudu

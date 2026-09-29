@@ -1,0 +1,106 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-fr2-66prb-5gnr-tdd</htmlTabRef>
+  <htmlTabName>Monolithic FR2 gNB</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-ue-asan</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI gNB</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_fr2_66prb</yaml_path>
+    <services>mysql oai-amf oai-smf oai-upf oai-ext-dn</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI NR-UE</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_fr2_66prb</yaml_path>
+    <services>oai-gnb oai-nr-ue</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE (Wait for IP)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Delay 1 second due to stabilize connection</desc>
+    <node>localhost</node>
+    <command>sleep 1</command>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from NR-UE on the initial beam (0)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i0.2</ping_args>
+    <ping_packetloss_threshold>0</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Move UE to beam 2 via the rfsimulator's telnet interface and verify the switch was acknowledged</desc>
+    <node>localhost</node>
+    <command>echo rfsimulator setbeamids 2 | ncat 192.168.71.150 8091 | grep -q "Beam ids set"</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Verify from the gNB MAC log that the scheduler actually switched the UE's serving beam to 2</desc>
+    <node>localhost</node>
+    <command><![CDATA[for i in $(seq 1 20); do docker logs rfsim5g-oai-gnb 2>&1 | grep -q "Switching to beam with ID 2" && exit 0; sleep 1; done; exit 1]]></command>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn after the beam switch</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i0.2</ping_args>
+    <ping_packetloss_threshold>0</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_fr2_66prb</yaml_path>
+    <analysis>
+      <services>oai-gnb=RetxCheck=10,100,100,100 oai-gnb=EndsWithBye oai-nr-ue</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-ue-asan</images>
+  </testCase>
+
+</testCaseList>

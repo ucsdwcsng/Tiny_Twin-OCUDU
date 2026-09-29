@@ -1,0 +1,6 @@
+# Extra gNB settings for many UEs behind the ZMQ broker (run_multi_ue.sh --gnb-config configs/gnb_multi_ue.yml).
+# All UEs receive the same DL samples, so they sync at the same instant and send PRACH in the same occasion.
+# More preamble retransmissions let the UEs whose preambles are missed keep retrying instead of declaring RA failure.
+cell_cfg:
+  prach:
+    preamble_trans_max: 200

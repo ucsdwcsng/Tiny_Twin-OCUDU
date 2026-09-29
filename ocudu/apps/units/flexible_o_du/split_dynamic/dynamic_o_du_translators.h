@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "apps/units/flexible_o_du/split_helpers/flexible_o_du_configs.h"
+#include "ocudu/adt/span.h"
+#include "ocudu/ru/dummy/ru_dummy_configuration.h"
+
+namespace ocudu {
+
+namespace odu {
+struct du_cell_config;
+}
+
+struct dynamic_o_du_unit_config;
+struct ru_dummy_unit_config;
+struct worker_manager_config;
+
+/// Generates the dummy RU configuration from the given application unit configuration.
+ru_dummy_configuration generate_ru_dummy_config(const ru_dummy_unit_config&                      ru_cfg,
+                                                span<const flexible_o_du_ru_config::cell_config> du_cells,
+                                                unsigned max_processing_delay_slots);
+
+/// Fills the dynamic_du worker manager parameters of the given worker manager configuration.
+void fill_dynamic_du_worker_manager_config(worker_manager_config& config, const dynamic_o_du_unit_config& unit_cfg);
+
+} // namespace ocudu

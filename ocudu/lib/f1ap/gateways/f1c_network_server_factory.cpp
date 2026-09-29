@@ -1,0 +1,153 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/f1ap/gateways/f1c_network_server_factory.h"
+#include "ocudu/asn1/f1ap/f1ap.h"
+#include "ocudu/f1ap/cu_cp/cu_cp_f1c_handler.h"
+#include "ocudu/f1ap/f1ap_message.h"
+#include "ocudu/f1ap/f1ap_message_notifier.h"
+#include "ocudu/gateways/sctp_network_server_factory.h"
+#include "ocudu/pcap/dlt_pcap.h"
+#include "ocudu/support/error_handling.h"
+#include <cstdint>
+
+using namespace ocudu;
+
+namespace {
+
+/// Notifier passed to the CU-CP, which the CU-CP will use to send F1AP Tx PDUs.
+class f1c_to_gw_pdu_notifier final : public f1ap_message_notifier
+{
+public:
+  f1c_to_gw_pdu_notifier(std::unique_ptr<sctp_association_sdu_notifier> sctp_sender_,
+                         dlt_pcap&                                      pcap_writer_,
+                         ocudulog::basic_logger&                        logger_) :
+    sctp_sender(std::move(sctp_sender_)), pcap_writer(pcap_writer_), logger(logger_)
+  {
+  }
+
+  /// Handle unpacked Tx F1AP PDU by packing and forwarding it into the SCTP GW.
+  void on_new_message(const f1ap_message& msg) override
+  {
+    // pack F1AP PDU into SCTP SDU.
+    byte_buffer   tx_sdu{byte_buffer::fallback_allocation_tag{}};
+    asn1::bit_ref bref(tx_sdu);
+    if (msg.pdu.pack(bref) != asn1::OCUDUASN_SUCCESS) {
+      logger.error("Failed to pack F1AP PDU");
+      return;
+    }
+
+    // Push Tx PDU to pcap.
+    if (pcap_writer.is_write_enabled()) {
+      pcap_writer.push_pdu(tx_sdu.copy());
+    }
+
+    // Forward packed F1AP Tx PDU to SCTP gateway.
+    sctp_sender->on_new_sdu(std::move(tx_sdu));
+  }
+
+private:
+  std::unique_ptr<sctp_association_sdu_notifier> sctp_sender;
+  dlt_pcap&                                      pcap_writer;
+  ocudulog::basic_logger&                        logger;
+};
+
+/// Notifier passed to the SCTP GW, which the GW will use to forward F1AP Rx PDUs to the CU-CP.
+class gw_to_f1c_pdu_notifier final : public sctp_association_sdu_notifier
+{
+public:
+  gw_to_f1c_pdu_notifier(std::unique_ptr<f1ap_message_notifier> f1ap_notifier_,
+                         dlt_pcap&                              pcap_writer_,
+                         ocudulog::basic_logger&                logger_) :
+    f1ap_notifier(std::move(f1ap_notifier_)), pcap_writer(pcap_writer_), logger(logger_)
+  {
+  }
+
+  bool on_new_sdu(byte_buffer sdu) override
+  {
+    // Unpack SCTP SDU into F1AP PDU.
+    asn1::cbit_ref bref(sdu);
+    f1ap_message   msg;
+    if (msg.pdu.unpack(bref) != asn1::OCUDUASN_SUCCESS) {
+      logger.error("Couldn't unpack F1AP PDU");
+      return false;
+    }
+
+    // Forward SCTP Rx SDU to pcap, if enabled.
+    if (pcap_writer.is_write_enabled()) {
+      pcap_writer.push_pdu(sdu.copy());
+    }
+
+    // Forward unpacked Rx PDU to the CU-CP.
+    f1ap_notifier->on_new_message(msg);
+
+    return true;
+  }
+
+private:
+  std::unique_ptr<f1ap_message_notifier> f1ap_notifier;
+  dlt_pcap&                              pcap_writer;
+  ocudulog::basic_logger&                logger;
+};
+
+/// Adapter of the SCTP server to the F1-C interface of the CU-CP.
+class f1c_sctp_server final : public ocucp::f1c_connection_server, public sctp_network_association_factory
+{
+public:
+  f1c_sctp_server(const f1c_cu_sctp_gateway_config& params_) : params(params_)
+  {
+    // Create SCTP server.
+    sctp_server = create_sctp_network_server(
+        sctp_network_server_config{params.sctp, params.broker, params.io_rx_executor, params.ctrl_exec, *this});
+    report_error_if_not(sctp_server != nullptr, "Failed to create F1-C SCTP server");
+  }
+
+  void stop() override { sctp_server->stop(); }
+
+  void attach_cu_cp(ocucp::cu_cp_f1c_handler& cu_f1c_handler_) override
+  {
+    cu_f1c_handler = &cu_f1c_handler_;
+
+    // Start listening for new DU SCTP connections.
+    bool result = sctp_server->listen();
+    report_error_if_not(result, "Failed to start SCTP server.\n");
+    fmt::print("{}: Listening for new connections on bind addresses {}, port {}...\n",
+               params.sctp.if_name,
+               fmt::join(params.sctp.bind_addresses, ","),
+               params.sctp.bind_port);
+  }
+
+  std::optional<uint16_t> get_listen_port() const override { return sctp_server->get_listen_port(); }
+
+  std::unique_ptr<sctp_association_sdu_notifier>
+  create(std::unique_ptr<sctp_association_sdu_notifier> sctp_send_notifier, sctp_association_info assoc_info) override
+  {
+    // Create an unpacked F1AP PDU notifier and pass it to the CU-CP.
+    auto f1c_sender = std::make_unique<f1c_to_gw_pdu_notifier>(std::move(sctp_send_notifier), params.pcap, logger);
+
+    std::unique_ptr<f1ap_message_notifier> f1c_receiver =
+        cu_f1c_handler->handle_new_du_connection(std::move(f1c_sender));
+
+    // Wrap the received F1AP Rx PDU notifier in an SCTP notifier and return it.
+    if (f1c_receiver == nullptr) {
+      return nullptr;
+    }
+
+    return std::make_unique<gw_to_f1c_pdu_notifier>(std::move(f1c_receiver), params.pcap, logger);
+  }
+
+private:
+  const f1c_cu_sctp_gateway_config params;
+  ocudulog::basic_logger&          logger         = ocudulog::fetch_basic_logger("CU-CP-F1");
+  ocucp::cu_cp_f1c_handler*        cu_f1c_handler = nullptr;
+
+  std::unique_ptr<sctp_network_server> sctp_server;
+};
+
+} // namespace
+
+std::unique_ptr<ocucp::f1c_connection_server> ocudu::create_f1c_gateway_server(const f1c_cu_sctp_gateway_config& cfg)
+{
+  return std::make_unique<f1c_sctp_server>(cfg);
+}

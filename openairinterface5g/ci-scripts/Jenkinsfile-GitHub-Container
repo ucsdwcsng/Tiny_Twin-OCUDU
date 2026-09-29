@@ -1,0 +1,1063 @@
+#!/bin/groovy
+/*
+ * SPDX-License-Identifier: LicenseRef-CSSL-1.0
+ */
+
+import groovy.transform.Field
+
+@Field def branch = ''
+@Field def gitLocalBranch = ''
+@Field def downstreamResults = [:]
+
+// Location of the executor node
+def nodeExecutor = params.nodeExecutor
+
+// Tags to shorten pipeline duration
+def doBuild = true
+def do4Gtest = false
+def do5Gtest = false
+def do5GUeTest = false
+
+// list of failing stages
+def failingStages = ""
+def mrValidationWarning = ""
+
+// Globally scoped status result variables for downstream jobs.
+def ubuntuBuildStatus = ''
+def ubuntuArmBuildStatus = ''
+def ubuntuJetsonBuildStatus = ''
+def rhelBuildStatus = ''
+def armBuildStatus = ''
+
+def physim5GStatus = ''
+def physimGH5GStatus = ''
+def channelSimStatus = ''
+def vrtSim5GStatus = ''
+def rfSim5GStatus = ''
+def flexricRAN5GStatus = ''
+
+def physim4GStatus = ''
+def rfSim4GStatus = ''
+def l2Sim4GStatus = ''
+def lteTDDB200Status = ''
+def lteFDDB200OAIUEStatus = ''
+def lteFDDB200Status = ''
+def lteTDD2x2N3xxStatus = ''
+
+def nsaTDDB200Status = ''
+def saTDDB200Status = ''
+def phytestLDPCoffloadStatus = ''
+def saAW2SStatus = ''
+def saAERIALStatus = ''
+def saMultiAntennaStatus = ''
+def saFHI72Status = ''
+def saFHI72MplaneStatus = ''
+def saORUStatus = ''
+def saHandoverStatus = ''
+def saAERIALOAIUEStatus = ''
+def saOAIUEStatus = ''
+
+pipeline {
+  agent {
+    label nodeExecutor
+  }
+  options {
+    timestamps()
+    ansiColor('xterm')
+  }
+
+  stages {
+    stage ("Get Parameters") {
+      steps {
+        script {
+          echo '\u2705 \u001B[32mGet Parameters\u001B[0m'
+          // GIT_BRANCH is prefixed with "origin/" by Jenkins - stripped version for use in tags and params in case of PUSH event
+          gitLocalBranch = env.GIT_BRANCH.replace('origin/', '')
+          if (env.GITHUB_PR_NUMBER) {
+            echo "PR number           :   ${env.GITHUB_PR_NUMBER}"
+            echo "Source Repository   :   ${env.GITHUB_PR_URL}"
+            echo "Source Branch       :   ${env.GITHUB_PR_SOURCE_BRANCH}"
+            echo "Commit ID           :   ${env.GITHUB_PR_HEAD_SHA}"
+            echo "Target Repo         :   ${env.GIT_URL}"
+            echo "Target Branch       :   ${env.GITHUB_PR_TARGET_BRANCH}"
+            echo "Label               :   ${env.GITHUB_PR_LABELS}"
+            branch = "${env.GITHUB_PR_SOURCE_BRANCH.replace('/', '-').replace('+', '-')}-${env.GITHUB_PR_HEAD_SHA}"
+          } else {
+            echo "Branch              :   ${gitLocalBranch}"
+            echo "Commit ID           :   ${env.GIT_COMMIT}"
+            branch = "${gitLocalBranch}-${env.GIT_COMMIT}"
+          }
+          env.JOB_TIMESTAMP = sh(returnStdout: true, script: 'date --utc --rfc-3339=seconds | sed -e "s#+00:00##"').trim()
+        }
+      }
+    }
+    stage ("Verify Labels") {
+      steps {
+        echo '\u2705 \u001B[32mVerify Labels\u001B[0m'
+        script {
+          if (env.GITHUB_PR_NUMBER) {
+            if (!(env.GITHUB_PR_LABELS)) {
+              def gitBaseUrl = env.GIT_URL.trim().replace('.git', '')
+              def message = "**CI Build:** [#${env.BUILD_NUMBER}](${BUILD_URL}) | Not performing CI due to the absence of one of the following mandatory labels:\n"
+              message += "- ${gitBaseUrl}/labels/documentation (don't perform any stages)\n"
+              message += "- ${gitBaseUrl}/labels/BUILD-ONLY (execute only build stages)\n"
+              message += "- ${gitBaseUrl}/labels/4G-LTE (perform 4G tests)\n"
+              message += "- ${gitBaseUrl}/labels/5G-NR (perform 5G tests)\n"
+              message += "- ${gitBaseUrl}/labels/nrUE (perform only 5G-UE related tests including physims excluding LDPC tests)\n"
+              message += "- ${gitBaseUrl}/labels/CI (perform both 4G and 5G tests)\n"
+              githubPRComment comment: githubPRMessage(message)
+              error('Not performing CI due to lack of mandatory labels')
+            }
+            if (env.GITHUB_PR_LABELS.contains('CI')) {
+              do4Gtest = true
+              do5Gtest = true
+              do5GUeTest = true
+            }
+            if (env.GITHUB_PR_LABELS.contains('4G-LTE')) {
+              do4Gtest = true
+            }
+            if (env.GITHUB_PR_LABELS.contains('5G-NR')) {
+              do5Gtest = true
+            }
+            if (env.GITHUB_PR_LABELS.contains('nrUE')) {
+              do5GUeTest = true
+            }
+            if (env.GITHUB_PR_LABELS.contains('documentation')) {
+              doBuild = false
+            }
+          } else {
+            // PUSH event
+            do4Gtest = true
+            do5Gtest = true
+          }
+          echo """
+            CI decision summary:
+            doBuild     = ${doBuild}
+            do4Gtest    = ${do4Gtest}
+            do5Gtest    = ${do5Gtest}
+            do5GUeTest  = ${do5GUeTest}
+          """
+        }
+      }
+    }
+    stage ("Verify Guidelines") {
+      steps {
+        echo "Git URL          is ${GIT_URL}"
+        echo "Job Name         is ${JOB_NAME}"
+        echo "Build Id         is ${BUILD_ID}"
+        script {
+          if (env.GITHUB_PR_NUMBER) {
+            // Validate MR commits: checks for missing Signed-off-by and merge commits
+            def mrValidationLog = "signedCommit_${env.BUILD_NUMBER}.log"
+            def mrValidationExitCode = sh(
+                script: "bash ./ci-scripts/pre-ci-check.sh -s ${env.GITHUB_PR_HEAD_SHA} -t origin/${env.GITHUB_PR_TARGET_BRANCH} > ${mrValidationLog} 2>&1",
+                returnStatus: true
+            )
+            def mrValidationMessage = readFile(mrValidationLog).trim()
+            sh "rm -f ${mrValidationLog}"
+            if (mrValidationExitCode >= 1) {
+              mrValidationWarning = mrValidationMessage
+            }
+            if (mrValidationExitCode >= 2) {
+              error("${mrValidationMessage}")
+            }
+          } else {
+            echo "Git Branch    is ${GIT_BRANCH}"
+            echo "Git Commit    is ${GIT_COMMIT}"
+          }
+        }
+      }
+    }
+    stage ("Internal-Repo-Push") {
+      steps {
+        script {
+          triggerDownstreamJob ('RAN-Internal-Repo-Push')
+        }
+      }
+      post {
+        failure {
+          script {
+            currentBuild.result = 'FAILURE'
+            failingStages += '\n * Internal-Repo-Push - merge validation failed (merge conflict, git operation failure, or internal CI error)'
+          }
+        }
+      }
+    }
+    // Build Stages are Mandatory
+    stage ("Image Building Processes") {
+      when { expression {doBuild} }
+      parallel {
+        stage ("Ubuntu-Image-Builder") {
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-Ubuntu-Image-Builder')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                ubuntuBuildStatus = finalizeDownstreamJob('RAN-Ubuntu-Image-Builder')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += ubuntuBuildStatus
+              }
+            }
+          }
+        }
+        stage ("Ubuntu-ARM-Image-Builder") {
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-Ubuntu-ARM-Image-Builder')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                ubuntuArmBuildStatus = finalizeDownstreamJob('RAN-Ubuntu-ARM-Image-Builder')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += ubuntuArmBuildStatus
+              }
+            }
+          }
+        }
+        stage ("Ubuntu-Jetson-Image-Builder") {
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-Ubuntu-Jetson-Image-Builder')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                ubuntuJetsonBuildStatus = finalizeDownstreamJob('RAN-Ubuntu-Jetson-Image-Builder')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += ubuntuJetsonBuildStatus
+              }
+            }
+          }
+        }
+        stage ("RHEL-Cluster-Image-Builder") {
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-RHEL-Cluster-Image-Builder')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                rhelBuildStatus = finalizeDownstreamJob('RAN-RHEL-Cluster-Image-Builder')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += rhelBuildStatus
+              }
+            }
+          }
+        }
+        stage ("ARM-Cross-Compile") {
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-ARM-Cross-Compile-Builder')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                armBuildStatus = finalizeDownstreamJob('RAN-ARM-Cross-Compile-Builder')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += armBuildStatus
+              }
+            }
+          }
+        }
+      }
+    }
+    stage ("DockerHub-Push") {
+      when { expression {doBuild && !(env.GITHUB_PR_NUMBER)} }
+      steps {
+        script {
+          catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+            triggerDownstreamJob ('RAN-DockerHub-Push')
+          }
+        }
+      }
+      post {
+        failure {
+          script {
+            echo "Push to Docker-Hub KO"
+            failingStages += '\n * RAN-DockerHub-Push'
+          }
+        }
+      }
+    }
+    stage ("Image Test Processes") {
+      when { expression {doBuild} }
+      parallel {
+        stage ("PhySim-Cluster-5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-PhySim-Cluster-5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                physim5GStatus = finalizeDownstreamJob('RAN-PhySim-Cluster-5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += physim5GStatus
+              }
+            }
+          }
+        }
+        stage ("PhySim-GraceHopper-5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-PhySim-GraceHopper-5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                physimGH5GStatus = finalizeDownstreamJob('RAN-PhySim-GraceHopper-5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += physimGH5GStatus
+              }
+            }
+          }
+        }
+        stage ("Channel-Simulation") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-Channel-Simulation')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                channelSimStatus = finalizeDownstreamJob('RAN-Channel-Simulation')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += channelSimStatus
+              }
+            }
+          }
+        }
+        stage ("PhySim-Cluster-4G") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-PhySim-Cluster-4G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                physim4GStatus = finalizeDownstreamJob('RAN-PhySim-Cluster-4G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += physim4GStatus
+              }
+            }
+          }
+        }
+        stage ("RF-Sim-Test-4G") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-RF-Sim-Test-4G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                rfSim4GStatus = finalizeDownstreamJob('RAN-RF-Sim-Test-4G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += rfSim4GStatus
+              }
+            }
+          }
+        }
+        stage ("VRT-Sim-Test-5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-VRT-Sim-Test-5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                vrtSim5GStatus = finalizeDownstreamJob('RAN-VRT-Sim-Test-5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += vrtSim5GStatus
+              }
+            }
+          }
+        }
+        stage ("RF-Sim-Test-5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-RF-Sim-Test-5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                rfSim5GStatus = finalizeDownstreamJob('RAN-RF-Sim-Test-5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += rfSim5GStatus
+              }
+            }
+          }
+        }
+        stage ("OAI-FLEXRIC-RAN-Integration-Test") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('OAI-FLEXRIC-RAN-Integration-Test')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                flexricRAN5GStatus = finalizeDownstreamJob('OAI-FLEXRIC-RAN-Integration-Test')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += flexricRAN5GStatus
+              }
+            }
+          }
+        }
+        stage ("L2-Sim-Test-4G") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-L2-Sim-Test-4G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                l2Sim4GStatus = finalizeDownstreamJob('RAN-L2-Sim-Test-4G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += l2Sim4GStatus
+              }
+            }
+          }
+        }
+        stage ("LTE-B200-FDD-LTEBOX-Container") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-LTE-FDD-LTEBOX-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                lteFDDB200Status = finalizeDownstreamJob('RAN-LTE-FDD-LTEBOX-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += lteFDDB200Status
+              }
+            }
+          }
+        }
+        // Pipeline to test OAI LTE-UE
+        stage ("LTE-B200-FDD-OAIUE-OAICN4G-Container") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-LTE-FDD-OAIUE-OAICN4G-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                lteFDDB200OAIUEStatus = finalizeDownstreamJob('RAN-LTE-FDD-OAIUE-OAICN4G-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += lteFDDB200OAIUEStatus
+              }
+            }
+          }
+        }
+        stage ("LTE-B200-TDD-LTEBOX-Container") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-LTE-TDD-LTEBOX-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                lteTDDB200Status = finalizeDownstreamJob('RAN-LTE-TDD-LTEBOX-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += lteTDDB200Status
+              }
+            }
+          }
+        }
+        stage ("NSA-B200-Module-LTEBOX-Container") {
+          when { expression {do4Gtest || do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-NSA-B200-Module-LTEBOX-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                nsaTDDB200Status = finalizeDownstreamJob('RAN-NSA-B200-Module-LTEBOX-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += nsaTDDB200Status
+              }
+            }
+          }
+        }
+        stage ("SA-B200-Module-SABOX-Container") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-B200-Module-SABOX-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saTDDB200Status = finalizeDownstreamJob('RAN-SA-B200-Module-SABOX-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saTDDB200Status
+              }
+            }
+          }
+        }
+        stage ("gNB-N300-Timing-Phytest-LDPC") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-gNB-N300-Timing-Phytest-LDPC')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                phytestLDPCoffloadStatus = finalizeDownstreamJob('RAN-gNB-N300-Timing-Phytest-LDPC')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += phytestLDPCoffloadStatus
+              }
+            }
+          }
+        }
+        stage ("LTE-TDD-2x2-Container") {
+          when { expression {do4Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-LTE-TDD-2x2-Container')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                lteTDD2x2N3xxStatus = finalizeDownstreamJob('RAN-LTE-TDD-2x2-Container')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += lteTDD2x2N3xxStatus
+              }
+            }
+          }
+        }
+        stage ("SA-AW2S-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-AW2S-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saAW2SStatus = finalizeDownstreamJob('RAN-SA-AW2S-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saAW2SStatus
+              }
+            }
+          }
+        }
+        stage ("SA-AERIAL-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-AERIAL-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saAERIALStatus = finalizeDownstreamJob('RAN-SA-AERIAL-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saAERIALStatus
+              }
+            }
+          }
+        }
+        stage ("SA-Multi-Antenna-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-Multi-Antenna-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saMultiAntennaStatus = finalizeDownstreamJob('RAN-SA-Multi-Antenna-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saMultiAntennaStatus
+              }
+            }
+          }
+        }
+        stage ("SA-FHI72-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-FHI72-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saFHI72Status = finalizeDownstreamJob('RAN-SA-FHI72-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saFHI72Status
+              }
+            }
+          }
+        }
+        stage ("SA-FHI72-MPLANE-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-FHI72-MPLANE-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saFHI72MplaneStatus = finalizeDownstreamJob('RAN-SA-FHI72-MPLANE-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saFHI72MplaneStatus
+              }
+            }
+          }
+        }
+        stage ("SA-FHI72-FR2-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-FHI72-FR2-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saFHI72FR2Status = finalizeDownstreamJob('RAN-SA-FHI72-FR2-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saFHI72FR2Status
+              }
+            }
+          }
+        }
+        stage ("SA-ORU-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-ORU-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saORUStatus = finalizeDownstreamJob('RAN-SA-ORU-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saORUStatus
+              }
+            }
+          }
+        }
+        stage ("SA-Handover-CN5G") {
+          when { expression {do5Gtest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-Handover-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saHandoverStatus = finalizeDownstreamJob('RAN-SA-Handover-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saHandoverStatus
+              }
+            }
+          }
+        }
+        stage ("SA-AERIAL-OAIUE-CN5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-AERIAL-OAIUE-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saAERIALOAIUEStatus = finalizeDownstreamJob('RAN-SA-AERIAL-OAIUE-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saAERIALOAIUEStatus
+              }
+            }
+          }
+        }
+        stage ("SA-OAIUE-CN5G") {
+          when { expression {do5Gtest || do5GUeTest} }
+          steps {
+            script {
+              triggerDownstreamJob ('RAN-SA-OAIUE-CN5G')
+            }
+          }
+          post {
+            always {
+              script {
+                // Using a unique variable name for each test stage to avoid overwriting on a global variable
+                // due to parallel-time concurrency
+                saOAIUEStatus = finalizeDownstreamJob('RAN-SA-OAIUE-CN5G')
+              }
+            }
+            failure {
+              script {
+                currentBuild.result = 'FAILURE'
+                failingStages += saOAIUEStatus
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    success {
+      script {
+        if (env.GITHUB_PR_NUMBER) {
+          if (mrValidationWarning) {
+            def message = "**CI Build:** [#${env.BUILD_NUMBER}](${BUILD_URL}) | **Passed**"
+            message +=  "\n\n**Validation:** " + mrValidationWarning
+            githubPRComment comment: githubPRMessage(message)
+          }
+          githubNotify account: params.gitAccount,
+                       repo: params.gitRepo,
+                       credentialsId: 'github-jenkins-duranta',
+                       sha: env.GITHUB_PR_HEAD_SHA,
+                       status: 'SUCCESS',
+                       description: 'Build success',
+                       targetUrl: BUILD_URL,
+                       context: 'Jenkins Duranta CI'
+        }
+        echo "Pipeline is SUCCESSFUL"
+      }
+    }
+    failure {
+      script {
+        if (env.GITHUB_PR_NUMBER) {
+          def message = "**CI Build:** [#${env.BUILD_NUMBER}](${BUILD_URL}) | **Failed** on the following stages:"
+          if (failingStages) {
+            message += failingStages
+          } else {
+            message += "\nThe pipeline may have failed due to CI, validation, or scripting error. See the build for more details."
+          }
+          if (mrValidationWarning) {
+            message += '\n\n**Validation:** ' + mrValidationWarning
+          }
+          if (env.GITHUB_PR_LABELS) {
+            githubPRComment comment: githubPRMessage(message)
+          }
+          githubNotify account: params.gitAccount,
+                       repo: params.gitRepo,
+                       credentialsId: 'github-jenkins-duranta',
+                       sha: env.GITHUB_PR_HEAD_SHA,
+                       status: 'FAILURE',
+                       description: 'Build failed',
+                       targetUrl: BUILD_URL,
+                       context: 'Jenkins Duranta CI'
+        }
+        echo "Pipeline FAILED"
+      }
+    }
+  }
+}
+
+// ----  Slave Job functions
+
+def triggerDownstreamJob (jobName) {
+  // Workaround for the "cancelled" pipeline notification
+  // The downstream job is triggered with the propagate false so the following commands are executed
+  // Its status is now PASS/SUCCESS from a stage pipeline point of view
+  // localStatus variable MUST be analyzed to properly assess the status
+  def localStatus = build job: jobName,
+    parameters: [
+      string(name: 'targetRepo', value: String.valueOf(env.GIT_URL)),
+      string(name: 'sourceRepo', value: String.valueOf(env.GITHUB_PR_URL ?: env.GIT_URL)),
+      string(name: 'sourceBranch', value: String.valueOf(env.GITHUB_PR_SOURCE_BRANCH ?: gitLocalBranch)),
+      string(name: 'sourceCommit', value: String.valueOf(env.GITHUB_PR_HEAD_SHA ?: env.GIT_COMMIT)),
+      string(name: 'requestNumber', value: String.valueOf(env.GITHUB_PR_NUMBER ?: gitLocalBranch)),
+      booleanParam(name: 'mergeWithTarget', value: env.GITHUB_PR_NUMBER != null),
+      string(name: 'targetBranch', value: (env.GITHUB_PR_TARGET_BRANCH ?: gitLocalBranch)),
+      string(name: 'repository', value: String.valueOf(params.ciRepositoryURL)),
+      string(name: 'branch', value: String.valueOf(branch))
+    ], propagate: false
+  def localResult = localStatus.getResult()
+  echo "${jobName} Slave Job status is ${localResult}"
+  downstreamResults[jobName] = localStatus.resultIsBetterOrEqualTo('SUCCESS') ? 'SUCCESS' : 'FAILURE'
+  if (localStatus.resultIsBetterOrEqualTo('SUCCESS')) {
+    echo "${jobName} Slave Job is OK"
+  } else {
+    error "${jobName} Slave Job is KO"
+  }
+}
+
+def triggerCN5GDownstreamJob (jobName) {
+  def fullRanTag = params.internalRegistry + '/oai-gnb:' + "${branch}"
+  // Workaround for the "cancelled" GitLab pipeline notification
+  // The downstream job is triggered with the propagate false so the following commands are executed
+  // Its status is now PASS/SUCCESS from a stage pipeline point of view
+  // localStatus variable MUST be analyzed to properly assess the status
+  def localStatus = build job: jobName,
+    parameters: [
+      string(name: 'FULL_RAN_TAG', value: String.valueOf(fullRanTag))
+    ], propagate: false
+  def localResult = localStatus.getResult()
+  echo "${jobName} Slave Job status is ${localResult}"
+  downstreamResults[jobName] = localStatus.resultIsBetterOrEqualTo('SUCCESS') ? 'SUCCESS' : 'FAILURE'
+  if (localStatus.resultIsBetterOrEqualTo('SUCCESS')) {
+    echo "${jobName} Slave Job is OK"
+  } else {
+    error "${jobName} Slave Job is KO"
+  }
+}
+
+def finalizeDownstreamJob(jobName) {
+  lock ('Parent-Lock') {
+    // In case of any non-success, we are retrieving the HTML report of the last completed
+    // downstream job. The only drop-back is that we may retrieve the HTML report of a previous build
+    def fileName
+    if (jobName == 'OAI-CN5G-COTS-UE-Test') {
+      fileName = "test_results_oai_cn5g_cots_ue.html"
+    } else {
+      fileName = "test_results-${jobName}.html"
+    }
+    def artifactUrl = BUILD_URL
+    if (!fileExists(fileName)) {
+      copyArtifacts(projectName: jobName,
+        filter: 'test_results*.html',
+        selector: lastCompleted(),
+        optional: true)
+      if (fileExists(fileName)) {
+        sh "sed -i -e 's#TEMPLATE_BUILD_TIME#${env.JOB_TIMESTAMP}#' ${fileName}"
+      } else {
+        sh "echo \"could not copy results from ${jobName}, please check pipeline ${BUILD_URL}\" > ${fileName}"
+      }
+      archiveArtifacts artifacts: fileName
+      // BUILD_URL is like  http://server:port/jenkins/job/foo/15/
+      // no need to add a prefixed '/'
+      artifactUrl += 'artifact/' + fileName
+    }
+    if (env.GITHUB_PR_NUMBER) {
+      githubNotify account: params.gitAccount,
+                   repo: params.gitRepo,
+                   credentialsId: "github-jenkins-duranta",
+                   sha: env.GITHUB_PR_HEAD_SHA,
+                   status: downstreamResults.getOrDefault(jobName, 'FAILURE'),
+                   targetUrl: "${artifactUrl}",
+                   context: jobName
+    }
+    artifactUrl = "\n * [${jobName}](${artifactUrl})"
+    return artifactUrl
+  }
+}

@@ -1,0 +1,101 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/span.h"
+#include "ocudu/cu_cp/cu_cp_configuration.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/ran/cu_cp_types.h"
+#include <map>
+#include <optional>
+
+namespace ocudu::ocucp {
+
+/// CU-CP-side managed object for a cell: operator intent plus its realization by a connected DU.
+///
+/// The intent half (\c admin_state, \c barred) is owned by the CU-CP — declared in configuration and
+/// mutated by operator commands — and outlives any DU connection. The realization half tracks whether (and
+/// where) a connected DU currently serves the cell; it is filled at F1 setup and cleared when the DU is
+/// removed. The operational state records the outcome of the activations and deactivations the CU-CP
+/// drives; the per-PLMN F1AP bookkeeping stays in the DU configuration records.
+struct logical_cell {
+  /// NR Cell Identity of the cell.
+  nr_cell_identity nci;
+  /// Administrative state: the CU-CP activates the cell only while unlocked, and holds shutting_down while
+  /// a graceful stop drains it.
+  cell_admin_state admin_state = cell_admin_state::unlocked;
+  /// Intended MIB cellBarred state, applied via the TS 38.473 Cells to be Barred List whenever active.
+  bool barred = false;
+  /// Whether \c barred mirrors an on-air bar left by a failed graceful stop rather than operator intent.
+  /// Such a record is transient: it is cleared when the DU goes away or a deactivation takes effect, and an
+  /// operator bar/unbar takes it over.
+  bool barred_by_failed_stop = false;
+
+  /// Operational state: whether the cell is active at its realizing DU.
+  cell_operational_state operational_state = cell_operational_state::disabled;
+  /// Whether a connected DU currently serves this cell.
+  bool realized = false;
+  /// Index of the realizing DU. Only valid when realized.
+  cu_cp_du_index_t du_index = cu_cp_du_index_t::invalid;
+};
+
+/// Registry of the CU-CP's logical cells, keyed by NR Cell Identity.
+///
+/// Declared cells are seeded from configuration at construction and exist before any DU connects, and the
+/// declared set doubles as the activation whitelist: when it is non-empty, a reported cell outside it is
+/// added dynamically in locked state (not activated until explicitly unlocked). When no cells are declared,
+/// dynamic cells get default (unlocked, unbarred) intent, preserving the pre-logical-cell behaviour for
+/// undeclared deployments. Intent survives DU removal.
+class logical_cell_manager
+{
+public:
+  explicit logical_cell_manager(span<const cu_cp_logical_cell_config> declared_cells);
+
+  /// Find the logical cell with the given NCI. Returns nullptr if unknown.
+  const logical_cell* find_cell(nr_cell_identity nci) const;
+
+  /// \brief Set the administrative state of a logical cell.
+  /// \return The previous state, or std::nullopt if no logical cell with the given NCI exists.
+  std::optional<cell_admin_state> set_admin_state(nr_cell_identity nci, cell_admin_state state);
+
+  /// \brief Set the intended MIB cellBarred state of a logical cell. The operator takes ownership: a
+  /// transient failed-stop bar record is cleared.
+  /// \return The previous intent, or std::nullopt if no logical cell with the given NCI exists.
+  std::optional<bool> set_barred(nr_cell_identity nci, bool barred);
+
+  /// \brief Record the bar a failed graceful stop left on the air, so the registry matches the cell.
+  ///
+  /// The record is transient (see \ref logical_cell::barred_by_failed_stop): unlike operator intent it does
+  /// not outlive the condition it describes.
+  /// \return false if no logical cell with the given NCI exists.
+  bool record_failed_stop_bar(nr_cell_identity nci);
+
+  /// \brief Set the operational state of a logical cell.
+  /// \return The previous state, or std::nullopt if no logical cell with the given NCI exists.
+  std::optional<cell_operational_state> set_operational_state(nr_cell_identity nci, cell_operational_state state);
+
+  /// \brief Realize a cell reported by a DU, creating a dynamic logical cell if it was not declared.
+  ///
+  /// The dynamic cell is created locked when any cells were declared in configuration (declared set =
+  /// activation whitelist), unlocked otherwise.
+  /// \return The (created or updated) logical cell record.
+  const logical_cell& realize_cell(nr_cell_identity nci, cu_cp_du_index_t du_index);
+
+  /// De-realize all cells realized by the given DU, keeping their operator intent. The cells become
+  /// operationally disabled (without a DU nothing serves them), and a cell caught mid-graceful-stop
+  /// (shutting_down) resolves to locked: the drain cannot complete once the DU is gone.
+  void derealize_du_cells(cu_cp_du_index_t du_index);
+
+private:
+  std::map<nr_cell_identity, logical_cell> cells;
+
+  /// Whether any cells were declared in configuration. When true, the declared set acts as the activation
+  /// whitelist and undeclared reported cells are realized locked.
+  const bool any_cells_declared;
+
+  ocudulog::basic_logger& logger;
+};
+
+} // namespace ocudu::ocucp

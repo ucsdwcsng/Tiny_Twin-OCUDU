@@ -1,0 +1,112 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/hal/phy/upper/channel_processors/hw_accelerator_pdsch_enc_factory.h"
+#include "ocudu/ocudulog/logger.h"
+#include "ocudu/phy/support/support_factories.h"
+#include "ocudu/phy/upper/channel_coding/channel_coding_factories.h"
+#include "ocudu/phy/upper/channel_modulation/channel_modulation_factories.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_block_processor.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_encoder.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_modulator.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_processor.h"
+#include "ocudu/phy/upper/sequence_generators/sequence_generator_factories.h"
+#include "ocudu/phy/upper/signal_processors/pdsch/factories.h"
+#include "ocudu/phy/upper/signal_processors/ptrs/ptrs_pdsch_generator_factory.h"
+#include "ocudu/support/executors/task_executor.h"
+#include <memory>
+
+namespace ocudu {
+
+class pdsch_encoder_factory
+{
+public:
+  virtual ~pdsch_encoder_factory()                = default;
+  virtual std::unique_ptr<pdsch_encoder> create() = 0;
+};
+
+struct pdsch_encoder_factory_sw_configuration {
+  std::shared_ptr<ldpc_encoder_factory>      encoder_factory;
+  std::shared_ptr<ldpc_rate_matcher_factory> rate_matcher_factory;
+  std::shared_ptr<ldpc_segmenter_tx_factory> segmenter_factory;
+};
+
+std::shared_ptr<pdsch_encoder_factory> create_pdsch_encoder_factory_sw(pdsch_encoder_factory_sw_configuration& config);
+
+/// HW-accelerated PDSCH encoder factory configuration parameters.
+struct pdsch_encoder_factory_hw_configuration {
+  std::shared_ptr<crc_calculator_factory>                crc_factory;
+  std::shared_ptr<ldpc_segmenter_tx_factory>             segmenter_factory;
+  std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> hw_encoder_factory;
+};
+
+std::shared_ptr<pdsch_encoder_factory>
+create_pdsch_encoder_factory_hw(const pdsch_encoder_factory_hw_configuration& config);
+
+class pdsch_modulator_factory
+{
+public:
+  virtual ~pdsch_modulator_factory()                = default;
+  virtual std::unique_ptr<pdsch_modulator> create() = 0;
+};
+
+std::shared_ptr<pdsch_modulator_factory>
+create_pdsch_modulator_factory_sw(std::shared_ptr<modulation_mapper_factory>,
+                                  std::shared_ptr<pseudo_random_generator_factory>,
+                                  std::shared_ptr<resource_grid_mapper_factory> rg_mapper_factory);
+
+class pdsch_processor_factory
+{
+public:
+  virtual ~pdsch_processor_factory()                              = default;
+  virtual std::unique_ptr<pdsch_processor>     create()           = 0;
+  virtual std::unique_ptr<pdsch_pdu_validator> create_validator() = 0;
+  virtual std::unique_ptr<pdsch_processor>     create(ocudulog::basic_logger& logger, bool enable_logging_broadcast);
+};
+
+std::shared_ptr<pdsch_processor_factory>
+create_pdsch_processor_factory_sw(std::shared_ptr<pdsch_encoder_factory>        encoder_factory,
+                                  std::shared_ptr<pdsch_modulator_factory>      modulator_factory,
+                                  std::shared_ptr<dmrs_pdsch_processor_factory> dmrs_factory,
+                                  std::shared_ptr<ptrs_pdsch_generator_factory> ptrs_factory);
+
+class pdsch_block_processor_factory
+{
+public:
+  virtual ~pdsch_block_processor_factory()                = default;
+  virtual std::unique_ptr<pdsch_block_processor> create() = 0;
+};
+
+std::shared_ptr<pdsch_block_processor_factory>
+create_pdsch_block_processor_factory_sw(std::shared_ptr<ldpc_encoder_factory>            encoder_factory,
+                                        std::shared_ptr<ldpc_rate_matcher_factory>       rate_matcher_factory,
+                                        std::shared_ptr<pseudo_random_generator_factory> prg_factory,
+                                        std::shared_ptr<modulation_mapper_factory>       modulator_factory);
+
+std::shared_ptr<pdsch_block_processor_factory>
+create_pdsch_block_processor_factory_hw(std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> encoder_factory,
+                                        std::shared_ptr<pseudo_random_generator_factory>       prg_factory,
+                                        std::shared_ptr<modulation_mapper_factory>             modulator_factory);
+
+std::shared_ptr<pdsch_block_processor_factory>
+create_pdsch_block_processor_pool_factory(std::shared_ptr<pdsch_block_processor_factory> base,
+                                          task_executor&                                 executor,
+                                          unsigned                                       nof_concurrent_threads);
+
+std::shared_ptr<pdsch_processor_factory>
+create_pdsch_flexible_processor_factory_sw(std::shared_ptr<ldpc_segmenter_tx_factory>     ldpc_segmenter_factory,
+                                           std::shared_ptr<pdsch_block_processor_factory> block_processor_factory,
+                                           std::shared_ptr<resource_grid_mapper_factory>  rg_mapper_factory,
+                                           std::shared_ptr<dmrs_pdsch_processor_factory>  dmrs_factory,
+                                           std::shared_ptr<ptrs_pdsch_generator_factory>  ptrs_factory,
+                                           task_executor&                                 executor,
+                                           unsigned                                       nof_concurrent_threads,
+                                           unsigned                                       cb_batch_length = 0);
+
+std::shared_ptr<pdsch_processor_factory>
+create_pdsch_processor_pool(std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory, unsigned max_nof_processors);
+
+} // namespace ocudu

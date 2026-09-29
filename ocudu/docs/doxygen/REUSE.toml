@@ -1,0 +1,9 @@
+version = 1
+
+[[annotations]]
+path = [
+    "doxygen-awesome.css",
+    "doxygen-awesome-sidebar-only.css",
+]
+SPDX-FileCopyrightText = "2021-2022 jothepro"
+SPDX-License-Identifier = "MIT"

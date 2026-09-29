@@ -1,0 +1,272 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/f1ap/du/f1ap_du_connection_manager.h"
+#include "ocudu/f1ap/du/f1ap_du_metrics_collector.h"
+#include "ocudu/f1ap/du/f1ap_du_time_provider.h"
+#include "ocudu/f1ap/du/f1ap_du_ue_config.h"
+#include "ocudu/f1ap/du/f1ap_du_ue_context_update.h"
+#include "ocudu/f1ap/du/f1c_bearer.h"
+#include "ocudu/f1ap/f1ap_message_handler.h"
+#include "ocudu/ran/du_types.h"
+#include "ocudu/ran/paging_information.h"
+#include "ocudu/ran/rb_id.h"
+#include "ocudu/ran/sib/sib_type.h"
+#include "ocudu/support/async/async_task.h"
+#include "ocudu/support/timers.h"
+
+namespace ocudu {
+namespace odu {
+
+class f1ap_du_positioning_handler;
+
+struct f1ap_rrc_delivery_report_msg {
+  du_cell_index_t cell_index          = INVALID_DU_CELL_INDEX;
+  du_ue_index_t   ue_index            = INVALID_DU_UE_INDEX;
+  lcid_t          lcid                = INVALID_LCID;
+  bool            rrc_delivery_status = false;
+};
+
+class f1ap_rrc_message_transfer_procedure_handler
+{
+public:
+  virtual ~f1ap_rrc_message_transfer_procedure_handler() = default;
+
+  /// \brief Packs and transmits the RRC delivery report as per TS 38.473 section 8.4.4.
+  /// \param[in] report The RRC delivery report message to transmit.
+  virtual void handle_rrc_delivery_report(const f1ap_rrc_delivery_report_msg& report) = 0;
+};
+
+struct f1ap_ue_context_modification_confirm {
+  bool success = false;
+};
+
+struct f1ap_ue_inactivity_notification_message {};
+
+struct f1ap_notify_message {};
+
+struct f1ap_ue_delete_request {
+  /// Identifier of the UE context to be removed from the DU.
+  du_ue_index_t ue_index = INVALID_DU_UE_INDEX;
+  /// \brief How much time to wait between UE deactivation (stop activity in all bearers and scheduling) and UE full
+  /// removal (including deallocation of its RAN resources).
+  /// \remark As per TS 38.331, 5.3.8.3, it is optional for the UE to immediately shutdown or wait the full 60msec
+  /// after it receives the RRC Release. If it decides to stay awake for those full 60msec, it will keep using RAN
+  /// resources (e.g. for CSI and SR). To avoid the reallocation of RAN resources to other UEs too early (and
+  /// potentially cause collisions), we may need to postpone the UE context full removal from the DU.
+  std::chrono::milliseconds ran_resource_release_timeout{0};
+};
+
+/// Handle F1AP UE context management procedures as defined in TS 38.473 section 8.3.
+class f1ap_ue_context_manager
+{
+public:
+  virtual ~f1ap_ue_context_manager() = default;
+
+  /// \brief Requests the creation of a new UE context in the F1AP.
+  virtual f1ap_ue_creation_response handle_ue_creation_request(const f1ap_ue_creation_request& msg) = 0;
+
+  /// \brief Updates the configuration of an existing UE context in the F1AP.
+  virtual f1ap_ue_configuration_response handle_ue_configuration_request(const f1ap_ue_configuration_request& msg) = 0;
+
+  /// \brief Removes UE Context from F1AP.
+  virtual void handle_ue_deletion_request(du_ue_index_t ue_index) = 0;
+
+  /// \brief Initiates the UE Context Release Request (gNB-DU initiated) procedure as per TS 38.473 section 8.3.2.
+  virtual void handle_ue_context_release_request(const f1ap_ue_context_release_request& request) = 0;
+
+  /// \brief Sends an ACCESS SUCCESS message to the CU-CP as per TS 38.473 Section 8.3.8.
+  /// Called by the DU when a UE successfully accesses the target cell (e.g., during CHO execution).
+  virtual void handle_access_success(const f1ap_access_success_event& msg) = 0;
+
+  /// \brief Initiates the UE Context Modification Required procedure as per TS 38.473 section 8.3.5.
+  /// \param[in] msg The UE Context Modification Required message to transmit.
+  /// \return Returns a f1ap_ue_context_modification_confirm struct with the success member set to 'true' in
+  /// case of a successful outcome, 'false' otherwise.
+  virtual async_task<f1ap_ue_context_modification_confirm>
+  handle_ue_context_modification_required(const f1ap_ue_context_modification_required& msg) = 0;
+
+  /// \brief Indicate an UE activity event as per TS 38.473 section 8.3.6
+  /// \param[in] msg The UE Inactivity Nofication message to transmit.
+  virtual void handle_ue_inactivity_notification(const f1ap_ue_inactivity_notification_message& msg) = 0;
+
+  /// \brief Initiate the Notify procedure as per TS 38.473 section 8.3.7
+  /// \param[in] msg The Notify message to transmit.
+  virtual void handle_notify(const f1ap_notify_message& msg) = 0;
+
+  /// \brief Checks if UE was assigned a gNB-CU-UE-F1AP-ID by the CU-CP.
+  /// \param[in] ue_index of a given UE.
+  virtual bool has_gnb_cu_ue_f1ap_id(const du_ue_index_t& ue_index) const = 0;
+};
+
+/// This interface is used to get mapping between ue_index, gnb_cu_ue_f1ap_id and gnb_du_ue_f1ap_id.
+class f1ap_ue_id_translator
+{
+public:
+  virtual ~f1ap_ue_id_translator() = default;
+
+  /// \brief Map ue_index to gnb_cu_ue_f1ap_id.
+  /// \param[in] ue_index of a given UE.
+  /// \param[out] gNB-CU-UE-F1AP-ID of the given UE.
+  virtual std::optional<gnb_cu_ue_f1ap_id_t> get_gnb_cu_ue_f1ap_id(const du_ue_index_t& ue_index) const = 0;
+
+  /// \brief Map gnb_du_ue_f1ap_id to gnb_cu_ue_f1ap_id.
+  /// \param[in] gnb_du_ue_f1ap_id of a given UE.
+  /// \param[out] gnb_cu_ue_f1ap_id of the given UE.
+  virtual std::optional<gnb_cu_ue_f1ap_id_t>
+  get_gnb_cu_ue_f1ap_id(const gnb_du_ue_f1ap_id_t& gnb_du_ue_f1ap_id) const = 0;
+
+  /// \brief Map ue_index to gnb_du_ue_f1ap_id.
+  /// \param[in] ue_index of a given UE.
+  /// \param[out] gnb_du_ue_f1ap_id of the given UE.
+  virtual gnb_du_ue_f1ap_id_t get_gnb_du_ue_f1ap_id(const du_ue_index_t& ue_index) = 0;
+
+  /// \brief Map gnb_cu_ue_f1ap_id to gnb_du_ue_f1ap_id.
+  /// \param[in] gnb_cu_ue_f1ap_id of a given UE.
+  /// \param[out] gnb_du_ue_f1ap_id of the given UE.
+  virtual gnb_du_ue_f1ap_id_t get_gnb_du_ue_f1ap_id(const gnb_cu_ue_f1ap_id_t& gnb_cu_ue_f1ap_id) = 0;
+
+  /// \brief Map gnb_du_ue_f1ap_id to ue_index.
+  /// \param[in] gnb_du_ue_f1ap_id of a given UE.
+  /// \param[out] ue_index of the given UE.
+  virtual du_ue_index_t get_ue_index(const gnb_du_ue_f1ap_id_t& gnb_du_ue_f1ap_id) = 0;
+
+  /// \brief Map gnb_cu_ue_f1ap_id to ue_index.
+  /// \param[in] gnb_cu_ue_f1ap_id of a given UE.
+  /// \param[out] ue_index of the given UE.
+  virtual du_ue_index_t get_ue_index(const gnb_cu_ue_f1ap_id_t& gnb_cu_ue_f1ap_id) = 0;
+};
+
+/// The F1AP uses this interface to request services such as timers and scheduling of asynchronous tasks.
+class f1ap_ue_task_scheduler
+{
+public:
+  virtual ~f1ap_ue_task_scheduler() = default;
+
+  /// \brief Create timer for a given UE.
+  virtual unique_timer create_timer() = 0;
+
+  /// \brief Schedule Async Task respective to a given UE.
+  virtual void schedule_async_task(async_task<void>&& task) = 0;
+};
+
+/// Class to manage scheduling of asynchronous F1AP tasks and timers.
+class f1ap_task_scheduler
+{
+public:
+  virtual ~f1ap_task_scheduler() = default;
+
+  virtual timer_factory& get_timer_factory() = 0;
+
+  /// \brief Schedule Async Task respective to the whole DU.
+  virtual void schedule_async_task(async_task<void>&& task) = 0;
+};
+
+/// The F1AP uses this interface to notify the DU of new required updates (e.g. UE config modification, etc.) and to
+/// request services such as timers, scheduling of async tasks, etc.
+class f1ap_du_configurator : public f1ap_interface_update_notifier, public f1ap_task_scheduler
+{
+public:
+  virtual ~f1ap_du_configurator() = default;
+
+  /// Called when the F1-C interface shutdowns unexpectedly.
+  virtual void on_f1c_disconnection() = 0;
+
+  /// Request the reset of UE transaction information.
+  ///
+  /// \param[in] List of UEs for which to reset the context. If list is empty, all UEs are removed.
+  virtual async_task<void> request_reset(const std::vector<du_ue_index_t>& ues_to_reset) = 0;
+
+  /// \brief Search for an unused DU UE index.
+  virtual du_ue_index_t find_free_ue_index() = 0;
+
+  /// \brief Request to create a new UE context in the DU.
+  virtual async_task<f1ap_ue_context_creation_response>
+  request_ue_creation(const f1ap_ue_context_creation_request& request) = 0;
+
+  /// \brief Request the update of an existing UE configuration in the DU.
+  virtual async_task<f1ap_ue_context_update_response>
+  request_ue_context_update(const f1ap_ue_context_update_request& request) = 0;
+
+  /// \brief Request the update of the UE configuration in the DU.
+  virtual async_task<void> request_ue_removal(const f1ap_ue_delete_request& request) = 0;
+
+  /// \brief Request by the F1AP to the DU to deactivate the DRB activity for a given UE.
+  ///
+  /// This is generally called when the DU receives a request to remove a UE context, but it needs to flush first
+  /// any pending SRB PDUs.
+  /// \param ue_index Index of the UE for which the DRB deactivation is requested.
+  virtual async_task<void> request_ue_drb_deactivation(du_ue_index_t ue_index) = 0;
+
+  /// \brief Notify DU that a given UE is performing RRC Reestablishment.
+  virtual void notify_reestablishment_of_old_ue(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index) = 0;
+
+  /// Confirm that the UE applied the pending configuration.
+  virtual void on_ue_config_applied(du_ue_index_t ue_index) = 0;
+
+  /// Retrieve handling of positioning information.
+  virtual f1ap_du_positioning_handler& get_positioning_handler() = 0;
+
+  /// \brief Retrieve task scheduler specific to a given UE.
+  virtual f1ap_ue_task_scheduler& get_ue_handler(du_ue_index_t ue_index) = 0;
+
+  /// \brief Retrieve the time provider used to obtain slot-to-time mappings for reference time reporting.
+  virtual f1ap_du_time_provider& get_time_provider() = 0;
+};
+
+/// \brief The F1AP uses this interface to notify the DU of paging.
+class f1ap_du_paging_notifier
+{
+public:
+  virtual ~f1ap_du_paging_notifier() = default;
+
+  /// \brief Forward the F1AP Paging to DU.
+  virtual void on_paging_received(const paging_information& msg) = 0;
+};
+
+/// \brief Write-Replace Warning Request as per TS 38.473 Section 8.5.1, resolved to local DU cell indexes.
+struct write_replace_warning_information {
+  /// SIB carried by \c sib_msgs. SIB6, SIB7 or SIB8.
+  sib_type sib_id;
+  /// \brief CU-encoded SIB6/7/8 PDU segments, as per TS 38.331.
+  std::vector<byte_buffer> sib_msgs;
+  /// Repetition Period.
+  std::chrono::seconds repeat_period;
+  /// Number of Broadcasts Requested.
+  uint32_t nof_broadcasts_requested;
+  /// Cells targeted by this request, already resolved to local DU cell indexes.
+  std::vector<du_cell_index_t> cells;
+};
+
+/// \brief The F1AP uses this interface to notify the DU of a Write-Replace Warning request (TS 38.473 Section 8.5.1).
+class f1ap_du_pws_notifier
+{
+public:
+  virtual ~f1ap_du_pws_notifier() = default;
+
+  /// \brief Forward the F1AP Write-Replace Warning Request to the DU.
+  /// \return Subset of \c write_replace_warning_information::cells that accepted the broadcast.
+  virtual async_task<std::vector<du_cell_index_t>>
+  on_write_replace_warning_received(const write_replace_warning_information& msg) = 0;
+};
+
+/// Combined entry point for F1AP handling.
+class f1ap_du : public f1ap_message_handler,
+                public f1ap_rrc_message_transfer_procedure_handler,
+                public f1ap_connection_manager,
+                public f1ap_ue_context_manager,
+                public f1ap_ue_id_translator
+{
+public:
+  ~f1ap_du() override = default;
+
+  /// \brief Retrieve the F1AP metrics collector.
+  virtual f1ap_metrics_collector& get_metrics_collector() = 0;
+};
+
+} // namespace odu
+} // namespace ocudu

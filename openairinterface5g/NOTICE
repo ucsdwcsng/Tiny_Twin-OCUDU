@@ -1,0 +1,100 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
+The source code is distributed under Collaborative Standards Software License
+(CSSL) v1.0. Some files, such as for orchestration, are distributed under MIT
+license. Documentation is distributed under Creative Commons Attribution 4.0
+International license. All the files without an explicit copyright header have
+an implicit "Copyright of OpenAirInterface Authors".
+
+For more details of the license, refer to the `LICENSES` directory for a list
+of preferred and exceptionally-applied licenses.
+
+However, the source code also contains third party software that is
+acknowledged here for reference.
+
+Credits for source code https://github.com/mouse07410/asn1c:
+Github ID mouse07410: BSD-2-Clause License
+
+Credits for https://github.com/simd-everywhere/simde-no-tests.git:
+Github ID simd-everywhere: MIT License
+
+Credits for source code common/utils/collection/queue.h:
+The Regents of the University of California: BSD 3-Clause Licence
+
+Credits for source code common/utils/collection/tree.h:
+Niels Provos provos@citi.umich.edu: BSD 2-Clause Licence
+
+Credits for openair2/UTIL/OPT/packet-rohc.h:
+Anders Broman <anders.broman@ericsson.com>: GPL-2.0-or-later
+
+Credits for openair3/NAS/COMMON/milenage.h
+Jouni Malinen <j@w1.fi>: BSD 2-Clause License
+
+Credits for source code at:
+- openair1/PHY/CODING/crc.h
+- openair1/PHY/CODING/crcext.h
+- openair1/PHY/CODING/types.h
+- openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_aal/nrLDPC_coding_aal.c
+- openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_aal/nrLDPC_coding_aal.h
+Intel Corporation SPDX-License-Identifier: BSD-3-Clause Licence
+
+Credits for source code nFAPI/open-nFAPI:
+- Most of the files are from CISCO: Apache 2.0 License
+- FAPI/*: CSSL v1.0
+- utils/nfapi_hex_parser.c: CSSL v1.0
+- nfapi/public_inc/nfapi_common_interface.h: CSSL v1.0
+- nfapi/public_inc/nr_nfapi_p7.h: CSSL v1.0
+- nfapi/public_inc/fapi_nr_ue_interface.h: CSSL v1.0
+
+Optional software downloaded on demand/if requested by user:
+
+Credits for Yang model radio/fhi_72/mplane/yang/models:
+O-RAN Alliance: BSD 3-Clause License
+IETF Trust and the persons identified as authors of the code: BSD 2-Clause Licence
+
+Credits for https://github.com/CESNET/libyang:
+Czech Educational and Research Network: BSD-3-Clause License
+
+Credits for https://github.com/CESNET/libnetconf2:
+Czech Educational and Research Network: BSD-3-Clause License
+
+Credits for https://github.com/google/googletest used for unit test:
+Google: BSD 3-Clause License
+
+Credits for https://github.com/google/benchmark used for unit test:
+Google: Apache 2.0 License
+
+Credits for https://github.com/google/sanitizers used for the address sanitizer:
+Google: Apache 2.0 License
+
+Credits for https://github.com/krallin/tini used for init in containers:
+Github ID krallin: MIT License
+
+Credits for https://github.com/EttusResearch/uhd.git:
+EttusResearch: GPLv3 License
+
+Credits for https://github.com/mikefarah/yq used for parsing YAML in Docker images:
+Github ID mikefarah: MIT License
+
+Credits for https://github.com/intel/pf-bb-config:
+Intel: Apache 2.0 License
+
+Credits for https://github.com/Nuand/bladeRF:
+Nuand: https://github.com/Nuand/bladeRF/tree/master?tab=License-1-ov-file
+
+Credits for https://github.com/pothosware/SoapySDR
+Pothosware: BSL 1.0 License
+
+Credits for https://github.com/zeromq/libzmq
+ZeroMQ authors: Mozilla Public License Version 2.0
+
+Credits for source code:
+  - radio/zmq/zmq_imported.cpp
+  - radio/zmq/zmq_imported.h
+Software Radio Systems Limited: BSD-3-Clause-Open-MPI
+
+Credits for source code:
+  - openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_ors/nrLDPC_coding_xdma_offload.c
+  - openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_ors/xdma_diag.h
+Xilinx, Inc.: BSD-3-Clause License
+Modified by: Open Radio Systems GmbH

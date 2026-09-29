@@ -1,0 +1,284 @@
+# SPDX-License-Identifier: MIT
+services:
+    mysql:
+        container_name: "mysql"
+        image: mysql:9.6
+        volumes:
+            - ./database/oai_db.sql:/docker-entrypoint-initdb.d/oai_db.sql
+            - ./healthscripts/mysql-healthcheck.sh:/tmp/mysql-healthcheck.sh
+        environment:
+            - TZ=Europe/Paris
+            - MYSQL_DATABASE=oai_db
+            - MYSQL_USER=test
+            - MYSQL_PASSWORD=test
+            - MYSQL_ROOT_PASSWORD=linux
+        healthcheck:
+            test: /bin/bash -c "/tmp/mysql-healthcheck.sh"
+            interval: 5s
+            timeout: 2s
+            retries: 10
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.131
+
+    ims:
+        container_name: "ims"
+        image: oaisoftwarealliance/ims:latest
+        volumes:
+            - ./conf/sip.conf:/etc/asterisk/sip.conf
+            - ./conf/users.conf:/etc/asterisk/users.conf
+        healthcheck:
+            test: /bin/bash -c "pgrep asterisk"
+            interval: 5s
+            timeout: 2s
+            retries: 10
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.139
+
+    oai-udr:
+        container_name: "oai-udr"
+        image: oaisoftwarealliance/oai-udr:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+        volumes:
+            - ./conf/config.yaml:/openair-udr/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - mysql
+            - oai-nrf
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.136
+
+    oai-udm:
+        container_name: "oai-udm"
+        image: oaisoftwarealliance/oai-udm:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+        volumes:
+            - ./conf/config.yaml:/openair-udm/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - oai-udr
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.137
+
+    oai-ausf:
+        container_name: "oai-ausf"
+        image: oaisoftwarealliance/oai-ausf:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+        volumes:
+            - ./conf/config.yaml:/openair-ausf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - oai-udm
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.138
+
+    oai-nrf:
+        container_name: "oai-nrf"
+        image: oaisoftwarealliance/oai-nrf:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+        volumes:
+            - ./conf/config.yaml:/openair-nrf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.130
+
+    oai-amf:
+        container_name: "oai-amf"
+        image: oaisoftwarealliance/oai-amf:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+            - 38412/sctp
+        volumes:
+            - ./conf/config.yaml:/openair-amf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - mysql
+            - oai-nrf
+            - oai-ausf
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.132
+
+    oai-lmf:
+        container_name: "oai-lmf"
+        image: oaisoftwarealliance/oai-lmf:develop
+        expose:
+            - 80/tcp
+            - 8080/tcp
+        volumes:
+            - ./conf/config.yaml:/openair-lmf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - mysql
+            - oai-nrf
+            - oai-amf
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.141
+
+    oai-smf:
+        container_name: "oai-smf"
+        image: oaisoftwarealliance/oai-smf:v2.2.1
+        expose:
+            - 80/tcp
+            - 8080/tcp
+            - 8805/udp
+        volumes:
+            - ./conf/config.yaml:/openair-smf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - oai-nrf
+            - oai-amf
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.133
+
+    oai-upf:
+        container_name: "oai-upf"
+        image: oaisoftwarealliance/oai-upf:v2.2.1
+        expose:
+            - 2152/udp
+            - 8805/udp
+        volumes:
+            - ./conf/config.yaml:/openair-upf/etc/config.yaml
+        environment:
+            - TZ=Europe/Paris
+        depends_on:
+            - oai-nrf
+            - oai-smf
+        cap_add:
+            - NET_ADMIN
+            - SYS_ADMIN
+        cap_drop:
+            - ALL
+        privileged: true
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.134
+
+    oai-ext-dn:
+        privileged: true
+        init: true
+        container_name: oai-ext-dn
+        image: oaisoftwarealliance/trf-gen-cn5g:latest
+        entrypoint: /bin/bash -c \
+              "ip route add 10.0.0.0/16 via 192.168.70.134 dev eth0; ip route; sleep infinity"
+        command: ["/bin/bash", "-c", "trap : SIGTERM SIGINT; sleep infinity & wait"]
+        healthcheck:
+            test: /bin/bash -c "ip r | grep 10.0.0"
+            interval: 5s
+            timeout: 2s
+            retries: 10
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.135
+
+    # --- RAN / vrtsim services ---
+
+    cir-generator:
+        image: oaisoftwarealliance/cir-generator:v0.0.1
+        environment:
+            GENERATOR_ARGS: "--antennas 1x8 --models TDL-A --delay-spreads 10 --speeds 1.5"
+            OUTPUT: "--out /opt/output/cir_db.bin"
+        volumes:
+            - cirdb_data:/opt/output
+
+    oai-gnb:
+        image: ${REGISTRY-oaisoftwarealliance/}${GNB_IMG:-oai-gnb}:${TAG:-develop}
+        container_name: rfsim5g-oai-gnb
+        cap_add:
+            - SYS_NICE
+        cap_drop:
+            - ALL
+        environment:
+            USE_ADDITIONAL_OPTIONS: --gNBs.[0].min_rxtxtime 3 --device.name vrtsim
+                                    --vrtsim.role server
+                                    --vrtsim.timescale 0.1 --log_config.global_log_options level,nocolor,time
+        volumes:
+            - ../../conf_files/gnb.sa.band78.106prb.vrtsim.positioning.conf:/opt/oai-gnb/etc/gnb.conf
+            - tmp_data:/tmp/
+        depends_on:
+            - oai-ext-dn
+        healthcheck:
+            test: /bin/bash -c "pgrep nr-softmodem"
+            interval: 10s
+            timeout: 5s
+            start_period: 10s
+            start_interval: 500ms
+            retries: 5
+        ipc: host
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.140
+
+    oai-nr-ue:
+        image: ${REGISTRY-oaisoftwarealliance/}${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+        container_name: rfsim5g-oai-nr-ue
+        cap_drop:
+            - ALL
+        cap_add:
+            - NET_ADMIN  # for interface bringup
+            - NET_RAW    # for ping
+            - SYS_NICE
+        environment:
+            USE_ADDITIONAL_OPTIONS: -C 3619200000 -r 106 --numerology 1 --ssb 516 --band 78 --device.name vrtsim
+                                    --vrtsim.role client --vrtsim.cirdb 1 --uicc0.imsi 001010000000001
+                                    --vrtsim.cirdb_yaml /opt/output/cir_db.yaml
+                                    --vrtsim.cirdb_file /opt/output/cir_db.bin
+        depends_on:
+            cir-generator:
+                condition: service_completed_successfully
+            oai-gnb:
+                condition: service_healthy
+        devices:
+             - /dev/net/tun:/dev/net/tun
+        volumes:
+            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+            - cirdb_data:/opt/output
+            - tmp_data:/tmp/
+        healthcheck:
+            test: /bin/bash -c "pgrep nr-uesoftmodem"
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+            start_interval: 500ms
+        ipc: host
+        networks:
+            public_net:
+                ipv4_address: 192.168.70.142
+
+volumes:
+    tmp_data:
+    cirdb_data:
+
+networks:
+    public_net:
+        driver: bridge
+        name: oai-cn5g-public-net
+        ipam:
+            config:
+                - subnet: 192.168.70.128/26
+        driver_opts:
+            com.docker.network.bridge.name: "oai-cn5g"

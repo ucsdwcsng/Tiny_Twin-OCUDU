@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+.version increased:
+  stage: ci
+  image:
+    name: alpine/git:v2.49.1
+    entrypoint: ["/bin/sh", "-c"]
+  variables:
+    FILE_PATH: ""
+    VARIABLE_NAME: ""
+  script:
+    - UNSHALLOW=$([ "$(git rev-parse --is-shallow-repository)" = "true" ] && echo --unshallow || true)
+    - git fetch $UNSHALLOW origin $CI_MERGE_REQUEST_TARGET_BRANCH_NAME $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+    - NEW_VERSION=$(grep "$VARIABLE_NAME" "$FILE_PATH" | cut -d'"' -f2)
+    - export NEW_VERSION
+    - |
+      git checkout $CI_MERGE_REQUEST_DIFF_BASE_SHA
+      if ! grep -q "$VARIABLE_NAME" "$FILE_PATH"; then
+          exit 0
+      fi
+    - OLD_VERSION=$(grep "$VARIABLE_NAME" "$FILE_PATH" | cut -d'"' -f2)
+    - export OLD_VERSION
+    - |
+      echo "OLD version: $OLD_VERSION -- NEW version: $NEW_VERSION"
+    - |
+      if [ "$NEW_VERSION" = "$OLD_VERSION" ]; then
+          echo "ERROR: Version not changed."
+          exit 1
+      elif [ "$(printf '%s\n' "$OLD_VERSION" "$NEW_VERSION" | sort -V | tail -1)" != "$NEW_VERSION" ]; then
+          echo "ERROR: Version decreased."
+          exit 1
+      fi
+      echo "Version increased correctly."

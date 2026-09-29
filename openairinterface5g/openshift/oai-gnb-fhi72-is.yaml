@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+    name: oai-gnb-fhi72
+    namespace: oaicicd-ran
+spec:
+  lookupPolicy:
+    local: true

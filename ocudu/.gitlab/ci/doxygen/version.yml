@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+variables:
+  DOXYGEN_VERSION: "Release_1_9_8"
+  PLANTUML_VERSION: "1.2023.7"

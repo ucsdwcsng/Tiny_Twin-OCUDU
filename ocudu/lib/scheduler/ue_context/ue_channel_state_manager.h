@@ -1,0 +1,132 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ocudulog/logger.h"
+#include "ocudu/ran/csi_report/csi_report_data.h"
+#include "ocudu/ran/pusch/pusch_tpmi_select.h"
+#include "ocudu/ran/srs/srs_channel_matrix.h"
+#include "ocudu/ran/srs/srs_configuration.h"
+#include "ocudu/scheduler/config/scheduler_expert_config.h"
+#include "ocudu/scheduler/result/pdsch_info.h"
+#include "ocudu/support/math/exponential_averager.h"
+
+namespace ocudu {
+
+/// \brief This classes manages all the information related with the channel state that has been received from the UE
+/// via CSI (e.g. CQI) or via gNB PHY measurements (e.g. UL SINR).
+class ue_channel_state_manager
+{
+public:
+  ue_channel_state_manager(const scheduler_ue_expert_config& expert_cfg_, unsigned nof_dl_ports_);
+
+  const std::optional<csi_report_data>& get_latest_csi_report() const { return latest_csi_report; }
+
+  const std::optional<pusch_tpmi_select_info>& get_latest_tpmi_select_info() const
+  {
+    return last_pusch_tpmi_select_info;
+  }
+
+  void update_pusch_snr(float snr_db);
+
+  /// \brief Get PUSCH SNR in dB.
+  float get_pusch_snr() const { return pusch_snr_db; }
+
+  /// \brief Get average PUSCH SNR in dB.
+  float get_pusch_average_sinr() const { return average_pusch_sinr_dB.average(); }
+
+  csi_report_wideband_cqi_type get_wideband_cqi() const { return wideband_cqi; }
+
+  /// \brief Gets the number of recommended layers to be used in DL based on reported RI.
+  unsigned get_nof_dl_layers() const { return recommended_dl_layers; }
+
+  /// \brief Gets the number of recommended layers to be used in PUSCH based on the reported channel coefficients.
+  unsigned get_nof_ul_layers() const;
+
+  /// Gets the most suitable TPMI for a given number of layers.
+  unsigned get_recommended_pusch_tpmi(unsigned nof_layers) const;
+
+  /// \brief Fetches the precoding codebook to be used in DL based on reported PMI and the chosen nof layers.
+  std::optional<pdsch_precoding_info> get_precoding(unsigned chosen_nof_layers, unsigned nof_rbs) const
+  {
+    ocudu_assert(chosen_nof_layers <= nof_dl_ports, "Invalid number of layers chosen");
+    std::optional<pdsch_precoding_info> precoding_info;
+    if (nof_dl_ports <= 1) {
+      // In case of 1 DL port, no precoding is used.
+      return precoding_info;
+    }
+    precoding_info.emplace();
+    precoding_info->nof_rbs_per_prg = nof_rbs;
+    precoding_info->prg_infos.emplace_back(recommended_prg_info[nof_layers_to_index(chosen_nof_layers)]);
+    return precoding_info;
+  }
+
+  /// Update UE with the latest CSI report for a given cell.
+  bool handle_csi_report(const csi_report_data& csi_report);
+
+  /// Update UE with the latest Sounding Reference Signal (SRS) channel matrix.
+  void update_srs_channel_matrix(const srs_channel_matrix& channel_matrix, tx_scheme_codebook codebook_cfg);
+
+  /// Checks if an aperiodic CSI report can be scheduled in the given PUSCH slot.
+  bool is_aperiodic_csi_allowed(slot_point pusch_slot, unsigned aperiodic_csi_prohibit_time_slots) const
+  {
+    if (not last_aperiodic_csi_slot.valid()) {
+      return true;
+    }
+    return pusch_slot > last_aperiodic_csi_slot and
+           (pusch_slot - last_aperiodic_csi_slot) >= static_cast<int>(aperiodic_csi_prohibit_time_slots);
+  }
+
+  /// Records the slot of the latest scheduled aperiodic CSI report.
+  void on_scheduled_aperiodic_csi_pusch(slot_point pusch_slot) { last_aperiodic_csi_slot = pusch_slot; }
+
+  void on_scheduled_aperiodic_srs(slot_point srs_slot) { last_aperiodic_srs_slot = srs_slot; }
+
+  /// Slot of the latest aperiodic SRS report scheduled.
+  slot_point last_aperiodic_srs_slot;
+
+private:
+  /// \brief Number of indexes -> nof_layers for precoding (Options: 1, 2, 3, 4 layers).
+  static constexpr size_t NOF_LAYER_CHOICES = 4;
+
+  /// Mapping of number of layers to array index.
+  static size_t nof_layers_to_index(unsigned nof_layers) { return nof_layers - 1U; }
+
+  /// \brief Number of DL ports.
+  unsigned nof_dl_ports;
+
+  /// Estimated PUSCH SNR, in dB.
+  float pusch_snr_db;
+
+  /// Time-averaged PUSCH SINR, in dB.
+  exp_average_fast_start<float> average_pusch_sinr_dB;
+
+  /// \brief Recommended CQI to be used to derive the DL MCS.
+  csi_report_wideband_cqi_type wideband_cqi;
+
+  const srs_periodicity srs_prohibit_window;
+
+  /// \brief Recommended nof layers based on reports.
+  unsigned recommended_dl_layers = 1;
+
+  /// \brief List of Recommended PMIs for different number of active layers. Position n is for layer n+1.
+  static_vector<pdsch_precoding_info::prg_info, NOF_LAYER_CHOICES> recommended_prg_info;
+
+  /// Latest CSI report received from the UE.
+  std::optional<csi_report_data> latest_csi_report;
+
+  /// Slot of the latest aperiodic CSI report scheduled.
+  slot_point last_aperiodic_csi_slot;
+
+  /// \brief Latest PUSCH Transmit Precoding Matrix Indication (TPMI) information.
+  ///
+  /// The TPMI selection information is calculated assuming a noise variance equal to the square of channel coefficients
+  /// matrix Frobenius norm. See \ref get_pusch_tpmi_select_info for more information.
+  ///
+  /// Set to \c std::nullopt if no SRS channel coefficients have been reported.
+  std::optional<pusch_tpmi_select_info> last_pusch_tpmi_select_info;
+};
+
+} // namespace ocudu

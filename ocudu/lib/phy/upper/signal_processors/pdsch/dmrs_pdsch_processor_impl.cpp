@@ -1,0 +1,234 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "dmrs_pdsch_processor_impl.h"
+#include "../dmrs_helper.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/ocuduvec/copy.h"
+#include "ocudu/ocuduvec/sc_prod.h"
+#include "ocudu/phy/support/re_pattern.h"
+#include "ocudu/phy/support/resource_grid_mapper.h"
+
+using namespace ocudu;
+
+/// Resource element allocation patterns within a resource block for PDSCH DM-RS type 1.
+static const re_prb_mask& get_re_mask(dmrs_config_type type, unsigned cdm_group_id)
+{
+  ocudu_assert(type != dmrs_config_type::not_set, "Invalid DM-RS type.");
+
+  static constexpr unsigned MAX_CDM_GROUPS_TYPE1 = 2;
+  static constexpr unsigned MAX_CDM_GROUPS_TYPE2 = 3;
+
+  static constexpr std::array<re_prb_mask, MAX_CDM_GROUPS_TYPE1> re_mask_type1 = {
+      {{true, false, true, false, true, false, true, false, true, false, true, false},
+       {false, true, false, true, false, true, false, true, false, true, false, true}}};
+
+  static constexpr std::array<const re_prb_mask, MAX_CDM_GROUPS_TYPE2> re_mask_type2 = {
+      {{true, true, false, false, false, false, true, true, false, false, false, false},
+       {false, false, true, true, false, false, false, false, true, true, false, false},
+       {false, false, false, false, true, true, false, false, false, false, true, true}}};
+
+  return (type == dmrs_config_type::type1) ? re_mask_type1[cdm_group_id] : re_mask_type2[cdm_group_id];
+}
+
+void ocudu::dmrs_pdsch_processor_impl::sequence_generation(span<cf_t>      sequence,
+                                                           unsigned        symbol,
+                                                           const config_t& config) const
+{
+  // Get signal amplitude.
+  float amplitude = M_SQRT1_2 * config.amplitude;
+
+  // Extract parameters to calculate the PRG initial state.
+  unsigned nslot    = config.slot.slot_index();
+  unsigned nidnscid = config.scrambling_id;
+  unsigned nscid    = config.n_scid ? 1 : 0;
+  unsigned nsymb    = get_nsymb_per_slot(cyclic_prefix::NORMAL);
+
+  // Calculate initial sequence state.
+  unsigned c_init = ((nsymb * nslot + symbol + 1) * (2 * nidnscid + 1) * pow2(17) + (2 * nidnscid + nscid)) % pow2(31);
+
+  // Initialize sequence.
+  prg->init(c_init);
+
+  // Generate sequence.
+  dmrs_sequence_generate(
+      sequence, *prg, amplitude, config.reference_point_k_rb, get_nof_re_per_prb(config.type), config.rb_mask);
+}
+
+void dmrs_pdsch_processor_impl::apply_cdm(span<cf_t>       sequence,
+                                          span<const cf_t> base_sequence,
+                                          unsigned         dmrs_port,
+                                          unsigned         symbol,
+                                          const config_t&  config)
+{
+  // Set l_prime to 1 if the symbol follows another one.
+  unsigned l_prime = 0;
+  if (symbol != 0) {
+    l_prime = config.symbols_mask.test(symbol - 1) ? 1 : 0;
+  }
+
+  // Apply CDM to DM-RS ports other than port zero.
+  dmrs_pxsch_parameters params = get_pxsch_dmrs_params(config.type, dmrs_port);
+
+  // If no weights are applied, copy the original sequence.
+  if ((params.w_t[l_prime] == +1.0F) && (params.w_f[0] == params.w_f[1])) {
+    ocuduvec::copy(sequence, base_sequence);
+    return;
+  }
+
+  // Apply w_t weight can be +1 or -1 depending on l_prime and port.
+  if (params.w_t[l_prime] != +1.0F) {
+    ocuduvec::sc_prod(sequence, base_sequence, -1);
+  } else {
+    ocuduvec::copy(sequence, base_sequence);
+  }
+
+  // Apply w_f weight. It can be {+1, +1} or {+1, -1} depending on l_prime and port. On the first case, no operation
+  // is required. On the second case, RE with odd sequence indices are multiplied by -1.
+  if (params.w_f[0] != params.w_f[1]) {
+    for (unsigned i_re = 1, nof_re_symbol = sequence.size(); i_re < nof_re_symbol; i_re += 2) {
+      sequence[i_re] *= -1;
+    }
+  }
+}
+
+void ocudu::dmrs_pdsch_processor_impl::map(resource_grid_writer& grid, const config_t& config)
+{
+  // Number of DM-RS RE in an OFDM symbol.
+  unsigned nof_dmrs_re_symbol = get_nof_re_per_prb(config.type) * config.rb_mask.count();
+
+  // Number of DM-RS RE in the entire slot.
+  unsigned nof_dmrs_re_slot = nof_dmrs_re_symbol * config.symbols_mask.count();
+
+  // Precoding and beamforming of the transmission.
+  const precoding_beamforming_configuration& precoding = config.precoding_and_beamforming;
+
+  // Number of logical DM-RS ports. It is equivalent to the number of PDSCH transmit layers.
+  unsigned nof_dmrs_ports = precoding.get_nof_layers();
+
+  // Number of beams that carry the transmission.
+  unsigned nof_beams = precoding.get_nof_beams();
+
+  // Number of grid OFDM symbols.
+  unsigned nof_symbols = config.symbols_mask.size();
+
+  // CDM group size in number of DM-RS ports.
+  const unsigned cdm_group_size = (nof_dmrs_ports > 4) ? 4 : 2;
+
+  // Calculate number of CDM groups.
+  unsigned nof_cdm_groups = divide_ceil(nof_dmrs_ports, cdm_group_size);
+
+  // List of DM-RS port identifiers per CDM group, as per TS38.211 Table 7.4.1.1.2-1.
+  static constexpr std::array<std::array<uint8_t, 4>, 2> dmrs_cdm_ports = {{
+      {0, 1, 4, 5},
+      {2, 3, 6, 7},
+  }};
+
+  // Iterate each CDM group.
+  for (unsigned i_cdm_group = 0; i_cdm_group != nof_cdm_groups; ++i_cdm_group) {
+    // Number of DM-RS ports belonging to the current CDM group.
+    unsigned nof_dmrs_ports_cdm = std::min(cdm_group_size, nof_dmrs_ports - (cdm_group_size * i_cdm_group));
+
+    // Resize RE buffer where the DM-RS RE are stored.
+    temp_re.resize(nof_dmrs_ports_cdm, nof_dmrs_re_slot);
+
+    // Prepare the precoding and beamforming configuration of the CDM group.
+    precoding_beamforming_configuration cdm_group_precoding(
+        nof_dmrs_ports_cdm, nof_beams, precoding.get_nof_prg(), precoding.get_prg_size());
+
+    // For each symbol in the slot....
+    unsigned i_gen_dmrs_symbols = 0;
+    for (unsigned i_symbol = 0; i_symbol != nof_symbols; ++i_symbol) {
+      // Skip symbol if it is not selected.
+      if (!config.symbols_mask.test(i_symbol)) {
+        continue;
+      }
+
+      // Buffer to hold the DM-RS sequence.
+      span<cf_t> base_sequence = temp_re.get_slice(0).subspan(i_gen_dmrs_symbols, nof_dmrs_re_symbol);
+
+      // Generate sequence for the given symbol.
+      sequence_generation(base_sequence, i_symbol, config);
+
+      // Advance view.
+      i_gen_dmrs_symbols += nof_dmrs_re_symbol;
+    }
+
+    ocudu_assert((i_gen_dmrs_symbols == nof_dmrs_re_slot),
+                 "The number of generated DM-RS symbols (i.e., {}) does not match the expected (i.e., {})",
+                 i_gen_dmrs_symbols,
+                 nof_dmrs_re_slot);
+
+    // Set DM-RS allocation pattern of the CDM group.
+    re_pattern dmrs_pattern_cdm;
+    dmrs_pattern_cdm.crb_mask = config.rb_mask;
+    dmrs_pattern_cdm.symbols  = config.symbols_mask;
+    dmrs_pattern_cdm.re_mask  = get_re_mask(config.type, i_cdm_group);
+
+    // Iterate each port within the CDM group
+    for (unsigned i_cdm_port = 0; i_cdm_port != nof_dmrs_ports_cdm; ++i_cdm_port) {
+      // Current DM-RS port.
+      unsigned i_dmrs_port = dmrs_cdm_ports[i_cdm_group][i_cdm_port];
+
+      // Skip CDM weights for first DM-RS port.
+      if (i_dmrs_port == 0) {
+        continue;
+      }
+
+      // Apply CDM weights for each symbol.
+      unsigned nof_proc_re_cdm = 0;
+      for (unsigned i_symbol = 0; i_symbol != nof_symbols; ++i_symbol) {
+        // Skip symbol if it is not selected.
+        if (!config.symbols_mask.test(i_symbol)) {
+          continue;
+        }
+
+        // Get view of the base DM-RS sequence.
+        span<const cf_t> base_sequence = temp_re.get_slice(0).subspan(nof_proc_re_cdm, nof_dmrs_re_symbol);
+
+        // Get view of the CDM sequence destination.
+        span<cf_t> sequence = temp_re.get_slice(i_cdm_port).subspan(nof_proc_re_cdm, nof_dmrs_re_symbol);
+
+        // Apply the CDM codes.
+        apply_cdm(sequence, base_sequence, i_dmrs_port, i_symbol, config);
+
+        // Advance view.
+        nof_proc_re_cdm += nof_dmrs_re_symbol;
+      }
+
+      ocudu_assert((nof_proc_re_cdm == i_gen_dmrs_symbols),
+                   "The length of the CDM-coded DM-RS (i.e., {}) for DM-RS port {} does not match the DM-RS sequence "
+                   "length (i.e., {})",
+                   nof_proc_re_cdm,
+                   i_dmrs_port,
+                   i_gen_dmrs_symbols);
+    }
+
+    // Extract the precoding and beamforming of the CDM group ports for each PRG.
+    for (unsigned i_prg = 0, i_prg_end = precoding.get_nof_prg(); i_prg != i_prg_end; ++i_prg) {
+      const precoding_beamforming_composite& prg_composite = precoding.get_prg(i_prg);
+
+      // The MIMO precoding matrix of the CDM group contains the rows of the DM-RS ports within the group.
+      precoding_weight_matrix cdm_precoding(nof_dmrs_ports_cdm, nof_beams);
+      for (unsigned i_cdm_port = 0; i_cdm_port != nof_dmrs_ports_cdm; ++i_cdm_port) {
+        // Current DM-RS port, which is the layer of the transmission precoding.
+        unsigned i_dmrs_port = dmrs_cdm_ports[i_cdm_group][i_cdm_port];
+
+        for (unsigned i_beam = 0; i_beam != nof_beams; ++i_beam) {
+          // Extract the coefficient for mapping the DM-RS port to the beam.
+          cf_t coefficient = prg_composite.mimo.get_coefficient(i_dmrs_port, i_beam);
+
+          // Set coefficient in the CDM group precoding.
+          cdm_precoding.set_coefficient(coefficient, i_cdm_port, i_beam);
+        }
+      }
+
+      // The CDM group ports are carried by the beams of the transmission.
+      cdm_group_precoding.set_prg({cdm_precoding, prg_composite.beams}, i_prg);
+    }
+
+    // Map the CDM group symbols into the resource grid.
+    mapper->map(grid, temp_re, dmrs_pattern_cdm, cdm_group_precoding);
+  }
+}

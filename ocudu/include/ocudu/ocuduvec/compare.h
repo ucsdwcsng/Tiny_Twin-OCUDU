@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/ocuduvec/type_traits.h"
+#include "ocudu/ocuduvec/types.h"
+
+namespace ocudu {
+namespace ocuduvec {
+
+namespace detail {
+const char* find(span<const char> input, const char* value);
+}
+
+template <typename T1, typename T2>
+bool equal(const T1& s1, const T2& s2)
+{
+  static_assert(is_span_compatible<T1>::value, "Template type is not compatible with a span");
+  static_assert(is_span_compatible<T2>::value, "Template type is not compatible with a span");
+  ocudu_ocuduvec_assert_size(s1, s2);
+
+  return std::equal(s1.begin(), s1.end(), s2.begin(), s2.end());
+}
+
+/// \brief Finds the first value in \c input that is equal to \c value.
+///
+/// The implementation is equivalent to:
+/// \code
+/// const T* find(span<const T> input, T value) {
+///   return std::find(input.begin(), input.end(), value);
+/// }
+/// \endcode
+///
+/// \tparam T Any data type that is one byte wide.
+/// \param[in] input Input values.
+/// \param[in] value Value to find.
+/// \return The pointer to the first element that is equal to \c value if any, \c input.end() otherwise.
+template <typename T>
+const T* find(span<const T> input, T value)
+{
+  static_assert(sizeof(T) == 1, "The datatype must be one byte wide.");
+  return reinterpret_cast<const T*>(
+      detail::find(span<const char>(reinterpret_cast<const char*>(input.data()), input.size()),
+                   reinterpret_cast<const char*>(&value)));
+}
+
+/// \brief Finds the maximum absolute value in a complex span.
+///
+/// In case two elements have the same absolute value, the one with lowest index is selected.
+///
+/// The implementation is equivalent to:
+/// \code
+///  std::pair<unsigned, float> max_abs_element(span<const cf_t> x) {
+///    const cf_t* it = std::max_element(x.begin(), x.end(), [](cf_t a, cf_t b){ return (abs_sq(a) < abs_sq(b)); });
+///    return {static_cast<unsigned>(it - x.begin()), abs_sq(*it)};
+///  }
+/// \endcode
+///
+/// \param[in] x Input samples.
+/// \return A pair comprising the index and the squared modulo of the maximum element.
+std::pair<unsigned, float> max_abs_element(span<const cf_t> x);
+
+/// \brief Finds the maximum absolute value in a complex 16-bit integer span.
+///
+/// The returned squared magnitude is normalized by \c scale, i.e. it matches \ref max_abs_element applied to the
+/// samples converted to complex float using the same scaling factor.
+///
+/// \param[in] x      Input samples.
+/// \param[in] scale  Conversion scaling factor.
+/// \return A pair comprising the index and the squared modulo of the maximum element.
+std::pair<unsigned, float> max_abs_element(span<const ci16_t> x, float scale);
+
+/// \brief Finds the maximum value in a real span.
+///
+/// In case two elements have the same value, the one with lowest index is selected.
+///
+/// The implementation is equivalent to:
+/// \code
+///  std::pair<unsigned, float> max_element(span<const float> x) {
+///    const float* it = std::max_element(x.begin(), x.end());
+///    return {static_cast<unsigned>(it - x.begin()), *it};
+///  }
+/// \endcode
+///
+/// \param[in] x Input samples.
+/// \return A pair comprising the index and the value of the maximum element.
+std::pair<unsigned, float> max_element(span<const float> x);
+
+/// \brief Counts the number of samples that have a part that exceeds the given threshold.
+///
+/// The implementation is equivalent to:
+/// \code
+///  unsigned count_if_part_abs_greater_than(span<const cf_t> x, float threshold) {
+///   return std::count_if(channel_buffer.begin(), channel_buffer.end(), [threshold](cf_t sample) {
+///     return (std::abs(sample.real()) > threshold) || (std::abs(sample.imag()) > threshold);
+///   });
+/// }
+/// \endcode
+///
+/// \param[in] x         Samples.
+/// \param[in] threshold Detection threshold.
+/// \return The number of samples that have a part that exceeds the threshold.
+unsigned count_if_part_abs_greater_than(span<const cf_t> x, float threshold);
+
+/// \brief Counts the number of samples that have a part that exceeds the given normalized threshold.
+///
+/// The threshold is expressed in the same normalized units as for complex float samples in \f$[-1, 1]\f$. Each sample
+/// part is compared against <tt>normalized_part_threshold * scale</tt>.
+///
+/// \param[in] x                         Samples.
+/// \param[in] normalized_part_threshold Detection threshold.
+/// \param[in] scale                     Conversion scaling factor.
+/// \return The number of samples that have a part that exceeds the threshold.
+unsigned count_if_part_abs_greater_than(span<const ci16_t> x, float normalized_part_threshold, float scale);
+
+} // namespace ocuduvec
+} // namespace ocudu

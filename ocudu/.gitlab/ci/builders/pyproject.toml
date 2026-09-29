@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+atomic = true
+combine_as_imports = true
+float_to_top = true
+force_alphabetical_sort_within_sections = true
+include_trailing_comma = true
+line_length = 120
+profile = "black"
+remove_redundant_aliases = true
+
+[tool.mypy]
+ignore_missing_imports = true
+install_types = true
+non_interactive = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pylint]
+disable = ["import-error"]
+ignore-signatures = true
+max-line-length = 120
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+minversion = 4.4.0
+envlist = 
+  format
+  lint
+  type
+
+[testenv:format]
+skip_install = true
+deps =
+  black
+  isort
+commands =
+  black .
+  isort .
+
+[testenv:lint]
+skip_install = true
+deps =
+  pylint
+commands =
+  pylint *.py
+
+[testenv:type]
+skip_install = true
+deps = 
+  mypy
+commands = 
+  mypy .
+"""

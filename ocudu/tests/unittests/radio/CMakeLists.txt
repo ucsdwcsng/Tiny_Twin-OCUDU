@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+add_subdirectory(realtime_loopback)
+
+if (ZEROMQ_FOUND AND ENABLE_ZEROMQ)
+    add_subdirectory(zmq)
+endif (ZEROMQ_FOUND AND ENABLE_ZEROMQ)
+
+if (Sidekiq_FOUND AND ENABLE_SIDEKIQ)
+    add_subdirectory(sidekiq)
+endif (Sidekiq_FOUND AND ENABLE_SIDEKIQ)
+
+if (ENABLE_DIFI)
+    add_subdirectory(difi)
+endif (ENABLE_DIFI)

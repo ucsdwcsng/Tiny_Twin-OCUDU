@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT
+
+services:
+    dpdk-init:
+        image: docker.io/library/oai-dpdk-init:latest
+        network_mode: host
+        container_name: dpdk-init
+        entrypoint: "/tmp/setup_sriov.sh"
+        privileged: true
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ./setup_sriov_dummy.sh:/tmp/setup_sriov.sh
+            - /lib/modules:/lib/modules
+            - /usr/lib/modules:/usr/lib/modules
+    oai-gnb:
+        image: ${REGISTRY-oaisoftwarealliance/}${GNB_IMG:-oai-gnb-fhi72}:${TAG:-develop}
+        container_name: oai-gnb-phytest
+        cap_add:
+            - IPC_LOCK
+            - SYS_NICE
+        cap_drop:
+            - ALL
+        environment:
+            USE_ADDITIONAL_OPTIONS: --phy-test -q -M 273 -m 27 -l 4 -D 231 -T 273 -t 16 -L 2 -U 528 --log_config.global_log_options level,nocolor,time --thread-pool 16,17,18,19,20,21,22,23
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ../../conf_files/gnb.band77.273prb.fhi72.4x4-vvdn-phytest.conf:/opt/oai-gnb/etc/gnb.conf
+            - /dev/hugepages:/dev/hugepages
+        cpuset: "8-23"
+        networks: ["public_net"]
+        depends_on:
+           dpdk-init:
+             condition: service_completed_successfully
+        healthcheck:
+            test: /bin/bash -c "pgrep nr-softmodem"
+            interval: 10s
+            timeout: 5s
+            retries: 5
+networks:
+    public_net:
+        driver: bridge
+        name: ci-physim
+        ipam:
+            config:
+                - subnet: 192.168.71.128/26
+        driver_opts:
+            com.docker.network.bridge.name: "ci-physim"

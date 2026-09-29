@@ -1,0 +1,186 @@
+name: Duranta Jenkins Dispatch
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [develop]
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: ${{ github.event_name }}-${{ github.event.action }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  verify-signed-commits:
+    runs-on: ubuntu-24.04
+
+    if: github.event_name == 'pull_request_target'
+
+    steps:
+      - name: Check all commits are signed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UNSIGNED=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits \
+            --paginate --jq '[.[] | select(.commit.verification.verified == false) | .sha[:7]] | join(", ")')
+
+          if [ -n "$UNSIGNED" ]; then
+            echo -e "$UNSIGNED commits are missing signature"
+            gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "$(cat <<EOF
+          **Validation:**
+          The following commit(s) are missing signature:
+
+          $UNSIGNED
+
+          Please use 'git commit -S' to sign your commits.
+          For detailed instructions, refer to the [CONTRIBUTING.md](https://github.com/duranta-project/openairinterface5g/blob/develop/CONTRIBUTING.md) file at the root of this repository or [GitHub Docs](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+          EOF
+          )"
+            exit 1
+          fi
+
+  check-labels:
+    needs: verify-signed-commits
+    runs-on: ubuntu-24.04
+
+    if: github.event_name == 'pull_request_target'
+
+    steps:
+      - name: Check for mandatory CI label
+        run: |
+          PR_LABELS=$(echo '${{ toJson(github.event.pull_request.labels) }}' | jq -r '.[].name')
+
+          for label in \
+            "${{ vars.BUILD_ONLY_LABEL }}" \
+            "${{ vars.DOC_LABEL }}" \
+            "${{ vars.NR_LABEL }}" \
+            "${{ vars.NRUE_LABEL }}" \
+            "${{ vars.LTE_LABEL }}" \
+            "${{ vars.CI_LABEL }}" \
+            "${{ vars.RETRIGGER_CI_LABEL }}"; do
+            if echo "$PR_LABELS" | grep -qxF "$label"; then
+              exit 0
+            fi
+          done
+
+          exit 1
+
+  detect-changes:
+    needs: check-labels
+    runs-on: ubuntu-24.04
+
+    if: |
+      always() && (
+        github.event_name == 'push' ||
+        needs.check-labels.result == 'success'
+      ) && (
+        github.event.action != 'labeled' ||
+        github.event.label.name == vars.RETRIGGER_CI_LABEL
+      )
+
+    outputs:
+      protected_files_changed: ${{ steps.filter.outputs.protected }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check changed files
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            protected:
+              - 'ci-scripts/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+              - 'docker/**'
+              - 'charts/**'
+              - 'openshift/**'
+              - 'cmake_targets/build_oai'
+              - 'cmake_targets/tools/build_helper'
+
+  require-maintainer-approval:
+    needs: detect-changes
+
+    if: |
+      always() &&
+      needs.detect-changes.outputs.protected_files_changed == 'true'
+    runs-on: ubuntu-24.04
+
+    environment:
+      name: ci-approval
+
+    steps:
+      - run: echo "Maintainer has approved the changes"
+
+  trigger-jenkins:
+    needs:
+      - check-labels
+      - detect-changes
+      - require-maintainer-approval
+
+    if: |
+      always() &&
+      (
+        needs.detect-changes.outputs.protected_files_changed == 'false' ||
+        needs.require-maintainer-approval.result == 'success'
+      )
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Trigger Jenkins
+        run: |
+          # Write payload to a temp file to avoid shell escaping issues
+          cat << 'EOF' > /tmp/payload.json
+          ${{ toJson(github.event) }}
+          EOF
+
+          # Filter and send
+          jq -c 'del(.pull_request.body)' /tmp/payload.json > /tmp/filtered_payload.json
+
+          # Remap pull_request_target -> pull_request for Jenkins compatibility
+          EVENT_NAME="${{ github.event_name }}"
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            EVENT_NAME="pull_request"
+          fi
+
+          curl -X POST "https://${{ secrets.J_USER }}:${{ secrets.J_PASS }}@${{ secrets.J_URL }}" \
+            -H "Accept: */*" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot/${{ secrets.H_AGENT }}" \
+            -H "X-Github-Delivery: ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-Github-Event: $EVENT_NAME" \
+            -H "X-Github-Hook-Id: ${{ secrets.H_ID }}" \
+            -H "X-Github-Hook-Installation-Target-Id: ${{ secrets.H_TARGET }}" \
+            -H "X-Github-Hook-Installation-Target-Type: repository" \
+            --data @/tmp/filtered_payload.json
+
+  cleanup:
+    needs:
+      - verify-signed-commits
+      - check-labels
+      - detect-changes
+      - require-maintainer-approval
+      - trigger-jenkins
+
+    if: always() && github.event_name == 'pull_request_target'
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Remove retrigger-ci label
+        run: |
+          PR_LABELS=$(echo '${{ toJson(github.event.pull_request.labels) }}' | jq -r '.[].name')
+          if echo "$PR_LABELS" | grep -qxF "${{ vars.RETRIGGER_CI_LABEL }}"; then
+            gh pr edit ${{ github.event.pull_request.number }} --remove-label "${{ vars.RETRIGGER_CI_LABEL }}" --repo ${{ github.repository }}
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

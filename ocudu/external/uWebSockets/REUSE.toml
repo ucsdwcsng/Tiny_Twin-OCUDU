@@ -1,0 +1,9 @@
+version = 1
+
+[[annotations]]
+path = [
+    "*.h",
+    "uSockets/**",
+]
+SPDX-FileCopyrightText = "2018-2021, Authored by Alex Hultman"
+SPDX-License-Identifier = "Apache-2.0"

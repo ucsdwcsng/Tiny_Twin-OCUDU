@@ -1,0 +1,33 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<!--
+/*!
+ * \brief: implementation of web interface frontend for oai
+ * \info component web interface implementation (works with info.component.ts)
+ */
+-->
+
+<div class="grid-container" > 
+  <mat-grid-list cols="1" rowHeight="15vh" >
+    <mat-grid-tile [colspan]="1" [rowspan]="6" >
+      <mat-card class="dashboard-card">	
+        <mat-card-header >
+          <mat-card-title>Connection info</mat-card-title>
+        </mat-card-header>
+        <mat-card-content class="dashboard-card-content">
+          <div *ngIf="infos$ | async as infos">
+            <div  class="infodiv" *ngFor="let info of infos">
+              <mat-form-field class="scrollablefield" >
+                <mat-label>{{ info.nameFC.value }}</mat-label>
+                <input matInput [formControl]="info.valueFC" [readonly]="!info.modifiableFC.value" />
+              </mat-form-field>
+              <button  mat-raised-button  color="primary"  (click)="onInfoSubmit(info)" *ngIf="info.modifiableFC.value" >
+                {{ info.btnTxtFC }}
+              </button>
+            </div>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </mat-grid-tile>
+  </mat-grid-list>
+</div>

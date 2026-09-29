@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+name: C/C++ CI
+on: push
+jobs:
+  x86_ubuntu_build:
+    name: Build on x86
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        compiler: [gcc]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.CI_TOKEN != '' && secrets.CI_TOKEN || github.token }}
+      - name: Install Dependencies
+        run: |
+          sudo docker/scripts/install_dependencies.sh
+      - name: Build OCUDU on x86 ${{ matrix.os }} with compiler ${{ matrix.compiler }}
+        run: |
+          docker/scripts/builder.sh -c ${{ matrix.compiler }} -m "-j$(nproc)" -DBUILD_TESTING=On .
+      - name: Run unit tests
+        run: |
+          cd build && ctest -j$(nproc) --schedule-random --output-on-failure

@@ -1,0 +1,440 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+/******************************************************************************
+ * Common security header - wraps ciphering/integrity check algorithms.
+ *****************************************************************************/
+
+#include "ocudu/adt/span.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/ran/pci.h"
+#include "ocudu/support/ocudu_assert.h"
+#include "fmt/format.h"
+#include <array>
+#include <cstdint>
+
+namespace ocudu::security {
+
+/// MAC-I length in bytes.
+constexpr uint32_t sec_mac_len = 4;
+
+/// Security Key length in bytes.
+constexpr uint32_t sec_key_len = 32;
+
+/// Security Key length in bytes (for 128 bit algorithms).
+constexpr uint32_t sec_128_key_len = 16;
+
+/// Maximum PDU length. This should not be smaller than maximum PDCP SDU size (9000).
+constexpr uint32_t sec_max_pdu_size = 9100;
+
+enum class ciphering_algorithm {
+  nea0 = 0,
+  nea1,
+  nea2,
+  nea3,
+};
+
+constexpr unsigned to_number(ciphering_algorithm ciph_algo)
+{
+  return static_cast<unsigned>(ciph_algo);
+}
+
+constexpr unsigned format_as(ciphering_algorithm ciph_algo)
+{
+  return to_number(ciph_algo);
+}
+
+constexpr ciphering_algorithm ciphering_algorithm_from_number(unsigned ciph_algo)
+{
+  ocudu_assert(ciph_algo < 4, "Error converting ciphering algorithm");
+  return static_cast<ciphering_algorithm>(ciph_algo);
+}
+
+enum class integrity_algorithm {
+  nia0 = 0,
+  nia1,
+  nia2,
+  nia3,
+};
+
+constexpr unsigned to_number(integrity_algorithm int_algo)
+{
+  return static_cast<unsigned>(int_algo);
+}
+
+constexpr unsigned format_as(integrity_algorithm int_algo)
+{
+  return to_number(int_algo);
+}
+
+constexpr integrity_algorithm integrity_algorithm_from_number(unsigned int_algo)
+{
+  ocudu_assert(int_algo < 4, "Error converting integrity algorithm");
+  return static_cast<integrity_algorithm>(int_algo);
+}
+
+/// FC Values.
+/// Ref: TS 33.501 Sec. A.1.2.
+enum class fc_value {
+  algorithm_key_derivation = 0x69, ///< Algorithm key derivation functions (Sec. A.8)
+  k_ng_ran_star_derivation = 0x70, ///< KNG-RAN* derivation function for target gNB (Sec. A.11)
+};
+
+constexpr uint8_t to_number(fc_value fc)
+{
+  return static_cast<uint8_t>(fc);
+}
+
+/// Security Algorithm Distinguisher.
+/// Ref: TS 33.501 Sec. A.8, Table A.8-1.
+enum class security_algo_distinguisher {
+  rrc_enc_alg = 0x03, ///< N-RRC-enc-alg
+  rrc_int_alg = 0x04, ///< N-RRC-int-alg
+  up_enc_alg  = 0x05, ///< N-UP-enc-alg
+  up_int_alg  = 0x06  ///< N-UP-int-alg
+};
+
+constexpr uint8_t to_number(security_algo_distinguisher algo)
+{
+  return static_cast<uint8_t>(algo);
+}
+
+enum class security_direction {
+  uplink   = 0,
+  downlink = 1,
+};
+
+constexpr uint8_t to_number(security_direction direction)
+{
+  return static_cast<uint8_t>(direction);
+}
+
+inline const char* format_as(security_direction dir)
+{
+  static constexpr const char* options[] = {"UL", "DL"};
+  return options[static_cast<unsigned>(dir)];
+}
+
+/// integrity/ciphering enabled.
+enum class integrity_enabled {
+  /// Integrity check is disabled.
+  off = 0,
+  /// Integrity check is enabled.
+  on = 1,
+  /// Integrity check is enabled but PDUs with zero-padded MAC-I are also permitted.
+  /// This mode is only applicable for UL SRB between security mode command and security mode complete.
+  smc_transition = 2
+};
+
+inline const char* format_as(integrity_enabled integrity_flag)
+{
+  static constexpr const char* options[] = {"off", "on", "smc_transition"};
+  return options[static_cast<unsigned>(integrity_flag)];
+}
+
+enum class ciphering_enabled { off = 0, on = 1 };
+
+inline const char* format_as(ciphering_enabled ciphering_flag)
+{
+  static constexpr const char* options[] = {"off", "on"};
+  return options[static_cast<unsigned>(ciphering_flag)];
+}
+
+/// Security state.
+/// Not enabled: No security applied.
+/// Partially enabled: Integrity protection is applied, but ciphering is not yet applied.
+///                    This is used during the security mode command procedure until the successful reception of the
+///                    security mode complete.
+/// Fully enabled: Both integrity protection and ciphering are applied.
+enum class security_state {
+  not_enabled       = 0,
+  partially_enabled = 1,
+  fully_enabled     = 2,
+};
+
+using sec_mac = std::array<uint8_t, sec_mac_len>;
+
+using sec_key     = std::array<uint8_t, sec_key_len>;
+using sec_128_key = std::array<uint8_t, sec_128_key_len>;
+
+/// Helper types to communicate the preferred algorithm list. NIA/NEA0...3.
+constexpr uint16_t nof_pref_algos    = 4;
+using preferred_integrity_algorithms = std::array<integrity_algorithm, nof_pref_algos>;
+using preferred_ciphering_algorithms = std::array<ciphering_algorithm, nof_pref_algos>;
+
+/// Helper types to communicate NIA/NEA1...3 support. Support of NEA/NIA0 is implicit.
+constexpr uint16_t nof_supported_algos = 3;
+using supported_algorithms             = std::array<bool, nof_supported_algos>;
+
+/// Security domain, whether applies to RRC or UP
+enum class sec_domain { rrc = 0, up = 1 };
+
+inline const char* format_as(sec_domain domain)
+{
+  static constexpr const char* options[] = {"RRC", "UP"};
+  return options[static_cast<unsigned>(domain)];
+}
+
+struct sec_128_as_config {
+  sec_domain domain;
+  /// Optional in E1AP, see TS 38.463 Sec. 9.4.5.
+  std::optional<sec_128_key> k_128_int;
+  sec_128_key                k_128_enc;
+  /// Optional in E1AP, see TS 38.463 Sec. 9.4.5.
+  std::optional<integrity_algorithm> integ_algo;
+  ciphering_algorithm                cipher_algo;
+
+  bool operator==(const sec_128_as_config& rhs) const
+  {
+    if (integ_algo != rhs.integ_algo) {
+      return false;
+    }
+    if (cipher_algo != rhs.cipher_algo) {
+      return false;
+    }
+    if (domain != rhs.domain) {
+      return false;
+    }
+    if (k_128_int != rhs.k_128_int) {
+      return false;
+    }
+    if (k_128_enc != rhs.k_128_enc) {
+      return false;
+    }
+    return true;
+  }
+};
+
+struct sec_as_config {
+  sec_domain domain;
+  /// Optional in E1AP, see TS 38.463 Sec. 9.4.5.
+  std::optional<sec_key> k_int;
+  sec_key                k_enc;
+  /// Optional in E1AP, see TS 38.463 Sec. 9.4.5.
+  std::optional<integrity_algorithm> integ_algo;
+  ciphering_algorithm                cipher_algo;
+};
+
+struct sec_selected_algos {
+  bool                algos_selected = false;
+  integrity_algorithm integ_algo;
+  ciphering_algorithm cipher_algo;
+};
+
+struct sec_as_keys {
+  sec_key k_rrc_int;
+  sec_key k_rrc_enc;
+  sec_key k_up_int;
+  sec_key k_up_enc;
+};
+
+using sec_short_mac_i = std::array<uint8_t, 2>;
+
+struct security_context {
+  ocudulog::basic_logger&        logger              = ocudulog::fetch_basic_logger("SEC");
+  security::sec_key              k                   = {};
+  uint8_t                        ncc                 = 0;
+  security::supported_algorithms supported_int_algos = {};
+  security::supported_algorithms supported_enc_algos = {};
+  sec_selected_algos             sel_algos           = {};
+  sec_as_keys                    as_keys             = {};
+  security_state                 state               = security_state::not_enabled;
+
+  security_context() = default;
+
+  security_context(const security_context& sec_ctxt) :
+    k(sec_ctxt.k),
+    ncc(sec_ctxt.ncc),
+    supported_int_algos(sec_ctxt.supported_int_algos),
+    supported_enc_algos(sec_ctxt.supported_enc_algos),
+    sel_algos(sec_ctxt.sel_algos),
+    as_keys(sec_ctxt.as_keys),
+    state(sec_ctxt.state)
+  {
+  }
+
+  security_context& operator=(const security_context& sec_ctxt)
+  {
+    if (this == &sec_ctxt) {
+      return *this;
+    }
+    k                   = sec_ctxt.k;
+    ncc                 = sec_ctxt.ncc;
+    supported_int_algos = sec_ctxt.supported_int_algos;
+    supported_enc_algos = sec_ctxt.supported_enc_algos;
+    sel_algos           = sec_ctxt.sel_algos;
+    as_keys             = sec_ctxt.as_keys;
+    state               = sec_ctxt.state;
+    return *this;
+  }
+
+  bool select_algorithms(preferred_integrity_algorithms pref_inte_list, preferred_ciphering_algorithms pref_ciph_list);
+  void generate_as_keys();
+  [[nodiscard]] sec_as_config     get_as_config(sec_domain domain) const;
+  [[nodiscard]] sec_128_as_config get_128_as_config(sec_domain domain) const;
+  void                            horizontal_key_derivation(pci_t target_pci, unsigned target_ssb_arfcn);
+};
+
+/******************************************************************************
+ * Helper Functions
+ *****************************************************************************/
+
+/// \brief Fill tailing bits of the last byte of a contiguous memory with zeros.
+/// \param[inout] data Pointer to the contiguous memory to operate on.
+/// \param[in]    length_bits Number of occupied bits in the whole memory buffer that shall not be zeroed.
+constexpr void zero_tailing_bits(uint8_t* data, uint32_t length_bits)
+{
+  uint8_t bits = (8 - (length_bits & 0x07)) & 0x07;
+  data[(length_bits + 7) / 8 - 1] &= (uint8_t)(0xff << bits);
+}
+
+/// \brief Fill tailing bits of a given byte with zeros.
+/// \param[inout] tail_byte Reference to the byte to operate on.
+/// \param[in]    length_bits Number of occupied bits in the tail_byte that shall not be zeroed.
+constexpr void zero_tailing_bits(uint8_t& tail_byte, uint8_t length_bits)
+{
+  uint8_t bits = (8 - (length_bits & 0x07)) & 0x07;
+  tail_byte &= (uint8_t)(0xff << bits);
+}
+
+/******************************************************************************
+ * Key Generation
+ *****************************************************************************/
+
+/// Generic key derivation function.
+/// Ref: TS 33.220 Sec. B.2.
+void generic_kdf(sec_key&                   key_out,
+                 const sec_key&             key_in,
+                 fc_value                   fc,
+                 const span<const uint8_t>& p0,
+                 const span<const uint8_t>& p1);
+
+/// Algorithm key derivation function (RRC).
+/// Ref: TS 33.501 Sec. A.8.
+void generate_k_rrc(sec_key&            k_rrc_enc,
+                    sec_key&            k_rrc_int,
+                    const sec_key&      k_gnb,
+                    ciphering_algorithm enc_alg_id,
+                    integrity_algorithm int_alg_id);
+
+/// Algorithm key derivation function (UP).
+/// Ref: TS 33.501 Sec. A.8.
+void generate_k_up(sec_key&            k_up_enc,
+                   sec_key&            k_up_int,
+                   const sec_key&      k_gnb,
+                   ciphering_algorithm enc_alg_id,
+                   integrity_algorithm int_alg_id);
+
+/// K_NG-RAN* derivation function for target gNB.
+/// Ref: TS 33.501 Sec. A.11.
+void generate_k_ng_ran_star(sec_key& k_star, const sec_key& k, const pci_t& target_pci_, uint32_t target_ssb_arfcn_);
+
+/// Truncate 256-bit key to 128-bit key using the least significant bits.
+/// Ref: TS 33.501 Sec. A.8.
+sec_128_key truncate_key(const sec_key& key_in);
+
+/// Truncate 256-bit keys to 128-bit keys using the least significant bits, on a given security context.
+sec_128_as_config truncate_config(const sec_as_config& cfg_in);
+
+} // namespace ocudu::security
+
+//
+// Formatters
+//
+namespace fmt {
+
+template <>
+struct formatter<ocudu::security::supported_algorithms> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(ocudu::security::supported_algorithms algos, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(), "N[I|E]A1={}, N[I|E]A2={}, N[I|E]A3={}", algos[0], algos[1], algos[2]);
+  }
+};
+
+template <>
+struct formatter<ocudu::security::preferred_integrity_algorithms> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::security::preferred_integrity_algorithms& algos, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(), "NIA{}, NIA{}, NIA{}, NIA{}", algos[0], algos[1], algos[2], algos[3]);
+  }
+};
+
+template <>
+struct formatter<ocudu::security::preferred_ciphering_algorithms> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::security::preferred_ciphering_algorithms& algos, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(), "NEA{}, NEA{}, NEA{}, NEA{}", algos[0], algos[1], algos[2], algos[3]);
+  }
+};
+
+template <>
+struct formatter<ocudu::security::sec_128_key> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::security::sec_128_key& key, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(), "\n\t{:02x}", fmt::join(key, " "));
+  }
+};
+
+template <>
+struct formatter<ocudu::security::sec_key> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::security::sec_key& key, FormatContext& ctx) const
+  {
+    format_to(ctx.out(), "\n\t{:02x}", fmt::join(key.begin(), key.begin() + 16, " "));
+    return format_to(ctx.out(), "\n\t{:02x}", fmt::join(key.begin() + 16, key.end(), " "));
+  }
+};
+
+template <>
+struct formatter<ocudu::security::sec_mac> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::security::sec_mac& mac, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(), "\n\t{:02x}", fmt::join(mac, " "));
+  }
+};
+
+} // namespace fmt

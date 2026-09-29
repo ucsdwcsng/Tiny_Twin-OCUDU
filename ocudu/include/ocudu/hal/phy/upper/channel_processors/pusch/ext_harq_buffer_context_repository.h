@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// \brief Repository to manage the run-time contents and status of an external HARQ buffer.
+
+#pragma once
+
+#include "ocudu/support/ocudu_assert.h"
+#include "ocudu/support/units.h"
+#include <vector>
+
+namespace ocudu {
+namespace hal {
+
+/// Fixed CB-offset increment used in the accelerator's HARQ memory.
+/// Note that it is assumed that the HARQ memory is organized in N slots of HARQ_INCR bytes.
+constexpr units::bytes HARQ_INCR{32768};
+
+/// External HARQ buffer context.
+struct ext_harq_buffer_context_entry {
+  /// HARQ soft-data length of the CB stored in that segment of the buffer.
+  unsigned soft_data_len = 0;
+  /// Flag indicating if the entry is empty or not.
+  bool empty = true;
+};
+
+/// Abstracted interfacing to bbdev-based hardware-accelerators.
+class ext_harq_buffer_context_repository
+{
+public:
+  /// Creates a harq buffer context repository.
+  /// \param[in] nof_codeblocks_    Indicates the number of codeblocks to store in the repository.
+  /// \param[in] ext_harq_buff_size Size of the external HARQ buffer (in bytes).
+  /// \param[in] debug_mode_        Requests to implement the debug mode (meant for unittesting).
+  explicit ext_harq_buffer_context_repository(unsigned nof_codeblocks_, uint64_t ext_harq_buff_size, bool debug_mode_) :
+    nof_codeblocks(nof_codeblocks_)
+  {
+    // Check if there is enough capacity in the external HARQ buffer (only if the hardware-accelerator embeds one).
+    uint64_t requested_size = static_cast<uint64_t>(nof_codeblocks_) * static_cast<uint64_t>(HARQ_INCR.value());
+    ocudu_assert(((requested_size <= ext_harq_buff_size) || (ext_harq_buff_size == 0)),
+                 "Requested size ({} bytes) for {} codeblocks exceeds external HARQ buffer capacity ({} bytes).",
+                 requested_size,
+                 nof_codeblocks_,
+                 ext_harq_buff_size);
+    repo.resize(nof_codeblocks);
+    debug_mode = debug_mode_;
+  }
+
+  /// Get the entry for the provided absolute codeblock identifier.
+  ext_harq_buffer_context_entry* get(unsigned absolute_codeblock_id, bool new_data)
+  {
+    ocudu_assert(absolute_codeblock_id < nof_codeblocks,
+                 "Absolute CB index {} out of bounds - HARQ buffer context has capacity for {} CBs.",
+                 absolute_codeblock_id,
+                 nof_codeblocks);
+    // Initialize the entry if not already created (or in first transmissions).
+    if (repo[absolute_codeblock_id].empty || new_data) {
+      repo[absolute_codeblock_id].soft_data_len = 0;
+      repo[absolute_codeblock_id].empty         = false;
+    }
+
+    return &repo[absolute_codeblock_id];
+  }
+
+  /// Free the entry reserved for the provided absolute codeblock identifier.
+  void free(unsigned absolute_codeblock_id)
+  {
+    ocudu_assert(absolute_codeblock_id < nof_codeblocks,
+                 "Absolute CB index {} out of bounds - HARQ buffer context has capacity for {} CBs.",
+                 absolute_codeblock_id,
+                 nof_codeblocks);
+    // Free the entry.
+    // Note that in debug mode, the entry won't be freed to enable HARQ unitesting.
+    if (!debug_mode) {
+      repo[absolute_codeblock_id].empty = true;
+    }
+  }
+
+private:
+  // HARQ buffer context repository.
+  std::vector<ext_harq_buffer_context_entry> repo;
+  // Number of codeblocks that can be stored in the repository.
+  unsigned nof_codeblocks;
+  // Enables an optional debug mode implementation.
+  bool debug_mode;
+};
+
+} // namespace hal
+} // namespace ocudu

@@ -1,0 +1,79 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../../cu_cp_impl_interface.h"
+#include "../../mobility_manager/mobility_manager_impl.h"
+#include "../../ue_manager/ue_manager_impl.h"
+#include "ocudu/cu_cp/cu_cp_intra_cu_ho_types.h"
+#include "ocudu/f1ap/cu_cp/f1ap_cu.h"
+#include "ocudu/support/async/async_task.h"
+
+namespace ocudu::ocucp {
+
+/// \brief Handles the handover of a UE between two different cells managed by the same CU.
+/// TODO Add seqdiag
+class intra_cu_handover_routine
+{
+public:
+  intra_cu_handover_routine(const cu_cp_intra_cu_handover_request& request_,
+                            const byte_buffer&                     target_cell_sib1_,
+                            f1ap_ue_context_manager&               source_du_f1ap_ue_ctxt_mng_,
+                            f1ap_ue_context_manager&               target_du_f1ap_ue_ctxt_mng_,
+                            cu_cp_impl_interface&                  cu_cp_handler_,
+                            ue_manager&                            ue_mng_,
+                            mobility_manager&                      mobility_mng_,
+                            ocudulog::basic_logger&                logger_);
+
+  void operator()(coro_context<async_task<cu_cp_intra_cu_handover_response>>& ctx);
+
+  static const char* name() { return "Intra CU Handover Routine"; }
+
+private:
+  bool        generate_ue_context_setup_request(f1ap_ue_context_setup_request&               setup_request,
+                                                const static_vector<srb_id_t, MAX_NOF_SRBS>& srbs,
+                                                const rrc_ue_transfer_context&               transfer_context,
+                                                bool                                         is_cho);
+  static void create_srb(cu_cp_ue* ue, srb_id_t srb_id);
+
+  bool add_security_context_to_bearer_context_modification(const ocudu::security::sec_as_config& security_cfg);
+
+  const cu_cp_intra_cu_handover_request request;
+  const byte_buffer                     target_cell_sib1;
+
+  cu_cp_ue* source_ue = nullptr; // Pointer to UE in the source DU
+  cu_cp_ue* target_ue = nullptr; // Pointer to UE in the target DU
+
+  rrc_ue_transfer_context source_rrc_context;
+
+  f1ap_ue_context_manager& source_du_f1ap_ue_ctxt_mng; // to trigger UE context modification at source DU
+  f1ap_ue_context_manager& target_du_f1ap_ue_ctxt_mng; // to trigger UE context creation at target DU
+  cu_cp_impl_interface&    cu_cp_handler;              // to trigger UE context transfer (if sucessful)
+  ue_manager&              ue_mng;                     // to remove UE context from source DU processor
+  mobility_manager&        mobility_mng;               // to notify metrics about handover execution
+  up_config_update         next_config;
+  ocudulog::basic_logger&  logger;
+
+  // (sub-)routine requests
+  f1ap_ue_context_setup_request            target_ue_context_setup_request;
+  f1ap_ue_context_modification_request     source_ue_context_mod_request;
+  rrc_reconfiguration_procedure_request    rrc_reconfig_args;
+  e1ap_bearer_context_modification_request bearer_context_modification_request;
+  f1ap_ue_context_release_command          ue_context_release_cmd; // If HO fails target UE context needs to be removed.
+  cu_cp_ue_context_release_command ue_context_release_command;     // After succesfull HO source UE needs to be removed.
+
+  // (sub-)routine results
+  cu_cp_intra_cu_handover_response      response_msg;
+  cu_cp_ue_index_t                      target_ue_index = cu_cp_ue_index_t::invalid;
+  f1ap_ue_context_setup_response        target_ue_context_setup_response;
+  f1ap_ue_context_modification_response source_ue_context_modification_response;
+  bool                                  rrc_reconfig_sent = false;
+
+  // CHO
+  bool                                    is_cho_preparation = false;
+  rrc_ue_handover_reconfiguration_context cho_cand_ctxt;
+};
+
+} // namespace ocudu::ocucp

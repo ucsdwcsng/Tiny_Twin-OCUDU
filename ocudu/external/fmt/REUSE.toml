@@ -1,0 +1,9 @@
+version = 1
+
+[[annotations]]
+path = [
+    "include/**",
+    "src/**",
+]
+SPDX-FileCopyrightText = "2012 - present, Victor Zverovich and {fmt} contributors"
+SPDX-License-Identifier = "MIT"

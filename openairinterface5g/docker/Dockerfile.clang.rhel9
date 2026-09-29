@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for RHEL9
+#
+#---------------------------------------------------------------------
+
+FROM ran-base:latest AS oai-clang
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+COPY . .
+
+#only install LLVM (clang, ...) for this container, the others don't need it
+RUN dnf install -y --allowerasing llvm-toolset
+
+#run build_oai to build the target image
+RUN /bin/sh oaienv && \
+    cd cmake_targets && \
+    mkdir -p log && \
+    export CC=/usr/bin/clang && \
+    export CXX=/usr/bin/clang++ && \
+    CFLAGS="-Werror" CXXFLAGS="-Werror -Wno-vla-cxx-extension" \
+      ./build_oai --phy_simulators --gNB --eNB --nrUE --UE \
+      --ninja --build-tool-opt -k10 \
+      --noavx512 -c

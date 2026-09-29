@@ -1,0 +1,109 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/phy/support/resource_grid.h"
+#include "ocudu/phy/support/resource_grid_context.h"
+#include "ocudu/phy/support/resource_grid_pool.h"
+#include "ocudu/phy/support/shared_resource_grid.h"
+#include "ocudu/support/synchronization/stop_event.h"
+#include "ocudu/support/tracing/event_tracing.h"
+#include <memory>
+#include <vector>
+
+namespace ocudu {
+
+class task_executor;
+
+/// \brief Resource grid state control.
+///
+/// This class controls the number of scopes in which a shared resource grid is present. Also, it guarantees that the
+/// resource grid is returned to the pool prior the destruction.
+class resource_grid_pool_wrapper : private shared_resource_grid::pool_interface
+{
+public:
+  /// Constructs a resource grid wrapper for the pool.
+  resource_grid_pool_wrapper(std::unique_ptr<resource_grid> grid_, task_executor* async_executor_) :
+    grid(std::move(grid_)), async_executor(async_executor_)
+  {
+    ocudu_assert(grid, "Invalid resource grid pointer.");
+  }
+
+  /// Forbid copy constructor.
+  resource_grid_pool_wrapper(const resource_grid_pool_wrapper& other) = delete;
+
+  /// Move constructor.
+  resource_grid_pool_wrapper(resource_grid_pool_wrapper&& other) :
+    grid(std::move(other.grid)), async_executor(other.async_executor)
+  {
+  }
+
+  /// \brief Try to reserve the resource grid.
+  ///
+  /// \return True if the resource grid is reserved successfully. Otherwise, false.
+  shared_resource_grid try_reserve(rt_stop_event_token token);
+
+private:
+  /// Reference counter value to indicate the availability of a resource grid.
+  static constexpr unsigned ref_counter_available = std::numeric_limits<unsigned>::max();
+
+  /// \brief Release resource grid.
+  ///
+  /// This method transitions the reference count from zero to available.
+  ///
+  /// \remark An assertion is triggered if the resource grid is present in any scope.
+  void release();
+
+  // See the shared_resource_grid::pool_interface interface for documentation.
+  void notify_release_scope() override;
+
+  // See the shared_resource_grid::pool_interface interface for documentation.
+  resource_grid& get() override;
+
+  /// Internal resource grid;
+  std::unique_ptr<resource_grid> grid;
+  /// Asynchronous task executor.
+  task_executor* async_executor;
+  /// \brief Internal resource grid scope count.
+  ///
+  /// A resource grid is available when the counter is equal to \c ref_counter_available.
+  std::atomic<unsigned> scope_count = ref_counter_available;
+  /// Signaling mechanism for safe stop.
+  rt_stop_event_token stop_token;
+};
+
+/// \brief Implements a resource grid pool.
+///
+/// It zeroes the resource grids asynchronously upon their scope release if it is given an asynchronous executor.
+/// Otherwise, it does not zero the resource grid.
+class resource_grid_pool_impl : public resource_grid_pool
+{
+public:
+  /// \brief Constructs a resource grid pool.
+  /// \param grids_ Resource grids.
+  resource_grid_pool_impl(std::vector<resource_grid_pool_wrapper> grids_) :
+    logger(ocudulog::fetch_basic_logger("PHY", true)), grids(std::move(grids_))
+  {
+  }
+
+  /// The destructor waits until all resource grids are available to avoid dereferencing the reference counter.
+  ~resource_grid_pool_impl() override;
+
+  // See resource_grid_pool interface for documentation.
+  shared_resource_grid allocate_resource_grid(slot_point slot) override;
+
+private:
+  /// PHY logger.
+  ocudulog::basic_logger& logger;
+  /// Counts the resource grid requests.
+  unsigned counter = 0;
+  /// Resource grid state controllers. There is a controller for each grid.
+  std::vector<resource_grid_pool_wrapper> grids;
+  /// Stop control.
+  rt_stop_event_source stop_control;
+};
+
+} // namespace ocudu

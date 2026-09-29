@@ -1,0 +1,224 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "resource_grid_reader_impl.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/ocuduvec/conversion.h"
+#include "ocudu/ocuduvec/copy.h"
+
+using namespace ocudu;
+
+unsigned resource_grid_reader_impl::get_nof_ports() const
+{
+  return data.get_dimension_size(resource_grid_dimensions::port);
+}
+
+unsigned resource_grid_reader_impl::get_nof_subc() const
+{
+  return data.get_dimension_size(resource_grid_dimensions::subc);
+}
+
+unsigned resource_grid_reader_impl::get_nof_symbols() const
+{
+  return data.get_dimension_size(resource_grid_dimensions::symbol);
+}
+
+bool resource_grid_reader_impl::is_empty(unsigned port) const
+{
+  ocudu_assert(port < get_nof_ports(), "Port index {} is out of range (max {})", port, get_nof_ports());
+  return alloc_mask.is_port_empty(port);
+}
+
+crb_interval resource_grid_reader_impl::get_allocation_range(unsigned port, unsigned l) const
+{
+  ocudu_assert(port < get_nof_ports(), "Port index {} is out of range (max {})", port, get_nof_ports());
+  ocudu_assert(l < get_nof_symbols(), "Symbol index {} is out of range (max {})", l, get_nof_symbols());
+  return alloc_mask.get_allocation_range(port, l);
+}
+
+bool resource_grid_reader_impl::is_empty() const
+{
+  for (unsigned i_port = 0, i_port_end = get_nof_ports(); i_port != i_port_end; ++i_port) {
+    if (!is_empty(i_port)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+span<cf_t> resource_grid_reader_impl::get(span<cf_t>                                 symbols,
+                                          unsigned                                   port,
+                                          unsigned                                   l,
+                                          unsigned                                   k_init,
+                                          const bounded_bitset<MAX_NOF_SUBCARRIERS>& mask) const
+{
+  ocudu_assert(k_init + mask.size() <= get_nof_subc(),
+               "The initial subcarrier index (i.e., {}) plus the mask size (i.e., {}) exceeds the maximum number of "
+               "subcarriers (i.e., {})",
+               k_init,
+               mask.size(),
+               get_nof_subc());
+  ocudu_assert(l < get_nof_symbols(),
+               "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+               l,
+               get_nof_symbols());
+  ocudu_assert(port < get_nof_ports(),
+               "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+               port,
+               get_nof_ports());
+
+  // Get view of the OFDM symbol subcarriers.
+  span<const cbf16_t> symb = data.get_view({l, port}).subspan(k_init, mask.size());
+
+  ocudu_assert(mask.count() <= symbols.size(),
+               "The number ones in the mask (i.e., {}) exceeds the number of symbols (i.e., {}).",
+               mask.count(),
+               symbols.size());
+
+  unsigned mask_count = mask.count();
+  ocudu_assert(mask_count <= symbols.size(),
+               "The number of active subcarriers (i.e., {}) exceeds the number of symbols (i.e., {}).",
+               mask_count,
+               symbols.size());
+
+  // Do a straight copy if the elements of the mask are all contiguous.
+  if (mask_count and mask.is_contiguous()) {
+    ocuduvec::convert(symbols.first(mask_count), symb.subspan(mask.find_lowest(), mask_count));
+    return symbols.last(symbols.size() - mask_count);
+  }
+
+  mask.for_each(0, mask.size(), [symb, &symbols](unsigned i_subc) {
+    symbols.front() = to_cf(symb[i_subc]);
+    symbols         = symbols.last(symbols.size() - 1);
+  });
+
+  return symbols;
+}
+
+span<cbf16_t> resource_grid_reader_impl::get(span<cbf16_t>                              symbols,
+                                             unsigned                                   port,
+                                             unsigned                                   l,
+                                             unsigned                                   k_init,
+                                             const bounded_bitset<MAX_NOF_SUBCARRIERS>& mask) const
+{
+  ocudu_assert(k_init + mask.size() <= get_nof_subc(),
+               "The initial subcarrier index (i.e., {}) plus the mask size (i.e., {}) exceeds the maximum number of "
+               "subcarriers (i.e., {})",
+               k_init,
+               mask.size(),
+               get_nof_subc());
+  ocudu_assert(l < get_nof_symbols(),
+               "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+               l,
+               get_nof_symbols());
+  ocudu_assert(port < get_nof_ports(),
+               "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+               port,
+               get_nof_ports());
+
+  // Get view of the OFDM symbol subcarriers.
+  span<const cbf16_t> symb = data.get_view({l, port}).subspan(k_init, mask.size());
+
+  ocudu_assert(mask.count() <= symbols.size(),
+               "The number ones in mask {} exceeds the number of symbols {}.",
+               mask.count(),
+               symbols.size());
+
+  unsigned mask_count = mask.count();
+  ocudu_assert(mask_count <= symbols.size(),
+               "The number of active subcarriers (i.e., {}) exceeds the number of symbols (i.e., {}).",
+               mask_count,
+               symbols.size());
+
+  // Do a straight copy if the elements of the mask are all contiguous.
+  if (mask_count and mask.is_contiguous()) {
+    ocuduvec::copy(symbols.first(mask_count), symb.subspan(mask.find_lowest(), mask_count));
+    return symbols.last(symbols.size() - mask_count);
+  }
+
+  mask.for_each(0, mask.size(), [symb, &symbols](unsigned i_subc) {
+    symbols.front() = symb[i_subc];
+    symbols         = symbols.last(symbols.size() - 1);
+  });
+
+  return symbols;
+}
+
+void resource_grid_reader_impl::get(span<cf_t> symbols,
+                                    unsigned   port,
+                                    unsigned   l,
+                                    unsigned   k_init,
+                                    unsigned   stride) const
+{
+  ocudu_assert(stride != 0, "The stride must not be zero.");
+  ocudu_assert(k_init + stride * (symbols.size() - 1) < get_nof_subc(),
+               "The initial subcarrier index (i.e., {}) plus the number of symbols (i.e., {}) times the stride (i.e. "
+               "{}) exceeds the maximum number of subcarriers (i.e., {})",
+               k_init,
+               symbols.size(),
+               stride,
+               get_nof_subc());
+  ocudu_assert(l < get_nof_symbols(),
+               "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+               l,
+               get_nof_symbols());
+  ocudu_assert(port < get_nof_ports(),
+               "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+               port,
+               get_nof_ports());
+
+  // Access the OFDM symbol from the resource grid.
+  span<const cbf16_t> rg_symbol = data.get_view({l, port});
+
+  // Copy resource elements.
+  if (stride == 1) {
+    ocuduvec::convert(symbols, rg_symbol.subspan(k_init, symbols.size()));
+  } else {
+    std::generate(symbols.begin(), symbols.end(), [&rg_symbol, stride, n = k_init]() mutable {
+      cf_t temp = to_cf(rg_symbol[n]);
+      n += stride;
+      return temp;
+    });
+  }
+}
+
+void resource_grid_reader_impl::get(span<cbf16_t> symbols, unsigned port, unsigned l, unsigned k_init) const
+{
+  ocudu_assert(
+      k_init + symbols.size() <= get_nof_subc(),
+      "The initial subcarrier index (i.e., {}) plus the number of symbols (i.e., {}) exceeds the maximum number of "
+      "subcarriers (i.e., {})",
+      k_init,
+      symbols.size(),
+      get_nof_subc());
+  ocudu_assert(l < get_nof_symbols(),
+               "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+               l,
+               get_nof_symbols());
+  ocudu_assert(port < get_nof_ports(),
+               "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+               port,
+               get_nof_ports());
+
+  // Access the OFDM symbol from the resource grid.
+  span<const cbf16_t> rg_symbol = data.get_view({l, port});
+
+  // Copy resource elements.
+  ocuduvec::copy(symbols, rg_symbol.subspan(k_init, symbols.size()));
+}
+
+span<const cbf16_t> resource_grid_reader_impl::get_view(unsigned port, unsigned l) const
+{
+  ocudu_assert(l < get_nof_symbols(),
+               "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+               l,
+               get_nof_symbols());
+  ocudu_assert(port < get_nof_ports(),
+               "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+               port,
+               get_nof_ports());
+
+  // Access the OFDM symbol from the resource grid.
+  return data.get_view({l, port});
+}

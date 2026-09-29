@@ -1,0 +1,70 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "rlc_base_entity.h"
+#include "rlc_rx_am_entity.h"
+#include "rlc_tx_am_entity.h"
+
+namespace ocudu {
+
+class rlc_am_entity : public rlc_base_entity
+{
+public:
+  rlc_am_entity(gnb_du_id_t                          gnb_du_id_,
+                du_ue_index_t                        ue_index_,
+                rb_id_t                              rb_id_,
+                const rlc_am_config&                 config,
+                timer_duration                       metrics_period_,
+                rlc_metrics_notifier*                rlc_metrics_notifier_,
+                rlc_rx_upper_layer_data_notifier&    rx_upper_dn,
+                rlc_tx_upper_layer_data_notifier&    tx_upper_dn,
+                rlc_tx_upper_layer_control_notifier& tx_upper_cn,
+                rlc_tx_lower_layer_notifier&         tx_lower_dn,
+                rlc_pcap&                            pcap,
+                task_executor&                       pcell_executor,
+                task_executor&                       ue_executor,
+                timer_manager&                       timers,
+                rlc_drb_am_rx_window_seg_pool&       rx_window_seg_pool,
+                rlc_drb_am_tx_window_seg_pool&       tx_window_seg_pool) :
+    rlc_base_entity(gnb_du_id_, ue_index_, rb_id_, metrics_period_, rlc_metrics_notifier_, ue_executor)
+  {
+    // Create AM entities
+    std::unique_ptr<rlc_tx_am_entity> tx_am = std::make_unique<rlc_tx_am_entity>(gnb_du_id_,
+                                                                                 ue_index_,
+                                                                                 rb_id_,
+                                                                                 config.tx,
+                                                                                 tx_upper_dn,
+                                                                                 tx_upper_cn,
+                                                                                 tx_lower_dn,
+                                                                                 metrics_coll,
+                                                                                 pcap,
+                                                                                 pcell_executor,
+                                                                                 ue_executor,
+                                                                                 timers,
+                                                                                 tx_window_seg_pool);
+    std::unique_ptr<rlc_rx_am_entity> rx_am = std::make_unique<rlc_rx_am_entity>(gnb_du_id_,
+                                                                                 ue_index_,
+                                                                                 rb_id_,
+                                                                                 config.rx,
+                                                                                 rx_upper_dn,
+                                                                                 metrics_coll,
+                                                                                 pcap,
+                                                                                 ue_executor,
+                                                                                 timers,
+                                                                                 rx_window_seg_pool);
+
+    // Tx/Rx interconnect
+    tx_am->set_status_provider(rx_am.get());
+    rx_am->set_status_handler(tx_am.get());
+    rx_am->set_status_notifier(tx_am.get());
+
+    // Store entities
+    tx = std::move(tx_am);
+    rx = std::move(rx_am);
+  }
+};
+
+} // namespace ocudu

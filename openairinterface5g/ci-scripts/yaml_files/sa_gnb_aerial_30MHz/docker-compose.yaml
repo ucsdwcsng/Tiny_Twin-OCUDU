@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT
+
+services:
+  nv-cubb:
+    container_name: nv-cubb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+    network_mode: host
+    shm_size: 4096m
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - /lib/modules:/lib/modules
+      - /dev/hugepages:/dev/hugepages
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /run/systemd/system:/run/systemd/system
+      - ./cuphycontroller_P5G_WNC_GH.yaml:/opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_P5G_WNC_GH.yaml
+      - /var/log/aerial:/var/log/aerial
+    userns_mode: host
+    ipc: "shareable"
+    image: nv-cubb:26-1
+    environment:
+      - cuBB_SDK=/opt/nvidia/cuBB
+    command: bash -c "/opt/nvidia/cuBB/run-l1.sh"
+    healthcheck:
+      test: ["CMD-SHELL",'grep -q "L1 is ready!" /tmp/phy.log && echo 0 || echo 1']
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  oai-gnb-aerial:
+    cpuset: "13-16"
+    image: ${REGISTRY-oaisoftwarealliance/}${GNB_IMG:-oai-gnb-aerial}:${TAG:-develop}
+    depends_on:
+      nv-cubb:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
+    ipc: "container:nv-cubb"
+    environment:
+      USE_ADDITIONAL_OPTIONS: --log_config.global_log_options level,nocolor,utc_time
+    network_mode: host
+    shm_size: 4096m
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../../conf_files/gnb-vnf.sa.band78.78prb.aerial.conf:/opt/oai-gnb/etc/gnb.conf
+    container_name: oai-gnb-aerial
+    healthcheck:
+      test: /bin/bash -c "ps aux | grep -v grep | grep -c softmodem"
+      interval: 10s
+      timeout: 5s
+      retries: 5

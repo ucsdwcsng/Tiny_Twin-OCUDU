@@ -1,0 +1,46 @@
+/*
+ * SPDX-License-Identifier: LicenseRef-CSSL-1.0
+ */
+
+#include "nr_pdcp_integrity_nia1.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#include "openair3/SECU/secu_defs.h"
+#include "openair3/SECU/key_nas_deriver.h"
+
+stream_security_context_t *nr_pdcp_integrity_nia1_init(unsigned char *integrity_key)
+{
+  nas_stream_cipher_t *ret;
+
+  ret = calloc(1, sizeof(*ret)); if (ret == NULL) abort();
+  ret->context = malloc(16); if (ret->context == NULL) abort();
+  memcpy(ret->context, integrity_key, 16);
+
+  return (stream_security_context_t *)ret;
+}
+
+void nr_pdcp_integrity_nia1_integrity(stream_security_context_t *integrity_context,
+                            unsigned char *out,
+                            unsigned char *buffer, int length,
+                            int bearer, uint32_t count, int direction)
+{
+  nas_stream_cipher_t *ctx = (nas_stream_cipher_t *)integrity_context;
+
+  ctx->message = buffer;
+  ctx->count = count;
+  ctx->bearer = bearer-1;
+  ctx->direction = direction;
+  ctx->blength = length * 8;
+
+  stream_compute_integrity(EIA1_128_ALG_ID, ctx, out);
+}
+
+void nr_pdcp_integrity_nia1_free_integrity(stream_security_context_t *integrity_context)
+{
+  nas_stream_cipher_t *ctx = (nas_stream_cipher_t *)integrity_context;
+  free(ctx->context);
+  free(ctx);
+}

@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/cu_cp/cu_cp_metrics_notifier.h"
+#include "ocudu/ocudulog/log_channel.h"
+
+namespace ocudu {
+
+/// Logger consumer for the RRC metrics.
+class rrc_metrics_consumer_log
+{
+public:
+  explicit rrc_metrics_consumer_log(ocudulog::log_channel& log_chan_) : log_chan(log_chan_)
+  {
+    ocudu_assert(log_chan.enabled(), "Logger log channel is not enabled");
+  }
+
+  /// Handle RRC metrics.
+  void handle_metric(const std::vector<cu_cp_metrics_report::du_info>& report,
+                     const mobility_management_metrics&                mobility_metrics);
+
+private:
+  ocudulog::log_channel& log_chan;
+};
+
+} // namespace ocudu

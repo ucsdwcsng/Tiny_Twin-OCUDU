@@ -1,0 +1,125 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>l2sim-4glte-tdd</htmlTabRef>
+  <htmlTabName>Testing 4G LTE L2 sim - FDD eNB</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-enb oai-lte-ue</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy Cassandra Database</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_l2sim_fdd</yaml_path>
+    <services>cassandra db_init</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 4G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_l2sim_fdd</yaml_path>
+    <services>oai_hss redis magma_mme oai_spgwc oai_spgwu trf_gen</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 4G eNB L2 sim</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_l2sim_fdd</yaml_path>
+    <services>oai_enb</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI L2 sim 4G LTE-UE 1 and Proxy</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_l2sim_fdd</yaml_path>
+    <services>proxy oai_ue1</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE</desc>
+    <id>l2sim4g_ue</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping trf-gen from LTE-UE 1</desc>
+    <id>l2sim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>l2sim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>0</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping LTE-UE 1 from trf-gen</desc>
+    <id>l2sim4g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>l2sim4g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>0</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf UDP Downlink</desc>
+    <id>l2sim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>l2sim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_args>-u -t 30 -b 1M -R</iperf_args>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf UDP Uplink</desc>
+    <id>l2sim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>l2sim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_args>-u -t 30 -b 3M</iperf_args>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <node>localhost</node>
+    <desc>Undeploy all OAI 4G stack</desc>
+    <yaml_path>ci-scripts/yaml_files/4g_l2sim_fdd</yaml_path>
+    <analysis>
+      <services>oai_enb=EndsWithBye oai_ue1</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-enb oai-lte-ue</images>
+  </testCase>
+
+</testCaseList>

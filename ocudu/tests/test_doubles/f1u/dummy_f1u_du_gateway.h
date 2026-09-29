@@ -1,0 +1,75 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/f1u/du/f1u_gateway.h"
+#include "ocudu/ran/rb_id.h"
+#include <map>
+
+namespace ocudu::odu {
+
+class dummy_f1u_du_gateway_bearer_rx_notifier : public f1u_du_gateway_bearer_rx_notifier
+{
+public:
+  ~dummy_f1u_du_gateway_bearer_rx_notifier() override = default;
+
+  void on_new_pdu(nru_dl_message msg) override {}
+};
+
+/// \brief Dummy F1-U bearer for the purpose of benchmark.
+class f1u_gw_dummy_bearer : public f1u_du_gateway_bearer
+{
+public:
+  void                  on_new_pdu(nru_ul_message msg) override {}
+  void                  stop() override {}
+  expected<std::string> get_bind_address() const override { return "127.0.0.1"; }
+};
+
+/// \brief Simulator of the CU-UP from the perspective of the DU.
+class cu_up_simulator : public f1u_du_gateway
+{
+public:
+  struct bearer_context_t {
+    odu::f1u_du_gateway_bearer_rx_notifier* rx_notifier;
+    gtpu_teid_t                             dl_teid;
+  };
+  std::map<std::pair<uint32_t, drb_id_t>, bearer_context_t> bearers;
+
+  std::optional<uint32_t> last_ue_idx;
+  std::optional<drb_id_t> last_drb_id;
+
+  std::unique_ptr<f1u_du_gateway_bearer> create_du_bearer(uint32_t                                ue_index,
+                                                          drb_id_t                                drb_id,
+                                                          s_nssai_t                               s_nssai,
+                                                          five_qi_t                               five_qi,
+                                                          odu::f1u_config                         config,
+                                                          const gtpu_teid_t&                      dl_teid,
+                                                          gtpu_teid_pool&                         dl_teid_pool,
+                                                          const up_transport_layer_info&          ul_up_tnl_info,
+                                                          odu::f1u_du_gateway_bearer_rx_notifier& du_rx,
+                                                          timer_factory                           timers,
+                                                          task_executor&                          ue_executor) override
+  {
+    bearers.insert(std::make_pair(std::make_pair(ue_index, drb_id), bearer_context_t{&du_rx, dl_teid}));
+    last_ue_idx = ue_index;
+    last_drb_id = drb_id;
+    auto bearer = std::make_unique<f1u_gw_dummy_bearer>();
+    return bearer;
+  }
+
+  void remove_du_bearer(const up_transport_layer_info& dl_tnl) override
+  {
+    for (const auto& [key, value] : bearers) {
+      if (value.dl_teid == dl_tnl.gtp_teid) {
+        bearers.erase(key);
+        break;
+      }
+    }
+  }
+
+  expected<std::string> get_du_bind_address(gnb_du_id_t du_index) const override { return std::string("127.0.0.1"); }
+};
+
+} // namespace ocudu::odu

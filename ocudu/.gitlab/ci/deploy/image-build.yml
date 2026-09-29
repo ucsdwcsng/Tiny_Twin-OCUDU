@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# OCUDU component image build pipeline.
+#
+# Trigger: scheduled pipeline with description matching /Nightly/, web UI run,
+#          or manual job trigger.
+#
+# To add a driver, OS, component, or SIMD variant: edit the matching
+# .matrix-* template in .gitlab/ci/deploy/image-matrix.yml.
+
+# ---------------------------------------------------------------------------
+# Base job — all build cells extend this
+# ---------------------------------------------------------------------------
+.image-build:
+  extends: .image-build-common
+  variables:
+    OS: ubuntu
+    OS_VERSION: "24.04"
+
+# ---------------------------------------------------------------------------
+# Build jobs
+# ---------------------------------------------------------------------------
+
+build-and-publish:gnb:
+  extends:
+    - .image-build
+    - .matrix-image-gnb
+
+build-and-publish:du:
+  extends:
+    - .image-build
+    - .matrix-image-du
+
+build-and-publish:cu:
+  extends:
+    - .image-build
+    - .matrix-image-cu
+
+build-and-publish:cu-cp:
+  extends:
+    - .image-build
+    - .matrix-image-cu-cp
+
+build-and-publish:cu-up:
+  extends:
+    - .image-build
+    - .matrix-image-cu-up
+
+build-and-publish:ru-emulator:
+  extends:
+    - .image-build
+    - .matrix-image-ru-emulator

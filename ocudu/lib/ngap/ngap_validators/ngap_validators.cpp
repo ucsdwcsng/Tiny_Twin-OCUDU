@@ -1,0 +1,134 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ngap_validators.h"
+#include "ocudu/ran/cause/common.h"
+#include <unordered_set>
+
+using namespace ocudu;
+using namespace ocucp;
+
+pdu_session_resource_setup_validation_outcome
+ocudu::ocucp::verify_pdu_session_resource_setup_request(const ngap_pdu_session_resource_setup_request&     request,
+                                                        const asn1::ngap::pdu_session_res_setup_request_s& asn1_request,
+                                                        const ngap_ue_logger&                              ue_logger)
+{
+  pdu_session_resource_setup_validation_outcome verification_outcome;
+
+  std::unordered_set<pdu_session_id_t> psis;
+  std::unordered_set<pdu_session_id_t> failed_psis;
+  for (const auto& asn1_pdu_session_item : asn1_request->pdu_session_res_setup_list_su_req) {
+    pdu_session_id_t psi = uint_to_pdu_session_id(asn1_pdu_session_item.pdu_session_id);
+    // Check for duplicate PDU Session IDs.
+    if (!psis.emplace(psi).second) {
+      ue_logger.log_warning("Duplicate {} in PduSessionResourceSetupRequest", psi);
+      // Make sure to only add each duplicate psi once.
+      if (failed_psis.emplace(psi).second) {
+        // Add failed psi to response.
+        ngap_pdu_session_res_setup_failed_item failed_item;
+        failed_item.pdu_session_id              = psi;
+        failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::multiple_pdu_session_id_instances;
+        verification_outcome.response.pdu_session_res_failed_to_setup_items.emplace(psi, failed_item);
+      }
+    }
+  }
+
+  // Check for unsupported PDU Session Types.
+  for (const auto& pdu_session_item : request.pdu_session_res_setup_items) {
+    if (pdu_session_item.pdu_session_type == pdu_session_type_t::ipv4v6) {
+      ue_logger.log_warning("Unsupported PDU Session Type: {}", pdu_session_item.pdu_session_type);
+      failed_psis.emplace(pdu_session_item.pdu_session_id);
+      // Add failed psi to response.
+      ngap_pdu_session_res_setup_failed_item failed_item;
+      failed_item.pdu_session_id              = pdu_session_item.pdu_session_id;
+      failed_item.unsuccessful_transfer.cause = cause_protocol_t::unspecified;
+      verification_outcome.response.pdu_session_res_failed_to_setup_items.emplace(pdu_session_item.pdu_session_id,
+                                                                                  failed_item);
+    }
+  }
+
+  // Remove failed psis from psis.
+  for (const auto& failed_psi : failed_psis) {
+    psis.erase(failed_psi);
+  }
+
+  // If only duplicate PDU session IDs are present, return.
+  if (psis.empty()) {
+    return verification_outcome;
+  }
+
+  // If Non-GBR QoS flow present then PDU Session Aggregate Maximum Bit Rate must be present.
+  for (const auto& psi : psis) {
+    for (const auto& qos_flow_item : request.pdu_session_res_setup_items[psi].qos_flow_setup_request_items) {
+      if (qos_flow_item.qos_flow_level_qos_params.reflective_qos_attribute_subject_to ||
+          qos_flow_item.qos_flow_level_qos_params.add_qos_flow_info) {
+        if (!asn1_request->ue_aggr_max_bit_rate_present) {
+          ue_logger.log_warning("Non-GBR QoS flow for {} present but PduSessionAggregateMaximumBitRate not set", psi);
+          failed_psis.emplace(psi);
+          // Add failed psi to response.
+          ngap_pdu_session_res_setup_failed_item failed_item;
+          failed_item.pdu_session_id              = psi;
+          failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::invalid_qos_combination;
+          verification_outcome.response.pdu_session_res_failed_to_setup_items.emplace(psi, failed_item);
+          // If single QoS flow fails, then the whole PDU session fails.
+          break;
+        }
+      }
+    }
+  }
+
+  // Remove failed psis from psis.
+  for (const auto& failed_psi : failed_psis) {
+    psis.erase(failed_psi);
+  }
+
+  // Add remaining PDU sessions to verified request.
+  for (const auto& psi : psis) {
+    verification_outcome.request.pdu_session_res_setup_items.emplace(psi, request.pdu_session_res_setup_items[psi]);
+  }
+  verification_outcome.request.ue_index     = request.ue_index;
+  verification_outcome.request.ue_ambr      = request.ue_ambr;
+  verification_outcome.request.serving_plmn = request.serving_plmn;
+
+  return verification_outcome;
+}
+
+pdu_session_resource_modify_validation_outcome ocudu::ocucp::verify_pdu_session_resource_modify_request(
+    const ngap_pdu_session_resource_modify_request&     request,
+    const asn1::ngap::pdu_session_res_modify_request_s& asn1_request,
+    const ngap_ue_logger&                               ue_logger)
+{
+  pdu_session_resource_modify_validation_outcome verification_outcome;
+
+  std::unordered_set<pdu_session_id_t> psis;
+  std::unordered_set<pdu_session_id_t> failed_psis;
+  for (const auto& pdu_session_item : asn1_request->pdu_session_res_modify_list_mod_req) {
+    pdu_session_id_t psi = uint_to_pdu_session_id(pdu_session_item.pdu_session_id);
+    // Check for duplicate PDU Session IDs.
+    if (!psis.emplace(psi).second) {
+      ue_logger.log_warning("Duplicate {} in PduSessionResourceModifyRequest", psi);
+      // Make sure to only add each duplicate psi once.
+      if (failed_psis.emplace(psi).second) {
+        // Add failed psi to response.
+        ngap_pdu_session_res_setup_failed_item failed_item;
+        failed_item.pdu_session_id              = psi;
+        failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::multiple_pdu_session_id_instances;
+        verification_outcome.response.pdu_session_res_failed_to_modify_list.emplace(psi, failed_item);
+      }
+    }
+  }
+
+  // Remove failed psis from psis.
+  for (const auto& failed_psi : failed_psis) {
+    psis.erase(failed_psi);
+  }
+
+  // Add remaining PDU sessions to verified request.
+  for (const auto& psi : psis) {
+    verification_outcome.request.pdu_session_res_modify_items.emplace(psi, request.pdu_session_res_modify_items[psi]);
+  }
+  verification_outcome.request.ue_index = request.ue_index;
+
+  return verification_outcome;
+}

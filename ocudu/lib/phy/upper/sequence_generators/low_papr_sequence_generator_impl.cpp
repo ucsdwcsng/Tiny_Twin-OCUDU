@@ -1,0 +1,255 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "low_papr_sequence_generator_impl.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ocuduvec/prod.h"
+#include "ocudu/ocuduvec/sc_prod.h"
+#include "ocudu/support/error_handling.h"
+#include "ocudu/support/math/math_utils.h"
+
+using namespace ocudu;
+
+// Sequence sizes used in PUCCH Format 1, SRS and PUSCH with transform precoding.
+const std::set<unsigned> low_papr_sequence_generator_impl::sequence_sizes = {
+    6,    12,   18,   24,   30,   36,   48,   54,   60,   72,   84,   90,   96,   108, 120,  132,  144,
+    150,  156,  162,  168,  180,  192,  204,  216,  228,  240,  252,  264,  270,  276, 288,  300,  312,
+    324,  336,  360,  384,  396,  408,  432,  450,  456,  480,  486,  504,  528,  540, 552,  576,  600,
+    624,  648,  672,  720,  750,  768,  792,  810,  816,  864,  900,  912,  960,  972, 1008, 1056, 1080,
+    1104, 1152, 1200, 1248, 1296, 1344, 1350, 1440, 1458, 1500, 1536, 1584, 1620, 1632};
+
+const std::array<std::array<int, 6>, low_papr_sequence_generator_impl::NOF_ZC_SEQ>
+    low_papr_sequence_generator_impl::phi_M_sc_6 = {
+        {{-3, -1, 3, 3, -1, -3},  {-3, 3, -1, -1, 3, -3},  {-3, -3, -3, 3, 1, -3},  {1, 1, 1, 3, -1, -3},
+         {1, 1, 1, -3, -1, 3},    {-3, 1, -1, -3, -3, -3}, {-3, 1, 3, -3, -3, -3},  {-3, -1, 1, -3, 1, -1},
+         {-3, -1, -3, 1, -3, -3}, {-3, -3, 1, -3, 3, -3},  {-3, 1, 3, 1, -3, -3},   {-3, -1, -3, 1, 1, -3},
+         {1, 1, 3, -1, -3, 3},    {1, 1, 3, 3, -1, 3},     {1, 1, 1, -3, 3, -1},    {1, 1, 1, -1, 3, -3},
+         {-3, -1, -1, -1, 3, -1}, {-3, -3, -1, 1, -1, -3}, {-3, -3, -3, 1, -3, -1}, {-3, 1, 1, -3, -1, -3},
+         {-3, 3, -3, 1, 1, -3},   {-3, 1, -3, -3, -3, -1}, {1, 1, -3, 3, 1, 3},     {1, 1, -3, -3, 1, -3},
+         {1, 1, 3, -1, 3, 3},     {1, 1, -3, 1, 3, 3},     {1, 1, -1, -1, 3, -1},   {1, 1, -1, 3, -1, -1},
+         {1, 1, -1, 3, -3, -1},   {1, 1, -3, 1, -1, -1}}};
+
+const std::array<std::array<int, 12>, low_papr_sequence_generator_impl::NOF_ZC_SEQ>
+    low_papr_sequence_generator_impl::phi_M_sc_12 = {
+        {{-3, 1, -3, -3, -3, 3, -3, -1, 1, 1, 1, -3},  {-3, 3, 1, -3, 1, 3, -1, -1, 1, 3, 3, 3},
+         {-3, 3, 3, 1, -3, 3, -1, 1, 3, -3, 3, -3},    {-3, -3, -1, 3, 3, 3, -3, 3, -3, 1, -1, -3},
+         {-3, -1, -1, 1, 3, 1, 1, -1, 1, -1, -3, 1},   {-3, -3, 3, 1, -3, -3, -3, -1, 3, -1, 1, 3},
+         {1, -1, 3, -1, -1, -1, -3, -1, 1, 1, 1, -3},  {-1, -3, 3, -1, -3, -3, -3, -1, 1, -1, 1, -3},
+         {-3, -1, 3, 1, -3, -1, -3, 3, 1, 3, 3, 1},    {-3, -1, -1, -3, -3, -1, -3, 3, 1, 3, -1, -3},
+         {-3, 3, -3, 3, 3, -3, -1, -1, 3, 3, 1, -3},   {-3, -1, -3, -1, -1, -3, 3, 3, -1, -1, 1, -3},
+         {-3, -1, 3, -3, -3, -1, -3, 1, -1, -3, 3, 3}, {-3, 1, -1, -1, 3, 3, -3, -1, -1, -3, -1, -3},
+         {1, 3, -3, 1, 3, 3, 3, 1, -1, 1, -1, 3},      {-3, 1, 3, -1, -1, -3, -3, -1, -1, 3, 1, -3},
+         {-1, -1, -1, -1, 1, -3, -1, 3, 3, -1, -3, 1}, {-1, 1, 1, -1, 1, 3, 3, -1, -1, -3, 1, -3},
+         {-3, 1, 3, 3, -1, -1, -3, 3, 3, -3, 3, -3},   {-3, -3, 3, -3, -1, 3, 3, 3, -1, -3, 1, -3},
+         {3, 1, 3, 1, 3, -3, -1, 1, 3, 1, -1, -3},     {-3, 3, 1, 3, -3, 1, 1, 1, 1, 3, -3, 3},
+         {-3, 3, 3, 3, -1, -3, -3, -1, -3, 1, 3, -3},  {3, -1, -3, 3, -3, -1, 3, 3, 3, -3, -1, -3},
+         {-3, -1, 1, -3, 1, 3, 3, 3, -1, -3, 3, 3},    {-3, 3, 1, -1, 3, 3, -3, 1, -1, 1, -1, 1},
+         {-1, 1, 3, -3, 1, -1, 1, -1, -1, -3, 1, -1},  {-3, -3, 3, 3, 3, -3, -1, 1, -3, 3, 1, -3},
+         {1, -1, 3, 1, 1, -1, -1, -1, 1, 3, -3, 1},    {-3, 3, -3, 3, -3, -3, 3, -1, -1, 1, 3, -3}}};
+
+const std::array<std::array<int, 18>, low_papr_sequence_generator_impl::NOF_ZC_SEQ>
+    low_papr_sequence_generator_impl::phi_M_sc_18 = {
+        {{-1, 3, -1, -3, 3, 1, -3, -1, 3, -3, -1, -1, 1, 1, 1, -1, -1, -1},
+         {3, -3, 3, -1, 1, 3, -3, -1, -3, -3, -1, -3, 3, 1, -1, 3, -3, 3},
+         {-3, 3, 1, -1, -1, 3, -3, -1, 1, 1, 1, 1, 1, -1, 3, -1, -3, -1},
+         {-3, -3, 3, 3, 3, 1, -3, 1, 3, 3, 1, -3, -3, 3, -1, -3, -1, 1},
+         {1, 1, -1, -1, -3, -1, 1, -3, -3, -3, 1, -3, -1, -1, 1, -1, 3, 1},
+         {3, -3, 1, 1, 3, -1, 1, -1, -1, -3, 1, 1, -1, 3, 3, -3, 3, -1},
+         {-3, 3, -1, 1, 3, 1, -3, -1, 1, 1, -3, 1, 3, 3, -1, -3, -3, -3},
+         {1, 1, -3, 3, 3, 1, 3, -3, 3, -1, 1, 1, -1, 1, -3, -3, -1, 3},
+         {-3, 1, -3, -3, 1, -3, -3, 3, 1, -3, -1, -3, -3, -3, -1, 1, 1, 3},
+         {3, -1, 3, 1, -3, -3, -1, 1, -3, -3, 3, 3, 3, 1, 3, -3, 3, -3},
+         {-3, -3, -3, 1, -3, 3, 1, 1, 3, -3, -3, 1, 3, -1, 3, -3, -3, 3},
+         {-3, -3, 3, 3, 3, -1, -1, -3, -1, -1, -1, 3, 1, -3, -3, -1, 3, -1},
+         {-3, -1, -3, -3, 1, 1, -1, -3, -1, -3, -1, -1, 3, 3, -1, 3, 1, 3},
+         {1, 1, -3, -3, -3, -3, 1, 3, -3, 3, 3, 1, -3, -1, 3, -1, -3, 1},
+         {-3, 3, -1, -3, -1, -3, 1, 1, -3, -3, -1, -1, 3, -3, 1, 3, 1, 1},
+         {3, 1, -3, 1, -3, 3, 3, -1, -3, -3, -1, -3, -3, 3, -3, -1, 1, 3},
+         {-3, -1, -3, -1, -3, 1, 3, -3, -1, 3, 3, 3, 1, -1, -3, 3, -1, -3},
+         {-3, -1, 3, 3, -1, 3, -1, -3, -1, 1, -1, -3, -1, -1, -1, 3, 3, 1},
+         {-3, 1, -3, -1, -1, 3, 1, -3, -3, -3, -1, -3, -3, 1, 1, 1, -1, -1},
+         {3, 3, 3, -3, -1, -3, -1, 3, -1, 1, -1, -3, 1, -3, -3, -1, 3, 3},
+         {-3, 1, 1, -3, 1, 1, 3, -3, -1, -3, -1, 3, -3, 3, -1, -1, -1, -3},
+         {1, -3, -1, -3, 3, 3, -1, -3, 1, -3, -3, -1, -3, -1, 1, 3, 3, 3},
+         {-3, -3, 1, -1, -1, 1, 1, -3, -1, 3, 3, 3, 3, -1, 3, 1, 3, 1},
+         {3, -1, -3, 1, -3, -3, -3, 3, 3, -1, 1, -3, -1, 3, 1, 1, 3, 3},
+         {3, -1, -1, 1, -3, -1, -3, -1, -3, -3, -1, -3, 1, 1, 1, -3, -3, 3},
+         {-3, -3, 1, -3, 3, 3, 3, -1, 3, 1, 1, -3, -3, -3, 3, -3, -1, -1},
+         {-3, -1, -1, -3, 1, -3, 3, -1, -1, -3, 3, 3, -3, -1, 3, -1, -1, -1},
+         {-3, -3, 3, 3, -3, 1, 3, -1, -3, 1, -1, -3, 3, -3, -1, -1, -1, 3},
+         {-1, -3, 1, -3, -3, -3, 1, 1, 3, 3, -3, 3, 3, -3, -1, 3, -3, 1},
+         {-3, 3, 1, -1, -1, -1, -1, 1, -1, 3, 3, -3, -1, 1, 3, -1, 3, -1}}};
+
+const std::array<std::array<int, 24>, low_papr_sequence_generator_impl::NOF_ZC_SEQ>
+    low_papr_sequence_generator_impl::phi_M_sc_24 = {
+        {{-1, -3, 3, -1, 3, 1, 3, -1, 1, -3, -1, -3, -1, 1, 3, -3, -1, -3, 3, 3, 3, -3, -3, -3},
+         {-1, -3, 3, 1, 1, -3, 1, -3, -3, 1, -3, -1, -1, 3, -3, 3, 3, 3, -3, 1, 3, 3, -3, -3},
+         {-1, -3, -3, 1, -1, -1, -3, 1, 3, -1, -3, -1, -1, -3, 1, 1, 3, 1, -3, -1, -1, 3, -3, -3},
+         {1, -3, 3, -1, -3, -1, 3, 3, 1, -1, 1, 1, 3, -3, -1, -3, -3, -3, -1, 3, -3, -1, -3, -3},
+         {-1, 3, -3, -3, -1, 3, -1, -1, 1, 3, 1, 3, -1, -1, -3, 1, 3, 1, -1, -3, 1, -1, -3, -3},
+         {-3, -1, 1, -3, -3, 1, 1, -3, 3, -1, -1, -3, 1, 3, 1, -1, -3, -1, -3, 1, -3, -3, -3, -3},
+         {-3, 3, 1, 3, -1, 1, -3, 1, -3, 1, -1, -3, -1, -3, -3, -3, -3, -1, -1, -1, 1, 1, -3, -3},
+         {-3, 1, 3, -1, 1, -1, 3, -3, 3, -1, -3, -1, -3, 3, -1, -1, -1, -3, -1, -1, -3, 3, 3, -3},
+         {-3, 1, -3, 3, -1, -1, -1, -3, 3, 1, -1, -3, -1, 1, 3, -1, 1, -1, 1, -3, -3, -3, -3, -3},
+         {1, 1, -1, -3, -1, 1, 1, -3, 1, -1, 1, -3, 3, -3, -3, 3, -1, -3, 1, 3, -3, 1, -3, -3},
+         {-3, -3, -3, -1, 3, -3, 3, 1, 3, 1, -3, -1, -1, -3, 1, 1, 3, 1, -1, -3, 3, 1, 3, -3},
+         {-3, 3, -1, 3, 1, -1, -1, -1, 3, 3, 1, 1, 1, 3, 3, 1, -3, -3, -1, 1, -3, 1, 3, -3},
+         {3, -3, 3, -1, -3, 1, 3, 1, -1, -1, -3, -1, 3, -3, 3, -1, -1, 3, 3, -3, -3, 3, -3, -3},
+         {-3, 3, -1, 3, -1, 3, 3, 1, 1, -3, 1, 3, -3, 3, -3, -3, -1, 1, 3, -3, -1, -1, -3, -3},
+         {-3, 1, -3, -1, -1, 3, 1, 3, -3, 1, -1, 3, 3, -1, -3, 3, -3, -1, -1, -3, -3, -3, 3, -3},
+         {-3, -1, -1, -3, 1, -3, -3, -1, -1, 3, -1, 1, -1, 3, 1, -3, -1, 3, 1, 1, -1, -1, -3, -3},
+         {-3, -3, 1, -1, 3, 3, -3, -1, 1, -1, -1, 1, 1, -1, -1, 3, -3, 1, -3, 1, -1, -1, -1, -3},
+         {3, -1, 3, -1, 1, -3, 1, 1, -3, -3, 3, -3, -1, -1, -1, -1, -1, -3, -3, -1, 1, 1, -3, -3},
+         {-3, 1, -3, 1, -3, -3, 1, -3, 1, -3, -3, -3, -3, -3, 1, -3, -3, 1, 1, -3, 1, 1, -3, -3},
+         {-3, -3, 3, 3, 1, -1, -1, -1, 1, -3, -1, 1, -1, 3, -3, -1, -3, -1, -1, 1, -3, 3, -1, -3},
+         {-3, -3, -1, -1, -1, -3, 1, -1, -3, -1, 3, -3, 1, -3, 3, -3, 3, 3, 1, -1, -1, 1, -3, -3},
+         {3, -1, 1, -1, 3, -3, 1, 1, 3, -1, -3, 3, 1, -3, 3, -1, -1, -1, -1, 1, -3, -3, -3, -3},
+         {-3, 1, -3, 3, -3, 1, -3, 3, 1, -1, -3, -1, -3, -3, -3, -3, 1, 3, -1, 1, 3, 3, 3, -3},
+         {-3, -1, 1, -3, -1, -1, 1, 1, 1, 3, 3, -1, 1, -1, 1, -1, -1, -3, -3, -3, 3, 1, -1, -3},
+         {-3, 3, -1, -3, -1, -1, -1, 3, -1, -1, 3, -3, -1, 3, -3, 3, -3, -1, 3, 1, 1, -1, -3, -3},
+         {-3, 1, -1, -3, -3, -1, 1, -3, -1, -3, 1, 1, -1, 1, 1, 3, 3, 3, -1, 1, -1, 1, -1, -3},
+         {-1, 3, -1, -1, 3, 3, -1, -1, -1, 3, -1, -3, 1, 3, 1, 1, -3, -3, -3, -1, -3, -1, -3, -3},
+         {3, -3, -3, -1, 3, 3, -3, -1, 3, 1, 1, 1, 3, -1, 3, -3, -1, 3, -1, 3, 1, -1, -3, -3},
+         {-3, 1, -3, 1, -3, 1, 1, 3, 1, -3, -3, -1, 1, 3, -1, -3, 3, 1, -1, -3, -3, -3, -3, -3},
+         {3, -3, -1, 1, 3, -1, -1, -3, -1, 3, -1, -3, -1, -3, 3, -1, 3, 1, 1, -3, 3, -3, -3, -3}}};
+
+static int zc_sequence_q(uint32_t u, uint32_t v, uint32_t N_sz)
+{
+  float q;
+  float q_hat;
+  float n_sz = (float)N_sz;
+
+  q_hat = n_sz * (u + 1) / 31;
+  if ((((uint32_t)(2 * q_hat)) % 2) == 0) {
+    q = q_hat + 0.5 + v;
+  } else {
+    q = q_hat + 0.5 - v;
+  }
+  return static_cast<int>(q);
+}
+
+static unsigned get_N_zc(unsigned M_zc)
+{
+  if (M_zc >= 36) {
+    return prime_lower_than(M_zc);
+  }
+
+  if (M_zc == 30) {
+    return 31;
+  }
+
+  return 4;
+}
+
+span<const int> low_papr_sequence_generator_impl::phi_M_sc_30(unsigned u)
+{
+  static constexpr unsigned M_zc     = 30;
+  static constexpr unsigned N_zc     = 31;
+  span<int>                 r_uv_arg = span<int>(temp_r_uv_arg).first(30);
+  for (unsigned n = 0; n != M_zc; ++n) {
+    r_uv_arg[n] = -static_cast<int>(((u + 1L) * (n + 1L) * (n + 2L)) % (2 * N_zc));
+  }
+
+  return r_uv_arg;
+}
+
+span<const int> low_papr_sequence_generator_impl::r_uv_arg_mprb(unsigned u, unsigned v, unsigned M_zc)
+{
+  // Select temporary argument.
+  ocudu_assert(M_zc <= temp_r_uv_arg.size(),
+               "Sequence length (i.e., {}) exceeds maximum sequence size (i.e., {})",
+               M_zc,
+               temp_r_uv_arg.size());
+  span<int> r_uv_arg = span<int>(temp_r_uv_arg).first(M_zc);
+  unsigned  N_zc     = get_N_zc(M_zc);
+  int64_t   q        = zc_sequence_q(u, v, N_zc);
+  for (unsigned n = 0; n != M_zc; ++n) {
+    int64_t m   = (n % N_zc);
+    r_uv_arg[n] = -static_cast<int>((q * m * (m + 1)) % (2 * N_zc));
+  }
+
+  return r_uv_arg;
+}
+
+span<const int> low_papr_sequence_generator_impl::r_uv_arg(unsigned u, unsigned v, unsigned M_zc)
+{
+  if (M_zc == 6) {
+    return phi_M_sc_6[u];
+  }
+
+  if (M_zc == 12) {
+    return phi_M_sc_12[u];
+  }
+
+  if (M_zc == 18) {
+    return phi_M_sc_18[u];
+  }
+
+  if (M_zc == 24) {
+    return phi_M_sc_24[u];
+  }
+
+  if (M_zc == 30) {
+    return phi_M_sc_30(u);
+  }
+
+  if (M_zc >= 36) {
+    return r_uv_arg_mprb(u, v, M_zc);
+  }
+
+  ocudu_terminate("Invalid sequence length {}", M_zc);
+  return {};
+}
+
+low_papr_sequence_generator_impl::low_papr_sequence_generator_impl() : cs_table(24, 1)
+{
+  unsigned max_size = 0;
+  for (unsigned M_zc : sequence_sizes) {
+    // Select number of elements in the complex exponential.
+    unsigned table_size = 2 * get_N_zc(M_zc);
+
+    // Create complex exponential table if it has not been created earlier.
+    if (tables.count(table_size) == 0) {
+      tables.emplace(table_size, complex_exponential_table(table_size, 1.0));
+
+      max_size = std::max(max_size, M_zc);
+    }
+  }
+
+  temp_r_uv_arg.resize(max_size);
+  temp_cyclic_shift.resize(max_size);
+}
+
+void low_papr_sequence_generator_impl::generate(span<cf_t> sequence,
+                                                unsigned   u,
+                                                unsigned   v,
+                                                unsigned   alpha_num,
+                                                unsigned   alpha_den)
+{
+  // Select number of elements in the complex exponential.
+  unsigned table_size = 2 * get_N_zc(sequence.size());
+  ocudu_assert(tables.count(table_size), "Sequence generator was not initialized with table size {}", table_size);
+
+  // Select complex exponential table.
+  complex_exponential_table& table = tables.at(table_size);
+
+  // Verify the cyclic shift is valid.
+  ocudu_assert((alpha_num == 0) || (cs_table.size() % alpha_den == 0),
+               "The cyclic shift denominator (i.e., {}) is not compatible with a table size of (i.e., {})",
+               alpha_den,
+               cs_table.size());
+
+  // Calculate argument.
+  span<const int> arg = r_uv_arg(u, v, sequence.size());
+
+  // Generate sequence from the argument.
+  table.generate(sequence, arg);
+
+  // Apply cyclic shift.
+  if (alpha_num != 0) {
+    span<cf_t> cyclic_shift = span<cf_t>(temp_cyclic_shift).first(sequence.size());
+    cs_table.generate(cyclic_shift, 0, alpha_num * cs_table.size() / alpha_den);
+    ocuduvec::prod(sequence, cyclic_shift, sequence);
+  }
+}

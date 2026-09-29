@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/slot_point.h"
+#include "ocudu/ran/subcarrier_spacing.h"
+#include <array>
+#include <memory>
+#include <vector>
+
+namespace ocudu {
+
+/// \brief Repository of processor pools.
+///
+/// Stores channel processor pools, organized according to the underlying numerology.
+/// \tparam T Type of the processor.
+template <typename T>
+class processor_pool_repository
+{
+  /// \brief Container of processors.
+  ///
+  /// Each entry corresponds to a different slot.
+  using processor_pool = std::vector<std::unique_ptr<T>>;
+
+  /// \brief Container of processor pools.
+  ///
+  /// Each entry corresponds to a different numerology.
+  std::array<processor_pool, NOF_NUMEROLOGIES> numerologies;
+
+  /// Assignation counter.
+  std::array<unsigned, NOF_NUMEROLOGIES> counters = {};
+
+public:
+  /// \brief Returns a reference to a processor.
+  ///
+  /// Selects a different processor every time in a sequential way. The same processor is selected after all processors
+  /// for the same numerology have been selected.
+  ///
+  /// \param slot Slot ID, used for deriving the numerology of the processor.
+  /// \return A reference to the selected processor.
+  T& get_processor(slot_point slot)
+  {
+    unsigned numerology = slot.numerology();
+    ocudu_assert(numerology < NOF_NUMEROLOGIES, "Invalid numerology ({}).", numerology);
+
+    processor_pool& pool = numerologies[numerology];
+    ocudu_assert(!pool.empty(), "Numerology ({}) has no processors.", numerology);
+
+    // Select index for the processor.
+    unsigned index       = counters[numerology];
+    counters[numerology] = (index + 1) % pool.size();
+
+    return *pool[index];
+  }
+
+  /// \brief Associates the given processor pool with this repository.
+  ///
+  /// \param[in] scs Subcarrier spacing.
+  /// \param[in] obj New processor pool for the given numerology.
+  void insert(subcarrier_spacing scs, processor_pool&& obj)
+  {
+    unsigned numerology = to_numerology_value(scs);
+    ocudu_assert(numerology < NOF_NUMEROLOGIES, "Invalid numerology ({}).", numerology);
+
+    processor_pool& pool = numerologies[numerology];
+    ocudu_assert(pool.empty(), "Numerology ({}) already has processors.", numerology);
+
+    numerologies[numerology] = std::move(obj);
+  }
+
+  /// Stops all the instances.
+  void stop()
+  {
+    for (auto& procs : numerologies) {
+      for (auto& proc : procs) {
+        proc->stop();
+      }
+    }
+  }
+};
+
+} // namespace ocudu

@@ -1,0 +1,450 @@
+module o-ran-file-management {
+  yang-version 1.1;
+  namespace "urn:o-ran:file-management:1.0";
+  prefix "o-ran-file-mgmt";
+
+
+  import ietf-netconf-acm {
+    prefix nacm;
+    reference
+      "RFC 8341: Network Configuration Access Control Model";
+  }
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the configuration and operations for handling upload.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 10.2.0
+
+      1) Improve YANG description enforce typing of IPv6 addresses";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2023-04-10" {
+    description
+      "version 10.1.0
+
+      1) Remove crypto-types dependency";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2022-08-15" {
+    description
+      "version 10.0.0
+
+      1) added password for FTPES
+      2) clarified path/folder description ";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 7.1.0
+
+      1) typographical corrections";
+
+    reference "ORAN-WG4.M.0-v07.00";
+  }
+
+  revision "2021-07-26" {
+    description
+      "version 7.0.0
+
+      1) added FTPES support";
+
+    reference "ORAN-WG4.M.0-v07.00";
+  }
+
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) backward compatible changes to correct sFTP Server Authentication .
+      2) minor fixes according to lack of descriptions
+      3) backward compatible changes to introduce groupings";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  /***********************************************/
+  /*  Identities for Asymmetric Key Algorithms   */
+  /***********************************************/
+
+  identity asymmetric-key-algorithm {
+    description
+      "Base identity from which all asymmetric key
+       encryption Algorithm.";
+  }
+
+  identity rsa1024 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 1024-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity rsa2048 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 2048-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity rsa3072 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 3072-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity rsa4096 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 4096-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity rsa7680 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 7680-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity rsa15360 {
+    base asymmetric-key-algorithm;
+    description
+      "The RSA algorithm using a 15360-bit key.";
+    reference
+      "RFC 8017:
+         PKCS #1: RSA Cryptography Specifications Version 2.2.";
+  }
+
+  identity secp192r1 {
+    base asymmetric-key-algorithm;
+    description
+      "The ECDSA algorithm using a NIST P256 Curve.";
+    reference
+      "RFC 6090:
+         Fundamental Elliptic Curve Cryptography Algorithms.";
+  }
+  identity secp224r1 {
+    base asymmetric-key-algorithm;
+    description
+      "The ECDSA algorithm using a NIST P256 Curve.";
+    reference
+      "RFC 6090:
+         Fundamental Elliptic Curve Cryptography Algorithms.";
+  }
+
+  identity secp256r1 {
+    base asymmetric-key-algorithm;
+    description
+      "The ECDSA algorithm using a NIST P256 Curve.";
+    reference
+      "RFC 6090:
+         Fundamental Elliptic Curve Cryptography Algorithms.";
+  }
+
+  identity secp384r1 {
+    base asymmetric-key-algorithm;
+    description
+      "The ECDSA algorithm using a NIST P256 Curve.";
+    reference
+      "RFC 6090:
+         Fundamental Elliptic Curve Cryptography Algorithms.";
+  }
+
+  identity secp521r1 {
+    base asymmetric-key-algorithm;
+    description
+      "The ECDSA algorithm using a NIST P256 Curve.";
+    reference
+      "RFC 6090:
+         Fundamental Elliptic Curve Cryptography Algorithms.";
+  }
+
+  /**********************************************************/
+  /*   Typedefs for identityrefs to above base identities   */
+  /**********************************************************/
+
+  typedef asymmetric-key-algorithm-ref {
+    type identityref {
+      base asymmetric-key-algorithm;
+    }
+    description
+      "This typedef enables importing modules to easily define an
+       identityref to the 'asymmetric-key-algorithm'
+       base identity.";
+  }
+
+  grouping file-path-grouping {
+    description "Grouping, that provides local path and remote path for the
+    purpose of File Management scenarios.";
+
+
+    leaf local-logical-file-path {
+      type string;
+      mandatory true;
+      description "URI specifying the complete logical path relative to the root of the logical file system
+      structure (the common root for o-ran/log, o-ran/pm, o-ran/transceiver or o-ran/beamforming) of the file
+      to upload/download (no wildcard is allowed), including a file name and its extension.
+      Example: 'o-ran/log/file_1.abc', where 'o-ran/log/' represents relative path to folder containing log files
+      as specified by O-RAN, 'file_1' represents desired filename and 'abc' represents desired filename's extension.
+      The content shall conform to RFC3986 'Uniform Resource Identifier (URI): Generic Syntax'";
+    }
+
+    leaf remote-file-path {
+      type string;
+      mandatory true;
+      description "URI specifying the remote-file-path on O-DU/SMO or on stand-alone file server.
+      The content shall conform to RFC3986 'Uniform Resource Identifier (URI): Generic Syntax'.
+      When upload/download is via sftp, the format shall be of the form
+      sftp://<username>@<host>[:port]/path
+      When upload/download is via ftpes, the format shall be of the form
+      ftpes://<username>@<host>[:port]/path
+      IPv6 addresses are distinguished by enclosing the IP literal within square brackets ('[' and ']') as defined by RFC3986 e.g., sftp://user@[2001:0:130F::9C0:876A:130B]:22/path.
+
+      Note, ftpes is not an IANA registered URI scheme, but used here to signal
+      that a file transfer should be performed over FTPES";
+    }
+  }
+
+  grouping output-status-grouping {
+    description "Status grouping";
+
+    leaf status {
+      type enumeration {
+        enum SUCCESS {
+            description "";}
+        enum FAILURE {
+            description "";}
+      }
+      description "Operation status";
+      }
+
+    leaf reject-reason {
+      when "../status = 'FAILURE'";
+      type string;
+      description "";
+    }
+  }
+
+  grouping credential-information {
+    description "Type of authentication to use for file upload or download.";
+    choice credentials {
+      case password {
+        container password {
+          presence true;
+          leaf password {
+            type string;
+            mandatory true;
+            description
+              "password used for O-RU authentication to sFTP server for the associated username defined in the remote-file-path.";
+          }
+          description
+            "password for O-RU authentication method in use. This information
+            shall be ignored by an O-RU that is using FTPES based file transfer";
+        }
+        container server {
+          list keys {
+            key algorithm;
+            ordered-by user;
+            uses public-key-grouping;
+            description
+              "List of allowed algorithms with its keys";
+          }
+          description
+            "SSH Key for file server authentication";
+        }
+      }
+      case certificate {
+        container certificate {
+          presence true;
+          description
+            "certificate authentication method in use";
+        }
+
+      }
+     description "";
+    }
+    container application-layer-credential{
+
+      leaf appl-password {
+            type string;
+            description
+             "The parameter represents the password which may be needed for O-RU application level authentication.
+             For example, to perform authenticatation towards an FTPes server which does not allow anonymous account,
+             in addition to X.509v3 certificate for TLS authentication, password configured here need to be used together with username defined in the remote-file-path  ";
+      }
+      description
+        "Application layer credential information";
+    }
+  }
+
+  grouping retrieve-input {
+    description "Grouping for information retrieval RPC input";
+    leaf logical-path {
+      type string;
+      mandatory true;
+      description "URL specifying the logical path relative to the root of the logical file system
+      structure (the common root for o-ran/log, o-ran/pm, o-ran/transceiver or o-ran/beamforming)
+      of the files to be listed.";
+    }
+    leaf file-name-filter {
+      type string;
+      description "Filter which needs to be applied on the result list of file names (* is allowed as wild-card).";
+    }
+  }
+
+  grouping retrieve-output {
+    description "Grouping for information retrieval RPC output";
+    uses output-status-grouping;
+    leaf-list file-list {
+      when "../status = 'SUCCESS'";
+      type string;
+      description "List of files in the unit with the filter applied.";
+    }
+  }
+
+  grouping public-key-grouping {
+    description
+      "A public key.
+
+       The 'algorithm' and 'public-key' nodes are not
+       mandatory because they MAY be defined in <operational>.
+       Implementations SHOULD assert that these values are
+       either configured or that they exist in <operational>.";
+    leaf algorithm {
+      nacm:default-deny-write;
+      type asymmetric-key-algorithm-ref;
+      must '../public-key';
+      description
+        "Identifies the key's algorithm.  More specifically,
+         this leaf specifies how the 'public-key' binary leaf
+         is encoded.";
+      reference
+        "RFC CCCC: Common YANG Data Types for Cryptography";
+    }
+    leaf public-key {
+      nacm:default-deny-write;
+      type binary;
+      must '../algorithm';
+      description
+        "A binary that contains the value of the public key.  The
+         interpretation of the content is defined by the key
+         algorithm.  For example, a DSA key is an integer, an RSA
+         key is represented as RSAPublicKey as defined in
+         RFC 8017, and an Elliptic Curve Cryptography (ECC) key
+         is represented using the 'publicKey' described in
+         RFC 5915.";
+      reference
+        "RFC 8017: Public-Key Cryptography Standards (PKCS) #1:
+                   RSA Cryptography Specifications Version 2.2.
+         RFC 5915: Elliptic Curve Private Key Structure.";
+    }
+  }
+
+// RPCs
+
+  rpc file-upload {
+    description "Management plane trigger to upload file from O-RU to file-server";
+    input {
+      uses file-path-grouping;
+      uses credential-information;
+    }
+    output {
+      uses output-status-grouping;
+    }
+  }
+
+  rpc retrieve-file-list {
+    description "List all the files in the logical O-RAN unit (* is allowed as wild-card).";
+    input {
+      uses retrieve-input;
+
+    }
+    output {
+      uses retrieve-output;
+    }
+  }
+
+  rpc file-download {
+    description
+      "Management plane trigger to download file from file-server to O-RU.";
+    input {
+      uses file-path-grouping;
+      uses credential-information;
+    }
+    output {
+      uses output-status-grouping;
+    }
+  }
+
+  notification file-upload-notification {
+    uses file-path-grouping;
+    uses output-status-grouping;
+    description "";
+  }
+
+  notification file-download-event {
+    uses file-path-grouping;
+    uses output-status-grouping;
+    description "";
+  }
+}

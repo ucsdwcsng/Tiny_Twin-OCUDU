@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+# Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test_data)
+set(TEST_DATA_DIR ${CMAKE_CURRENT_BINARY_DIR}/test_data)
+
+add_subdirectory(channel_coding)
+add_subdirectory(channel_modulation)
+add_subdirectory(channel_processors)
+add_subdirectory(equalization)
+add_subdirectory(sequence_generators)
+add_subdirectory(signal_processors)
+
+set_directory_properties(PROPERTIES LABELS "phy")
+
+add_executable(channel_state_information_test channel_state_information_test.cpp)
+target_link_libraries(channel_state_information_test ocudulog fmt GTest::gtest GTest::gtest_main)
+add_test(channel_state_information_test channel_state_information_test)
+
+add_executable(downlink_processor_pool_test downlink_processor_pool_test.cpp)
+target_link_libraries(downlink_processor_pool_test ocudu_ran ocudu_upper_phy ocudulog GTest::gtest GTest::gtest_main)
+add_test(downlink_processor_pool_test downlink_processor_pool_test)
+
+add_executable(downlink_processor_test downlink_processor_test.cpp)
+target_link_libraries(downlink_processor_test ocudu_downlink_processor ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(downlink_processor_test)
+
+add_executable(hard_decision_test hard_decision_test.cpp)
+target_link_libraries(hard_decision_test log_likelihood_ratio ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(hard_decision_test)
+
+add_executable(log_likelihood_ratio_test log_likelihood_ratio_test.cpp)
+target_include_directories(log_likelihood_ratio_test PRIVATE ${CMAKE_SOURCE_DIR}/tests/unittests)
+target_link_libraries(log_likelihood_ratio_test log_likelihood_ratio ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(log_likelihood_ratio_test)
+
+add_executable(rx_buffer_pool_test rx_buffer_pool_test.cpp)
+target_include_directories(rx_buffer_pool_test PRIVATE ${CMAKE_SOURCE_DIR}/tests/unittests)
+target_link_libraries(rx_buffer_pool_test ocudu_upper_phy_support ocudulog GTest::gtest ocudu_support)
+gtest_discover_tests(rx_buffer_pool_test)
+
+add_executable(uplink_processor_test uplink_processor_test.cpp)
+target_link_libraries(uplink_processor_test ocudu_uplink_processor ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(uplink_processor_test)
+
+add_executable(uplink_request_processor_test uplink_request_processor_test.cpp)
+target_link_libraries(uplink_request_processor_test ocudu_uplink_processor ocudu_phy_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(uplink_request_processor_test)
+
+add_executable(upper_phy_rx_symbol_handler_test upper_phy_rx_symbol_handler_test.cpp)
+target_link_libraries(upper_phy_rx_symbol_handler_test ocudu_upper_phy ocudu_phy_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(upper_phy_rx_symbol_handler_test)

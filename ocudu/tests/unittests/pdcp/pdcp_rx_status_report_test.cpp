@@ -1,0 +1,269 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "pdcp_rx_status_report_test.h"
+#include "ocudu/support/bit_encoding.h"
+#include "ocudu/support/test_utils.h"
+#include <gtest/gtest.h>
+#include <queue>
+
+using namespace ocudu;
+
+/// Test correct construction of PDCP status report
+/// All PDUs are received before the t-Reordering expires.
+TEST_P(pdcp_rx_status_report_test, build_status_report)
+{
+  uint32_t count = 262143;
+  set_sn_size(std::get<pdcp_sn_size>(GetParam()));
+  set_algo(std::get<unsigned>(GetParam()));
+  set_header_compression(std::get<rohc_test_params>(GetParam()).config);
+  init();
+
+  ocudu::test_delimit_logger delimiter(
+      "RX build status report test, no t-Reordering. SN_SIZE={} COUNT=[{}, {}]", config.sn_size, count + 1, count);
+
+  pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
+  pdcp_rx->set_state(init_state);
+
+  // Check status report in the initial state (no bitmap present)
+  byte_buffer status_report = pdcp_rx->compile_status_report();
+  EXPECT_EQ(status_report.length(), 5);
+  {
+    bit_decoder dec(status_report);
+    uint8_t     hdr_first_byte;
+    dec.unpack(hdr_first_byte, 8);
+    EXPECT_EQ(hdr_first_byte, 0x00);
+    uint32_t hdr_fmc;
+    dec.unpack(hdr_fmc, 32);
+    EXPECT_EQ(hdr_fmc, count);
+  }
+
+  uint8_t exp_bitmap = 0;
+  for (uint32_t i = count + 5; i > count; i--) {
+    byte_buffer test_pdu;
+    get_test_pdu(i, test_pdu);
+    pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu)).value());
+    // Wait for crypto and reordering
+    wait_pending_crypto();
+    worker.run_pending_tasks();
+
+    // Check status report while Rx'ing PDUs in reverse order (bitmap present)
+    status_report = pdcp_rx->compile_status_report();
+    EXPECT_EQ(status_report.length(), 6);
+    {
+      bit_decoder dec(status_report);
+      uint8_t     hdr_first_byte;
+      dec.unpack(hdr_first_byte, 8);
+      EXPECT_EQ(hdr_first_byte, 0x00);
+      uint32_t hdr_fmc;
+      dec.unpack(hdr_fmc, 32);
+      EXPECT_EQ(hdr_fmc, count);
+      uint8_t bitmap;
+      dec.unpack(bitmap, 8);
+      exp_bitmap |= (0b00001000 << (count + 5 - i));
+      ASSERT_EQ(bitmap, exp_bitmap);
+    }
+  }
+
+  byte_buffer test_pdu;
+  get_test_pdu(count, test_pdu);
+  pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu)).value());
+
+  // Wait for crypto and reordering
+  wait_pending_crypto();
+  worker.run_pending_tasks();
+
+  // Check status report in the final state (no bitmap present)
+  status_report = pdcp_rx->compile_status_report();
+  EXPECT_EQ(status_report.length(), 5);
+  {
+    bit_decoder dec(status_report);
+    uint8_t     hdr_first_byte;
+    dec.unpack(hdr_first_byte, 8);
+    EXPECT_EQ(hdr_first_byte, 0x00);
+    uint32_t hdr_fmc;
+    dec.unpack(hdr_fmc, 32);
+    EXPECT_EQ(hdr_fmc, count + 6);
+  }
+}
+
+/// Test correct construction of a truncated PDCP status report (9000 Bytes)
+TEST_P(pdcp_rx_status_report_test, build_truncated_status_report)
+{
+  // this test only applies to 18-bit SNs.
+  if (std::get<pdcp_sn_size>(GetParam()) == pdcp_sn_size::size12bits) {
+    return;
+  }
+
+  uint32_t count = 262143;
+
+  ocudu::test_delimit_logger delimiter(
+      "RX build status report test, no t-Reordering. SN_SIZE={} COUNT=[{}, {}]", config.sn_size, count + 1, count);
+
+  set_sn_size(std::get<pdcp_sn_size>(GetParam()));
+  set_algo(std::get<unsigned>(GetParam()));
+  set_header_compression(std::get<rohc_test_params>(GetParam()).config);
+  init();
+
+  pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
+  pdcp_rx->set_state(init_state);
+
+  // Check status report in the initial state (no bitmap present)
+  byte_buffer status_report = pdcp_rx->compile_status_report();
+  EXPECT_EQ(status_report.length(), 5);
+  {
+    bit_decoder dec(status_report);
+    uint8_t     hdr_first_byte;
+    dec.unpack(hdr_first_byte, 8);
+    EXPECT_EQ(hdr_first_byte, 0x00);
+    uint32_t hdr_fmc;
+    dec.unpack(hdr_fmc, 32);
+    EXPECT_EQ(hdr_fmc, count);
+  }
+
+  byte_buffer test_pdu1;
+  get_test_pdu(count + (9000 - 5) * 8, test_pdu1); // Rx PDU with a COUNT value at max capacity of the report
+  pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu1)).value());
+  // Wait for crypto and reordering
+  wait_pending_crypto();
+  worker.run_pending_tasks();
+
+  byte_buffer test_pdu2;
+  get_test_pdu(count + 1 + (9000 - 5) * 8, test_pdu2); // Rx PDU with a COUNT value beyond max capacity of the report
+  pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu2)).value());
+  // Wait for crypto and reordering
+  wait_pending_crypto();
+  worker.run_pending_tasks();
+
+  // Check status report in the final state (truncated bitmap present)
+  status_report = pdcp_rx->compile_status_report();
+  EXPECT_EQ(status_report.length(), 9000);
+  {
+    bit_decoder dec(status_report);
+    uint8_t     hdr_first_byte;
+    dec.unpack(hdr_first_byte, 8);
+    EXPECT_EQ(hdr_first_byte, 0x00);
+    uint32_t hdr_fmc;
+    dec.unpack(hdr_fmc, 32);
+    EXPECT_EQ(hdr_fmc, count);
+    uint8_t bitmap;
+    for (uint32_t i = 0; i < (9000 - 5); i++) {
+      ASSERT_TRUE(dec.unpack(bitmap, 8));
+      if (i < (9000 - 5) - 1) {
+        ASSERT_EQ(bitmap, 0x0); // whole bitmap shall be zeros (all missing)
+      } else {
+        ASSERT_EQ(bitmap, 0x1); // only the last one is received
+      }
+    }
+  }
+}
+
+/// Test reception and forwarding of PDCP status report
+TEST_P(pdcp_rx_status_report_test, rx_status_report)
+{
+  set_sn_size(std::get<pdcp_sn_size>(GetParam()));
+  set_algo(std::get<unsigned>(GetParam()));
+  set_header_compression(std::get<rohc_test_params>(GetParam()).config);
+  init();
+
+  pdcp_rx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
+
+  ASSERT_TRUE(test_frame->status_report_queue.empty());
+
+  // Build status report dummy to be forwarded to the TX entity (i.e. the test_frame)
+  byte_buffer buf = {};
+  bit_encoder enc(buf);
+
+  // Pack PDU header
+  enc.pack(to_number(pdcp_dc_field::control), 1);
+  enc.pack(to_number(pdcp_control_pdu_type::status_report), 3);
+  enc.pack(0b0000, 4);
+
+  // Pack something into FMC field
+  enc.pack(0xc0cac01a, 32);
+
+  // Pack some bitmap
+  enc.pack(0xcafe, 16);
+
+  // Put into PDCP Rx entity
+  pdcp_rx->handle_pdu(byte_buffer_chain::create(buf.deep_copy().value()).value());
+
+  // Wait for crypto and reordering
+  wait_pending_crypto();
+  worker.run_pending_tasks();
+
+  // Check the status report was forwared to the Tx entity
+  ASSERT_FALSE(test_frame->status_report_queue.empty());
+  ASSERT_EQ(test_frame->status_report_queue.front(), buf);
+  test_frame->status_report_queue.pop();
+  ASSERT_TRUE(test_frame->status_report_queue.empty());
+}
+
+/// Test reception and forwarding of PDCP status report
+TEST_P(pdcp_rx_status_report_test, rx_status_report_with_invalid_cpt)
+{
+  set_sn_size(std::get<pdcp_sn_size>(GetParam()));
+  set_algo(std::get<unsigned>(GetParam()));
+  set_header_compression(std::get<rohc_test_params>(GetParam()).config);
+  init();
+
+  pdcp_rx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
+
+  ASSERT_TRUE(test_frame->status_report_queue.empty());
+
+  // Build status report dummy to be forwarded to the TX entity (i.e. the test_frame)
+  byte_buffer buf = {};
+  bit_encoder enc(buf);
+
+  // Pack PDU header
+  enc.pack(to_number(pdcp_dc_field::control), 1);
+  enc.pack(0b111, 3);
+  enc.pack(0b0000, 4);
+
+  // Pack something into FMC field
+  enc.pack(0xc0cac01a, 32);
+
+  // Pack some bitmap
+  enc.pack(0xcafe, 16);
+
+  // Put into PDCP Rx entity
+  pdcp_rx->handle_pdu(byte_buffer_chain::create(buf.deep_copy().value()).value());
+
+  // Wait for crypto and reordering
+  wait_pending_crypto();
+  worker.run_pending_tasks();
+
+  // Check the status report was not forwared to the Tx entity
+  ASSERT_TRUE(test_frame->status_report_queue.empty());
+}
+
+///////////////////////////////////////////////////////////////////
+// Finally, instantiate all testcases for each supported SN size //
+///////////////////////////////////////////////////////////////////
+static std::string
+test_param_info_to_string(const ::testing::TestParamInfo<std::tuple<pdcp_sn_size, unsigned, rohc_test_params>>& info)
+{
+  fmt::memory_buffer buffer;
+  fmt::format_to(std::back_inserter(buffer),
+                 "{}bit_nia{}_nea{}_{}",
+                 pdcp_sn_size_to_uint(std::get<pdcp_sn_size>(info.param)),
+                 std::get<unsigned>(info.param),
+                 std::get<unsigned>(info.param),
+                 std::get<rohc_test_params>(info.param).name);
+  return fmt::to_string(buffer);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    pdcp_rx_test_all_variants,
+    pdcp_rx_status_report_test,
+    ::testing::Combine(::testing::Values(pdcp_sn_size::size12bits, pdcp_sn_size::size18bits),
+                       ::testing::Values(1),
+                       ::testing::Values(cfg_rohc_disabled, cfg_rohc_uncompressed, cfg_rohc_compressed)),
+    test_param_info_to_string);
+
+int main(int argc, char** argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

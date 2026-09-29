@@ -1,0 +1,63 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-sidelink</htmlTabRef>
+  <htmlTabName>Sidelink test</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-nr-ue-asan</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G UE 1</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_sidelink</yaml_path>
+    <services>oai-nr-ue-1</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G UE 2</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_sidelink</yaml_path>
+    <services>oai-nr-ue-2</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>20</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_sidelink</yaml_path>
+    <analysis>
+      <services>oai-nr-ue-1</services>
+      <service>oai-nr-ue-2=ContainsString=PSBCH RX:OK</service>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-nr-ue-asan</images>
+  </testCase>
+
+</testCaseList>

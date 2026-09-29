@@ -1,0 +1,56 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/ran/resource_allocation/resource_allocation_frequency.h"
+#include "ocudu/ran/resource_allocation/sliv.h"
+#include "ocudu/support/ocudu_assert.h"
+
+using namespace ocudu;
+
+unsigned ocudu::ra_frequency_type1_get_riv(const ra_frequency_type1_configuration& config)
+{
+  ocudu_assert(config.length_vrb >= 1, "The number of contiguous allocated blocks must be greater than or equal to 1.");
+  ocudu_assert(config.length_vrb <= (config.N_bwp_size - config.start_vrb),
+               "The number of contiguous allocated blocks exceeds the maximum ({}).",
+               config.N_bwp_size - config.start_vrb);
+
+  return sliv_from_s_and_l(config.N_bwp_size, config.start_vrb, config.length_vrb);
+}
+
+ra_frequency_type1_configuration ocudu::ra_frequency_type1_from_riv(unsigned N_bwp_size, unsigned riv)
+{
+  ra_frequency_type1_configuration out;
+  out.N_bwp_size = N_bwp_size;
+  sliv_to_s_and_l(N_bwp_size, riv, out.start_vrb, out.length_vrb);
+  return out;
+}
+
+unsigned ocudu::ra_frequency_type1_special_get_riv(const ra_frequency_type1_special_configuration& config)
+{
+  // Determine K.
+  unsigned K = 8;
+  while (K > 1) {
+    if (K <= (config.N_bwp_active / config.N_bwp_initial)) {
+      break;
+    }
+    K /= 2;
+  }
+
+  unsigned start_vrb  = config.start_vrb / K;
+  unsigned length_vrb = config.length_vrb / K;
+
+  ocudu_assert(length_vrb >= 1, "The number of contiguous allocated blocks must be greater than or equal to 1.");
+  ocudu_assert(length_vrb <= (config.N_bwp_initial - start_vrb),
+               "The number of contiguous allocated blocks ({}) exceeds the maximum ({}). K={} RB_start={} L_RBs={} "
+               "N_bwp_initial={} N_bwp_active={}.",
+               length_vrb,
+               config.N_bwp_initial - start_vrb,
+               K,
+               config.start_vrb,
+               config.length_vrb,
+               config.N_bwp_initial,
+               config.N_bwp_active);
+
+  return sliv_from_s_and_l(config.N_bwp_initial, start_vrb, length_vrb);
+}

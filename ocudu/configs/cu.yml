@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# Example config for a locally deployed CU listening on the localhost interface for a DU connection
+
+cu_cp:
+  amf:
+    addrs: 127.0.1.100
+    bind_addrs: 127.0.0.1
+    supported_tracking_areas:
+      - tac: 7
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+  f1ap:
+    bind_addrs: 127.0.10.1
+
+cu_up:
+  f1u:
+    socket:
+      - bind_addr: 127.0.10.1
+
+log:
+  filename: /tmp/cu.log
+  all_level: warning
+
+pcap:
+  ngap_enable: false
+  ngap_filename: /tmp/cu_ngap.pcap

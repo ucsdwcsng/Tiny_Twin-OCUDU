@@ -1,0 +1,15 @@
+*.o
+*~
+*.pyc
+/build
+debug_output.txt
+*.tmp
+helper_build_files/symver.map
+tools/jbpf_defs.py
+libck-jbpf
+out/
+.vscode/
+*.swp
+*.swo
+*.swn
+tools/preemption_patcher/jbpf_defs.py

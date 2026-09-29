@@ -1,0 +1,19 @@
+#!/bin/sh
+set -x
+
+mkdir -p /var/log/nr-log
+echo "NR-CUUP stop:" >> /var/log/nr-log/nr-systemctl.log
+systemctl stop nr-cuup.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-CUUP disable:" >> /var/log/nr-log/nr-systemctl.log
+systemctl disable nr-cuup.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-SOFTMODEM stop:" >> /var/log/nr-log/nr-systemctl.log
+systemctl stop nr-softmodem.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-SOFTMODEM disable:" >> /var/log/nr-log/nr-systemctl.log
+systemctl disable nr-softmodem.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+# Then update library cache
+echo "Running ldconfig after uninstall..." >> /var/log/nr-log/nr-systemctl.log
+if command -v ldconfig >> /var/log/nr-log/nr-systemctl.log 2>&1; then
+    ldconfig
+else
+    echo "Warning: ldconfig not found"
+fi

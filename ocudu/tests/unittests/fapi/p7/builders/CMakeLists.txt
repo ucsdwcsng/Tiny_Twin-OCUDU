@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+set_directory_properties(PROPERTIES LABELS "fapi")
+
+add_executable(crc_indication_builder_test crc_indication_test.cpp)
+target_link_libraries(crc_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(crc_indication_builder_test)
+
+add_executable(dl_csi_pdu_builder_test dl_csi_pdu_test.cpp)
+target_link_libraries(dl_csi_pdu_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_csi_pdu_builder_test)
+
+add_executable(dl_pdcch_builder_test dl_pdcch_pdu_test.cpp)
+target_link_libraries(dl_pdcch_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_pdcch_builder_test)
+
+add_executable(dl_pdsch_builder_test dl_pdsch_pdu_test.cpp)
+target_link_libraries(dl_pdsch_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_pdsch_builder_test)
+
+add_executable(dl_prs_pdu_test dl_prs_pdu_test.cpp)
+target_link_libraries(dl_prs_pdu_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_prs_pdu_test)
+
+add_executable(dl_ssb_builder_test dl_ssb_pdu_test.cpp)
+target_link_libraries(dl_ssb_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_ssb_builder_test)
+
+add_executable(dl_tti_request_test dl_tti_request_test.cpp)
+target_link_libraries(dl_tti_request_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(dl_tti_request_test)
+
+add_executable(rach_indication_builder_test rach_indication_test.cpp)
+target_link_libraries(rach_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(rach_indication_builder_test)
+
+add_executable(rx_data_indication_builder_test rx_data_indication_test.cpp)
+target_link_libraries(rx_data_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(rx_data_indication_builder_test)
+
+add_executable(slot_indication_builder_test slot_indication_test.cpp)
+target_link_libraries(slot_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(slot_indication_builder_test)
+
+add_executable(srs_indication_builder_test srs_indication_test.cpp)
+target_link_libraries(srs_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(srs_indication_builder_test)
+
+add_executable(tx_data_request_builder_test tx_data_request_test.cpp)
+target_link_libraries(tx_data_request_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(tx_data_request_builder_test)
+
+add_executable(tx_precoding_and_beamforming_pdu_builder_test tx_precoding_and_beamforming_pdu_test.cpp)
+target_link_libraries(tx_precoding_and_beamforming_pdu_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(tx_precoding_and_beamforming_pdu_builder_test)
+
+add_executable(uci_indication_builder_test uci_indication_test.cpp)
+target_link_libraries(uci_indication_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(uci_indication_builder_test)
+
+add_executable(ul_dci_request_builder_test ul_dci_request_test.cpp)
+target_link_libraries(ul_dci_request_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(ul_dci_request_builder_test)
+
+add_executable(ul_prach_builder_test ul_prach_pdu_test.cpp)
+target_link_libraries(ul_prach_builder_test ocudu_support ocudulog GTest::gtest GTest::gtest_main)
+gtest_discover_tests(ul_prach_builder_test)
+
+add_executable(ul_pucch_builder_test ul_pucch_pdu_test.cpp)
+target_link_libraries(ul_pucch_builder_test ocudu_support GTest::gtest gtest_main)
+gtest_discover_tests(ul_pucch_builder_test)
+
+add_executable(ul_pusch_builder_test ul_pusch_pdu_test.cpp)
+target_link_libraries(ul_pusch_builder_test ocudu_support ocudulog GTest::gtest gtest_main)
+gtest_discover_tests(ul_pusch_builder_test)
+
+add_executable(ul_srs_builder_test ul_srs_pdu_test.cpp)
+target_link_libraries(ul_srs_builder_test ocudu_support ocudulog GTest::gtest gtest_main)
+gtest_discover_tests(ul_srs_builder_test)
+
+add_executable(ul_tti_request_builder_test ul_tti_request_test.cpp)
+target_link_libraries(ul_tti_request_builder_test ocudu_support ocudulog GTest::gtest gtest_main)
+gtest_discover_tests(ul_tti_request_builder_test)

@@ -1,0 +1,89 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "cu_up_processor_context.h"
+#include "ocudu/e1ap/cu_cp/e1ap_cu_cp.h"
+#include "ocudu/support/async/async_task.h"
+
+namespace ocudu::ocucp {
+
+/// Interface for an E1AP notifier to communicate with the CU-UP processor.
+class cu_up_processor_e1ap_interface
+{
+public:
+  virtual ~cu_up_processor_e1ap_interface() = default;
+
+  /// Cancel pending tasks for a given UE, so it can be safely removed.
+  virtual void stop(cu_cp_ue_index_t ue_index) = 0;
+
+  /// \brief Get the CU-UP index.
+  /// \return The CU-UP index.
+  virtual cu_cp_cu_up_index_t get_cu_up_index() = 0;
+
+  /// \brief Get the CU-UP processor context.
+  /// \return The CU-UP processor context.
+  virtual cu_up_processor_context& get_context() = 0;
+
+  /// \brief Handle the reception of an GNB-CU-UP E1 Setup Request message and transmit the GNB-CU-UP E1 Setup Response
+  /// or GNB-CU-UP E1 Setup Failure.
+  /// \param[in] msg The received GNB-CU-UP E1 Setup Request message.
+  virtual void handle_cu_up_e1_setup_request(const cu_up_e1_setup_request& msg) = 0;
+
+  /// \brief Initiate the E1 Reset procedure as per TS 37.483 section 8.2.1.
+  /// \param[in] reset The E1 Reset message to transmit.
+  virtual async_task<void> handle_cu_cp_e1_reset_message(const cu_cp_reset& reset) = 0;
+
+  /// \brief Get the E1AP message handler interface of the CU-UP processor object.
+  /// \return The E1AP message handler interface of the CU-UP processor object.
+  virtual e1ap_message_handler& get_e1ap_message_handler() = 0;
+
+  /// \brief Get the E1AP bearer context manager interface.
+  /// \return The E1AP bearer context manager interface of the CU-UP processor object.
+  virtual e1ap_bearer_context_manager& get_e1ap_bearer_context_manager() = 0;
+
+  /// \brief Get the E1AP bearer context removal interface.
+  /// \return The E1AP bearer context removal interface of the CU-UP processor object.
+  virtual e1ap_bearer_context_removal_handler& get_e1ap_bearer_context_removal_handler() = 0;
+
+  /// \brief Get the E1AP statistic interface.
+  /// \return The E1AP statistic interface of the CU-UP processor object.
+  virtual e1ap_statistics_handler& get_e1ap_statistics_handler() = 0;
+};
+
+/// Methods used by CU-UP processor to notify about CU-UP specific events.
+class cu_up_processor_cu_up_management_notifier
+{
+public:
+  virtual ~cu_up_processor_cu_up_management_notifier() = default;
+
+  /// \brief Notifies the CU-CP about a new CU-UP connection.
+  virtual void on_new_cu_up_connection() = 0;
+
+  /// \brief Notifies about a failed CU-CP E1 Setup procedure.
+  /// The corresponding CU-UP processor will be removed now.
+  /// \param[in] cu_up_index The index of the CU-UP processor to delete.
+  virtual void on_cu_up_remove_request_received(const cu_cp_cu_up_index_t cu_up_index) = 0;
+};
+
+class cu_up_ue_handler
+{
+public:
+  virtual ~cu_up_ue_handler() = default;
+
+  /// \brief Update the index of an UE.
+  virtual void update_ue_index(cu_cp_ue_index_t ue_index, cu_cp_ue_index_t old_ue_index) = 0;
+};
+
+class cu_up_processor : public cu_up_processor_e1ap_interface, public cu_up_ue_handler
+{
+public:
+  virtual ~cu_up_processor() = default;
+
+  /// \brief Retrieve E1AP handler for the respective CU-UP.
+  virtual e1ap_cu_cp& get_e1ap_handler() = 0;
+};
+
+} // namespace ocudu::ocucp

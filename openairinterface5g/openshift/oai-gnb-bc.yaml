@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+
+kind: BuildConfig
+apiVersion: build.openshift.io/v1
+metadata:
+  name: "oai-gnb"
+  namespace: "oaicicd-ran"
+spec:
+    resources:
+      limits:
+        cpu: 2
+        memory: 2Gi
+      requests:
+        cpu: 0.5
+        memory: 1Gi
+    nodeSelector:
+        node-role.kubernetes.io/ran-build: ""
+    runPolicy: "Serial"
+    source:
+        type: "Binary"
+    strategy:
+        dockerStrategy:
+            dockerfilePath: "docker/Dockerfile.gNB.rhel9"
+    output:
+        to:
+            kind: "ImageStreamTag"
+            name: "oai-gnb:latest"

@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "pdcp_sn.h"
+#include "ocudu/pdcp/pdcp_config.h"
+#include "ocudu/ran/rb_id.h"
+#include "ocudu/support/enum_utils.h"
+
+namespace ocudu {
+
+// Header length
+constexpr size_t pdcp_data_pdu_header_size_12bit = 2;
+constexpr size_t pdcp_data_pdu_header_size_18bit = 3;
+constexpr size_t pdcp_data_pdu_header_size_max   = pdcp_data_pdu_header_size_18bit;
+constexpr size_t pdcp_data_pdu_header_size(pdcp_sn_size sn_size)
+{
+  switch (sn_size) {
+    case pdcp_sn_size::size12bits:
+      return pdcp_data_pdu_header_size_12bit;
+    case pdcp_sn_size::size18bits:
+      return pdcp_data_pdu_header_size_18bit;
+    case ocudu::pdcp_sn_size::invalid:
+      break;
+  }
+  ocudu_assertion_failure("Cannot determine PDCP data PDU header size: unsupported sn_size={}",
+                          pdcp_sn_size_to_uint(sn_size));
+  return pdcp_data_pdu_header_size_12bit;
+}
+
+// Window size
+constexpr size_t   pdcp_window_size_12bit = 2048;
+constexpr size_t   pdcp_window_size_18bit = 131072;
+constexpr uint32_t pdcp_window_size(pdcp_sn_size sn_size)
+{
+  switch (sn_size) {
+    case pdcp_sn_size::size12bits:
+      return pdcp_window_size_12bit;
+    case pdcp_sn_size::size18bits:
+      return pdcp_window_size_18bit;
+    case pdcp_sn_size::invalid:
+      break;
+  }
+  ocudu_assertion_failure("Cannot determine PDCP window size: unsupported sn_size={}", pdcp_sn_size_to_uint(sn_size));
+  return pdcp_window_size_12bit;
+}
+
+/// Base class used for both TX and RX PDCP entities.
+/// Stores common header and SN/HFN helpers
+class pdcp_entity_tx_rx_base
+{
+protected:
+  explicit pdcp_entity_tx_rx_base(rb_id_t       rb_id_,
+                                  pdcp_rb_type  rb_type_,
+                                  pdcp_rlc_mode rlc_mode_,
+                                  pdcp_sn_size  sn_size_) :
+    rb_id(rb_id_),
+    rb_type(rb_type_),
+    rlc_mode(rlc_mode_),
+    hdr_len_bytes((pdcp_data_pdu_header_size(sn_size_))),
+    window_size(pdcp_window_size(sn_size_)),
+    sn_size(sn_size_)
+  {
+    if (rb_id_.is_srb()) {
+      bearer_id = srb_id_to_uint(rb_id_.get_srb_id()) - 1;
+    } else {
+      bearer_id = to_underlying(rb_id_.get_drb_id()) - 1;
+    }
+  }
+
+  /// BEARER (defined as the radio bearer identifier in TS 33.501. It will use the value RB identity –1 as in TS 38.331)
+  /// Ref: TS 38.323 Sec. 5.9 Integrity protection and verification
+  uint8_t bearer_id;
+  rb_id_t rb_id;
+
+  /*
+   * RB helpers
+   */
+  const pdcp_rb_type  rb_type;
+  const pdcp_rlc_mode rlc_mode;
+  bool                is_srb() const { return rb_type == pdcp_rb_type::srb; }
+  bool                is_um() const { return rlc_mode == pdcp_rlc_mode::um; }
+  bool                is_am() const { return rlc_mode == pdcp_rlc_mode::am; }
+
+  /*
+   * Header and window helpers
+   */
+  const uint32_t hdr_len_bytes;
+  const uint32_t window_size;
+
+  /*
+   * COUNT overflow helpers
+   */
+  bool max_count_notified = false;
+  bool max_count_overflow = false;
+
+  /*
+   * SN, HFN and COUNT helpers
+   */
+  const pdcp_sn_size sn_size;
+  uint32_t           SN(uint32_t count) const { return pdcp_compute_sn(count, sn_size); }
+  uint32_t           HFN(uint32_t count) const { return pdcp_compute_hfn(count, sn_size); }
+  uint32_t           COUNT(uint32_t hfn, uint32_t sn) const { return pdcp_compute_count(hfn, sn, sn_size); }
+};
+
+} // namespace ocudu

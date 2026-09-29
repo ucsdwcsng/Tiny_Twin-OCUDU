@@ -1,0 +1,170 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>test-fdd-10-tm1</htmlTabRef>
+  <htmlTabName>Test-FDD-10MHz-TM1</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States (hutch)</desc>
+    <node>hutch</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States (carabe)</desc>
+    <node>carabe</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>hutch</node>
+    <images>oai-enb</images>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>carabe</node>
+    <images>oai-lte-ue</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>hutch</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy eNB (FDD/Band7/10MHz/B200) in a container</desc>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_10Mhz_tm1_magma</yaml_path>
+    <node>hutch</node>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>5</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>carabe</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy LTE-UE (FDD/Band7/10MHz/B200) in a container</desc>
+    <node>carabe</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_10Mhz_oai_ue_magma</yaml_path>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>10</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>ping (10MHz - 20 sec)</desc>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+    <id>lte_oai_ue_carabe</id>
+    <svr_id>nano-cn4g</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (10MHz - DL/10Mbps/UDP)(30 sec)(balanced profile)</desc>
+    <iperf_args>-u -b 10M -t 30 -R</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <id>lte_oai_ue_carabe</id>
+    <svr_id>nano-cn4g</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (10MHz - DL/TCP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-t 30 -R</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <id>lte_oai_ue_carabe</id>
+    <svr_id>nano-cn4g</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (10MHz - UL/10Mbps/UDP)(30 sec)(balanced profile)</desc>
+    <iperf_args>-u -b 10M -t 30</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <id>lte_oai_ue_carabe</id>
+    <svr_id>nano-cn4g</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy LTE-UE</desc>
+    <node>carabe</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_10Mhz_oai_ue_magma</yaml_path>
+    <analysis>
+      <services>lte_ue0</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>5</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy eNB</desc>
+    <node>hutch</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_10Mhz_tm1_magma</yaml_path>
+    <analysis>
+      <services>enb_mono_fdd=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States (hutch)</desc>
+    <node>hutch</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States (carabe)</desc>
+    <node>carabe</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on eNB Test Server</desc>
+    <node>hutch</node>
+    <images>oai-enb</images>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on LTE-UE Test Server</desc>
+    <node>carabe</node>
+    <images>oai-lte-ue</images>
+  </testCase>
+
+</testCaseList>

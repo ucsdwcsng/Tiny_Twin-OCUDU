@@ -1,0 +1,189 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/expected.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/phy/support/mask_types.h"
+#include "ocudu/phy/support/rb_allocation.h"
+#include "ocudu/phy/support/re_pattern.h"
+#include "ocudu/phy/support/resource_grid_writer.h"
+#include "ocudu/ran/dmrs/dmrs.h"
+#include "ocudu/ran/pdsch/pdsch_context.h"
+#include "ocudu/ran/precoding_beamforming_configuration.h"
+#include "ocudu/ran/ptrs/ptrs.h"
+#include "ocudu/ran/sch/ldpc_base_graph.h"
+#include "ocudu/ran/sch/modulation_scheme.h"
+#include "ocudu/ran/slot_point.h"
+#include "ocudu/support/shared_transport_block.h"
+
+namespace ocudu {
+
+class resource_grid_writer;
+class unique_tx_buffer;
+
+class pdsch_processor_notifier
+{
+public:
+  virtual ~pdsch_processor_notifier() = default;
+
+  virtual void on_finish_processing() = 0;
+};
+
+/// Describes the PDSCH processor interface.
+class pdsch_processor
+{
+public:
+  /// Defines the maximum number of codewords that can be encoded in a PDSCH transmission.
+  static constexpr unsigned MAX_NOF_TRANSPORT_BLOCKS = 2;
+
+  /// \brief Describes a codeword configuration.
+  /// \note The transport block size is given by the transport block data size.
+  struct codeword_description {
+    /// Indicates the modulation scheme.
+    modulation_scheme modulation;
+    /// Redundancy version index.
+    unsigned rv;
+    /// LDPC base graph to use for CW generation.
+    ldpc_base_graph_type ldpc_base_graph;
+  };
+
+  /// Parameters for the Phase Tracking Reference Signals (PT-RS).
+  struct ptrs_configuration {
+    /// Frequency domain density.
+    ptrs_frequency_density freq_density;
+    /// Time domain density.
+    ptrs_time_density time_density;
+    /// Resource element offset.
+    ptrs_re_offset re_offset;
+    /// \brief Ratio of PT-RS EPRE to PDSCH data EPRE in decibels.
+    ///
+    /// Parameter \f$\rho_{PTRS}f$ as per TS38.214 Section 4.1.
+    float ratio_ptrs_to_pdsch_data_dB;
+  };
+
+  /// \brief Describes the PDSCH processing parameters.
+  struct pdu_t {
+    /// Context information.
+    std::optional<pdsch_context> context;
+    /// Indicates the slot and numerology.
+    slot_point slot;
+    /// Provides \f$n_{RNTI}\f$ from TS38.211 Section 7.3.1.1 Scrambling.
+    rnti_t rnti;
+    /// Number of contiguous PRBs allocated to the BWP {1, ..., 275}.
+    unsigned bwp_size_rb;
+    /// BWP start RB index from Point A {0, ..., 274}.
+    unsigned bwp_start_rb;
+    /// Cyclic prefix type.
+    cyclic_prefix cp;
+    /// Provides codeword description.
+    static_vector<codeword_description, MAX_NOF_TRANSPORT_BLOCKS> codewords;
+    /// \brief Parameter \f$n_{ID}\f$ from TS38.211 Section 7.3.1.1.
+    ///
+    /// It is equal to:
+    /// - {0...1023} if the higher-layer parameter dataScramblingIdentityPDSCH if configured,
+    /// - \f$N^{cell}_{ID}\f$ otherwise.
+    unsigned n_id;
+    // Ignores the transmission scheme.
+    // ...
+    /// \brief Reference point for the PDSCH DM-RS subcarrier index \e k, as per TS38.211 Section 7.4.1.1.2.
+    ///
+    /// Set it to \c PRB0 when the corresponding PDCCH is associated with CORESET 0 and Type0-PDCCH common search space
+    /// and is addressed to SI-RNTI.
+    ///
+    /// Otherwise, set it to \c CRB0.
+    enum {
+      /// The reference point is subcarrier 0 of the common resource block 0 (CRB 0).
+      CRB0,
+      /// \brief The reference point is subcarrier 0 of the physical resource block 0 of the bandwidth part (BWP).
+      ///
+      /// Use this option when PDSCH is signalled by CORESET 0. For this case, the BWP parameters must align with
+      /// CORESET0.
+      PRB0
+    } ref_point;
+    /// Indicates which symbol in the slot transmit DMRS.
+    symbol_slot_mask dmrs_symbol_mask;
+    /// Indicates the DM-RS type.
+    dmrs_config_type dmrs;
+    /// \brief Parameter \f$N^{n_{SCID}}_{ID}\f$ TS38.211 Section 7.4.1.1.1.
+    ///
+    /// It is equal to:
+    /// - {0,1, ... ,65535} given by the higher-layer parameters scramblingID0 and scramblingID1,
+    /// - \f$N^{cell}_{ID}\f$ otherwise.
+    unsigned scrambling_id;
+    /// \brief Parameter \f$n_{SCID}\f$ from TS38.211 Section 7.4.1.1.1.
+    ///
+    /// It is equal to:
+    /// - \c true or \c false according DM-RS sequence initialization field, in the DCI associated with the PDSCH
+    /// transmission if DCI format 1_1 is used,
+    /// - \c false otherwise.
+    bool n_scid;
+    /// Number of DMRS CDM groups without data.
+    unsigned nof_cdm_groups_without_data;
+    /// Frequency domain allocation.
+    rb_allocation freq_alloc;
+    /// Time domain allocation start symbol index (0...12).
+    unsigned start_symbol_index;
+    /// Time domain allocation number of symbols (1...14).
+    unsigned nof_symbols;
+    // Ignore PTRS.
+    // ...
+    // Ignore precoding and beamforming.
+    // ...
+    // Ignore CBGs.
+    // ...
+    /// \brief Transport block size for limited buffer rate match.
+    ///
+    /// Parameter \f$TBS_{LBRM}\f$ from 3GPP TS38.212 Section 5.4.2.1, for computing the size of the circular buffer.
+    /// \remark Use <tt> tbs_lbrm_default </tt> for maximum length.
+    /// \remark Zero is reserved.
+    units::bytes tbs_lbrm;
+    /// Indicates the reserved resource elements which cannot carry PDSCH.
+    re_pattern_list reserved;
+    /// \brief Optional Phase Tracking Reference Signal (PT-RS) configuration.
+    ///
+    /// Set to \c std::nullopt for no transmission of PT-RS.
+    std::optional<ptrs_configuration> ptrs;
+    /// \brief Ratio of PDSCH DM-RS EPRE to SSS EPRE in decibels.
+    ///
+    /// Parameter \f$\beta _\textup{DMRS}\f$ in TS38.214 Section 6.2.2. It is converted to parameter \f$\beta _{PUSCH}
+    /// ^{DMRS}\f$ in TS38.211 Section 7.4.1.1.2 as \f$\beta _\textup{PUSCH} ^\textup{DMRS}=10^{-\frac {\beta
+    /// _\textup{DMRS}}{20} }\f$.
+    float ratio_pdsch_dmrs_to_sss_dB;
+    /// Ratio of PDSCH data EPRE to SSS EPRE in decibels.
+    float ratio_pdsch_data_to_sss_dB;
+    /// Precoding and beamforming configuration.
+    precoding_beamforming_configuration precoding_and_beamforming;
+  };
+
+  /// Default destructor.
+  virtual ~pdsch_processor() = default;
+
+  /// \brief Processes a PDSCH transmission.
+  /// \param[out] grid       Resource grid writer interface.
+  /// \param[out] notifier   PDSCH processor notifier.
+  /// \param[in]  data       The codewords to transmit.
+  /// \param[in]  pdu        Necessary parameters to process the PDSCH transmission.
+  /// \remark The number of transport blocks must be equal to the number of codewords in \c pdu.
+  /// \remark The size of each transport block is determined by <tt> data[TB index].size() </tt>
+  virtual void process(resource_grid_writer&                                           grid,
+                       pdsch_processor_notifier&                                       notifier,
+                       static_vector<shared_transport_block, MAX_NOF_TRANSPORT_BLOCKS> data,
+                       const pdu_t&                                                    pdu) = 0;
+};
+
+/// \brief Describes the PDSCH processor validator interface.
+class pdsch_pdu_validator
+{
+public:
+  /// Default destructor.
+  virtual ~pdsch_pdu_validator() = default;
+
+  /// \brief Validates PDSCH processor configuration parameters.
+  /// \return A success if the parameters contained in \c pdu are supported, an error message otherwise.
+  virtual error_type<std::string> is_valid(const pdsch_processor::pdu_t& pdu) const = 0;
+};
+
+} // namespace ocudu

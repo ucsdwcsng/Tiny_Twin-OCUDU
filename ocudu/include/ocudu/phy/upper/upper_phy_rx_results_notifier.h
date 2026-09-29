@@ -1,0 +1,158 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// \brief Interface of the upper-PHY notifier in charge of messages carrying the result of uplink detection and
+/// decoding.
+
+#pragma once
+
+#include "ocudu/adt/span.h"
+#include "ocudu/phy/support/prach_buffer_context.h"
+#include "ocudu/phy/upper/channel_processors/prach/prach_detection_result.h"
+#include "ocudu/phy/upper/channel_processors/pucch/pucch_processor_result.h"
+#include "ocudu/phy/upper/channel_processors/pusch/pusch_processor_result_notifier.h"
+#include "ocudu/phy/upper/signal_processors/srs/srs_estimator_result.h"
+#include "ocudu/phy/upper/uplink_processor_context.h"
+#include "ocudu/ran/harq_id.h"
+
+namespace ocudu {
+
+/// PRACH results structure.
+struct ul_prach_results {
+  /// PRACH buffer context associated with this uplink PRACH results.
+  prach_buffer_context context;
+  /// PRACH detection result.
+  prach_detection_result result;
+};
+
+/// Data-related PUSCH decoding output.
+struct ul_pusch_results_data {
+  /// Slot description (also specifies the numerology).
+  slot_point slot;
+  /// Parameter \f$n_{RNTI}\f$ from TS38.211 Section 6.3.1.1.
+  rnti_t rnti;
+  /// Random Access Preamble Index (RAPID) associated with msgA on PUSCH (Release 16).
+  std::optional<unsigned> n_rapid;
+  /// HARQ process ID.
+  harq_id_t harq_id;
+  /// Channel state information.
+  channel_state_information csi;
+  /// PUSCH decoder result.
+  pusch_decoder_result decoder_result;
+  /// \brief Data payload of the PUSCH PDU.
+  ///
+  /// \note The span is empty if the PDU does not contain PUSCH data or if the PDU could not be decoded successfully
+  /// (i.e., CRC is KO).
+  span<const uint8_t> payload;
+
+  /// \brief Creates a data-related decoding result produced from a discarded transmission.
+  /// \param[in] rnti_     Parameter \f$n_{RNTI}\f$ from TS38.211 Section 6.3.1.1.
+  /// \param[in] slot_     Slot description (also specifies the numerology).
+  /// \param[in] harq_id_  HARQ process ID.
+  /// \return The data-related PUSCH processing results without CSI measurements and marked as failed transmission.
+  static ul_pusch_results_data create_discarded(rnti_t rnti_, slot_point slot_, harq_id_t harq_id_)
+  {
+    ul_pusch_results_data ret;
+    ret.rnti           = rnti_;
+    ret.slot           = slot_;
+    ret.csi            = channel_state_information();
+    ret.harq_id        = harq_id_;
+    ret.decoder_result = pusch_decoder_result();
+    ret.payload        = span<const uint8_t>();
+    return ret;
+  }
+};
+
+/// Control-related PUSCH decoding output.
+struct ul_pusch_results_control {
+  /// Parameter \f$n_{RNTI}\f$ from TS38.211 Section 6.3.1.1.
+  rnti_t rnti;
+  /// Slot description (also specifies the numerology).
+  slot_point slot;
+  /// Channel state information.
+  channel_state_information csi;
+  /// HARQ ACK results.
+  std::optional<pusch_uci_field> harq_ack;
+  /// CSI Part 1 results.
+  std::optional<pusch_uci_field> csi1;
+  /// CSI Part 2 results.
+  std::optional<pusch_uci_field> csi2;
+
+  /// \brief Creates a control-related result produced from a discarded transmission.
+  /// \param rnti_        Parameter \f$n_{RNTI}\f$ from TS38.211 Section 6.3.1.1.
+  /// \param slot_        Slot description (also specifies the numerology).
+  /// \param nof_harq_ack Number of HARQ-ACK feedback bits.
+  /// \return The control-related PUSCH processing results without CSI measurements, and the HARQ-ACK feedback payload
+  /// status is unknown.
+  static ul_pusch_results_control create_discarded(rnti_t rnti_, slot_point slot_, unsigned nof_harq_ack)
+  {
+    ul_pusch_results_control ret;
+    ret.rnti = rnti_;
+    ret.slot = slot_;
+    ret.csi  = channel_state_information();
+    ret.harq_ack.emplace(pusch_uci_field{uci_payload_type(nof_harq_ack), uci_status::unknown});
+    ret.csi1 = std::nullopt;
+    ret.csi2 = std::nullopt;
+    return ret;
+  }
+};
+
+/// PUCCH results structure.
+struct ul_pucch_results {
+  /// PUCCH context.
+  ul_pucch_context context;
+  /// PUCCH processor result.
+  pucch_processor_result processor_result;
+
+  /// \brief Creates a PUCCH result structure result produced from a discarded transmission.
+  /// \param context_     Discarded PUCCH context.
+  /// \param nof_harq_ack Number of HARQ-ACK feedback bits.
+  /// \return The PUCCH processing results without CSI measurements, and the HARQ-ACK feedback payload status is
+  /// unknown.
+  static ul_pucch_results create_discarded(const ul_pucch_context& context_, unsigned nof_harq_ack)
+  {
+    ul_pucch_results ret;
+    ret.context                  = context_;
+    ret.processor_result.csi     = channel_state_information();
+    ret.processor_result.message = pucch_uci_message({0, nof_harq_ack, 0, 0});
+    ret.processor_result.message.set_status(uci_status::unknown);
+    ret.processor_result.detection_metric = std::nullopt;
+    return ret;
+  }
+};
+
+/// Sounding Reference Signal results structure.
+struct ul_srs_results {
+  /// SRS context.
+  ul_srs_context context;
+  /// SRS channel estimation result.
+  srs_estimator_result processor_result;
+};
+
+/// \brief Interface of the upper-PHY notifier in charge of messages carrying the result of uplink detection and
+/// decoding.
+class upper_phy_rx_results_notifier
+{
+public:
+  /// Default destructor.
+  virtual ~upper_phy_rx_results_notifier() = default;
+
+  /// \brief Notifies the results of a PRACH preamble detection.
+  virtual void on_new_prach_results(const ul_prach_results& result) = 0;
+
+  /// \brief Notifies the results of a PUSCH control decodification.
+  virtual void on_new_pusch_results_control(const ul_pusch_results_control& result) = 0;
+
+  /// \brief Notifies the results of a PUSCH data decodification.
+  virtual void on_new_pusch_results_data(const ul_pusch_results_data& result) = 0;
+
+  /// \brief Notifies the results of a PUCCH decodification.
+  virtual void on_new_pucch_results(const ul_pucch_results& result) = 0;
+
+  /// \brief Notifies the results of a Sounding Reference Signals channel estimation.
+  virtual void on_new_srs_results(const ul_srs_results& result) = 0;
+};
+
+} // namespace ocudu

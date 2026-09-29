@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/slot_point_extended.h"
+#include <chrono>
+
+namespace ocudu {
+
+/// Describes the context of the current timing boundary.
+struct lower_phy_timing_context {
+  /// Slot context.
+  slot_point_extended slot;
+  /// Time point of the current context.
+  std::chrono::time_point<std::chrono::system_clock> time_point;
+};
+
+} // namespace ocudu

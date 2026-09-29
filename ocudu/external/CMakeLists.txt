@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+add_subdirectory(fmt)
+add_subdirectory(uWebSockets)
+if(ENABLE_OCUDU_TRACY)
+	# Add optional support for the tracy frame profiler. To use this profiler,
+	# you will need to clone the tracy repo to this folder and turn on the
+	# ENABLE_OCUDU_TRACY CMake variable.
+	# See https://github.com/wolfpld/tracy for details.
+	if (NOT EXISTS "${CMAKE_SOURCE_DIR}/external/tracy/")
+		message(FATAL_ERROR "Tracy enabled, but not found. Make sure that the subrepo is cloned correctly.")
+	endif()
+	add_subdirectory(tracy)
+	set(TRACY_LIBRARIES Tracy::TracyClient)
+endif()
+
+set(SBOM_BACKWARD_VERSION "UNKNOWN" CACHE STRING "SBOM version for BACKWARD")
+set(SBOM_CLI11_VERSION "2.4.2" CACHE STRING "SBOM version for CLI11")
+set(SBOM_MPMCQUEUE_VERSION "UNKNOWN" CACHE STRING "SBOM version for MPMCQUEUE")
+set(SBOM_SPSCQUEUE_VERSION "UNKNOWN" CACHE STRING "SBOM version for SPSCQUEUE")
+set(SBOM_CONCURRENTQUEUE_VERSION "UNKNOWN" CACHE STRING "SBOM version for CONCURRENTQUEUE")
+set(SBOM_EXPECTED_VERSION "1.1" CACHE STRING "SBOM version for EXPECTED")
+set(SBOM_NLOHMANN_VERSION "3.12.0" CACHE STRING "SBOM version for NLOHMANN")
+set(SBOM_SBOM_VERSION "1.3.0" CACHE STRING "SBOM version for SBOM")

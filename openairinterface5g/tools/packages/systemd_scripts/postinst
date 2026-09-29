@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+mkdir -p /var/log/oai-log
+echo "Running ldconfig after package installation/upgrade" 2>&1
+if command -v ldconfig >> /var/log/oai-log/oai.log 2>&1; then
+    ldconfig
+else
+    echo "Warning: ldconfig not found"
+fi
+
+
+exit 0

@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+include:
+  - local: .gitlab/ci/static/version.yml
+
+.static:
+  image: ${OCUDU_REGISTRY_URI}/static:${DOCKER_STATIC_VERSION}
+  stage: static
+  rules:
+    - if: $ON_MR
+  needs: []
+  variables:
+    CPP_SRC_DIR: $CI_PROJECT_DIR
+    GIT_DEPTH: 0
+  artifacts:
+    paths:
+      - $CPP_SRC_DIR/ci.patch
+    when: on_failure
+
+.headers:
+  extends: .static
+  rules:
+    - if: $ON_MR
+  script:
+    - |
+      check_headers() {
+        EXIT_CODE=0
+        reuse --version || EXIT_CODE=$?
+        reuse --no-multiprocessing lint || EXIT_CODE=$?
+        annotate_headers.sh -s || EXIT_CODE=$?
+        is-pristine-repo.sh || EXIT_CODE=$?
+        exit $EXIT_CODE
+      }
+    - check_headers
+
+.code-format:
+  extends: .static
+  script:
+    - |
+      check_code_format() {
+        run-clang-format-diff.sh $CI_MERGE_REQUEST_DIFF_BASE_SHA
+        hex2lowercase.sh
+        is-pristine-repo.sh
+      }
+    - cd $CPP_SRC_DIR
+    - check_code_format
+    - &yamllint |
+      cd $CI_PROJECT_DIR
+      if [ -f .yamllint ]; then
+        yamllint -f colored -c .yamllint .
+      fi
+
+.full-code-format:
+  extends: .static
+  script:
+    - |
+      full_code_format() {
+        FILE_EXTENSION_REGEX='.*\.(cpp|cc|c\+\+|cxx|c|cl|h|hh|hpp)$'
+        files=$(find . | grep -E "${FILE_EXTENSION_REGEX}" | tr '\n' ' ')
+        clang-format -style=file -i ${files}
+        hex2lowercase.sh
+        is-pristine-repo.sh
+      }
+    - cd $CPP_SRC_DIR
+    - full_code_format
+    - *yamllint
+
+.include-guards:
+  extends: .static
+  variables:
+    AUTOCORRECTION: 1
+    PRAGMA: 1
+    TARGET_BRANCH: origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    INPUT_PATH: .
+  script:
+    - |
+      include-guards-check() {
+        EXIT_CODE=0
+        include-guards-check.sh || EXIT_CODE=$?
+        is-pristine-repo.sh || EXIT_CODE=$?
+        exit $EXIT_CODE
+      }
+    - cd $CPP_SRC_DIR
+    - include-guards-check
+
+.dependency-checks:
+  extends: .static
+  variables:
+    INPUT_PATH: .
+  script:
+    - cd $CPP_SRC_DIR
+    - python3 -u $CI_PROJECT_DIR/.gitlab/ci/static/check_dependencies.py --repo $CI_PROJECT_DIR
+
+.high-resolution-clock:
+  extends: .static
+  script:
+    - cd $CPP_SRC_DIR
+    - $CI_PROJECT_DIR/.gitlab/ci/static/high-resolution-clock-check.sh
+
+.dco:
+  extends: .static
+  stage: ci
+  script:
+    - |
+      git config advice.detachedHead false
+      unshallow_flag() {
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo --unshallow
+        fi
+      }
+      if [ "$CI_PROJECT_PATH" = "$CI_MERGE_REQUEST_PROJECT_PATH" ]; then
+        # job on target
+        git fetch $(unshallow_flag) origin \
+          "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" \
+          "$CI_MERGE_REQUEST_REF_PATH:refs/mr-source-head"
+        git branch -f "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        git branch -f "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" refs/mr-source-head
+      else
+        # job on the fork
+        git fetch $(unshallow_flag) origin "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+        git branch -f "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" "origin/$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+        git remote get-url upstream >/dev/null 2>&1 || \
+          git remote add upstream "$CI_MERGE_REQUEST_PROJECT_URL"
+        git fetch $(unshallow_flag) upstream "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        git branch -f "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" "upstream/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      fi
+
+      SOURCE_SHA=$(git rev-parse "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME")
+      FORK_POINT=$(git merge-base "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME")
+    - |
+      EXIT_CODE=0
+      for rev in $(git rev-list --reverse $FORK_POINT..$SOURCE_SHA); do
+        if ! git log -1 --format=%B "$rev" | grep -qiE '^Signed-off-by:\s+.+\s+<.+>$'; then
+          echo "✗ Missing Signed-off-by trailer in commit."
+          git log -1 --oneline "$rev"
+          EXIT_CODE=1
+        fi
+      done
+      exit $EXIT_CODE
+
+dco:
+  extends: .dco
+  rules:
+    - if: $ON_MR_FORK

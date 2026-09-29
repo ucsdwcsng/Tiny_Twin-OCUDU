@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "du_low_config_yaml_writer.h"
+#include "apps/helpers/metrics/metrics_config_yaml_writer.h"
+#include "du_low_config.h"
+
+using namespace ocudu;
+
+static void fill_du_low_log_section(YAML::Node node, const du_low_unit_logger_config& config)
+{
+  node["phy_level"]         = ocudulog::basic_level_to_string(config.phy_level);
+  node["hal_level"]         = ocudulog::basic_level_to_string(config.hal_level);
+  node["broadcast_enabled"] = config.broadcast_enabled;
+  node["hex_max_size"]      = config.hex_max_size;
+  if (!config.phy_rx_symbol_printer.filename.empty()) {
+    node["phy_rx_symbols_filename"] = config.phy_rx_symbol_printer.filename;
+  }
+  if (config.phy_rx_symbol_printer.port.has_value()) {
+    node["phy_rx_symbols_port"] = config.phy_rx_symbol_printer.port.value();
+  }
+  node["phy_rx_symbols_prach_threshold_rssi_dB"] =
+      fmt::format("{}", config.phy_rx_symbol_printer.triggers.prach_threshold_rssi_dB);
+  node["phy_rx_symbols_pusch_on_ko"] = config.phy_rx_symbol_printer.triggers.pusch_on_ko;
+  node["phy_rx_symbols_pusch_threshold_sinr_dB"] =
+      fmt::format("{}", config.phy_rx_symbol_printer.triggers.pusch_threshold_sinr_dB);
+}
+
+static void fill_du_low_tracer_layers_section(YAML::Node node, const du_low_unit_tracer_config& config)
+{
+  node["phy_enable"] = config.executor_tracing_enable;
+}
+
+static void fill_du_low_trace_section(YAML::Node node, const du_low_unit_tracer_config& config)
+{
+  fill_du_low_tracer_layers_section(node["layers"], config);
+}
+
+/// Converts a concurrency value into its YAML representation, using the 'unlimited'/'auto' aliases for the
+/// respective sentinel values so that dumped configurations use the same vocabulary as the CLI11 parser.
+static std::string concurrency_to_yaml_value(unsigned concurrency)
+{
+  if (concurrency == du_low_unit_expert_threads_config::concurrency_unlimited) {
+    return "unlimited";
+  }
+  if (concurrency == du_low_unit_expert_threads_config::concurrency_auto) {
+    return "auto";
+  }
+  return std::to_string(concurrency);
+}
+
+static void fill_du_low_expert_execution_section(YAML::Node node, const du_low_unit_expert_execution_config& config)
+{
+  {
+    YAML::Node threads_node             = node["threads"];
+    YAML::Node upper_node               = threads_node["upper_phy"];
+    upper_node["pdsch_processor_type"]  = config.threads.pdsch_processor_type;
+    upper_node["pdsch_cb_batch_length"] = config.threads.pdsch_cb_batch_length;
+    upper_node["max_pucch_concurrency"] = concurrency_to_yaml_value(config.threads.max_pucch_concurrency);
+    upper_node["max_pusch_and_srs_concurrency"] =
+        concurrency_to_yaml_value(config.threads.max_pusch_and_srs_concurrency);
+    upper_node["max_pdsch_concurrency"] = concurrency_to_yaml_value(config.threads.max_pdsch_concurrency);
+  }
+}
+
+static void fill_du_low_expert_section(YAML::Node node, const du_low_unit_expert_upper_phy_config& config)
+{
+  node["max_proc_delay"]                           = config.max_processing_delay_slots;
+  node["prach_th_correction_factor"]               = config.prach_th_correction_factor;
+  node["pusch_dec_max_iterations"]                 = config.pusch_decoder_max_iterations;
+  node["pusch_dec_enable_early_stop"]              = config.pusch_decoder_early_stop;
+  node["pusch_decoder_force_decoding"]             = config.pusch_decoder_force_decoding;
+  node["pusch_sinr_calc_method"]                   = config.pusch_sinr_calc_method;
+  node["pusch_channel_estimator_fd_strategy"]      = config.pusch_channel_estimator_fd_strategy;
+  node["pusch_channel_estimator_td_strategy"]      = config.pusch_channel_estimator_td_strategy;
+  node["pusch_channel_estimator_cfo_compensation"] = config.pusch_channel_estimator_cfo_compensation;
+  node["pusch_channel_equalizer_algorithm"]        = config.pusch_channel_equalizer_algorithm;
+  node["max_request_headroom_slots"]               = config.nof_slots_request_headroom;
+  node["allow_request_on_empty_uplink_slot"]       = config.allow_request_on_empty_uplink_slot;
+  node["enable_phy_tap"]                           = config.enable_phy_tap;
+  node["phy_tap_arguments"]                        = config.phy_tap_arguments;
+}
+
+static void fill_du_low_bbdev_pdsch_enc_section(YAML::Node node, const hwacc_pdsch_appconfig& config)
+{
+  node["nof_hwacc"]       = config.nof_hwacc;
+  node["cb_mode"]         = config.cb_mode;
+  node["dedicated_queue"] = config.dedicated_queue;
+  if (config.max_buffer_size) {
+    node["max_buffer_size"] = config.max_buffer_size.value();
+  }
+}
+
+static void fill_du_low_bbdev_pusch_dec_section(YAML::Node node, const hwacc_pusch_appconfig& config)
+{
+  node["nof_hwacc"]        = config.nof_hwacc;
+  node["force_local_harq"] = config.force_local_harq;
+  node["dedicated_queue"]  = config.dedicated_queue;
+  if (config.harq_context_size) {
+    node["harq_context_size"] = config.harq_context_size.value();
+  }
+}
+
+static void fill_du_low_bbdev_section(YAML::Node node, const bbdev_appconfig& config)
+{
+  node["hwacc_type"] = config.hwacc_type;
+  node["id"]         = config.id;
+
+  if (config.pdsch_enc) {
+    fill_du_low_bbdev_pdsch_enc_section(node["pdsch_enc"], config.pdsch_enc.value());
+  }
+  if (config.pusch_dec) {
+    fill_du_low_bbdev_pusch_dec_section(node["pusch_dec"], config.pusch_dec.value());
+  }
+  if (config.msg_mbuf_size) {
+    node["msg_mbuf_size"] = config.msg_mbuf_size.value();
+  }
+  if (config.rm_mbuf_size) {
+    node["rm_mbuf_size"] = config.rm_mbuf_size.value();
+  }
+  if (config.nof_mbuf) {
+    node["nof_mbuf"] = config.nof_mbuf.value();
+  }
+}
+
+static void fill_du_low_hal_section(YAML::Node node, const du_low_unit_hal_config& config)
+{
+  if (config.bbdev_hwacc) {
+    fill_du_low_bbdev_section(node["bbdev_hwacc"], config.bbdev_hwacc.value());
+  }
+}
+
+static void fill_du_low_metrics_section(YAML::Node node, const du_low_unit_metrics_config& config)
+{
+  app_helpers::fill_metrics_appconfig_in_yaml_schema(node, config.common_metrics_cfg);
+
+  auto metrics_node            = node["metrics"];
+  auto layers_node             = metrics_node["layers"];
+  layers_node["enable_du_low"] = config.enable_du_low;
+}
+
+static void fill_du_low_power_calibration_section(YAML::Node node,
+                                                  float      dbfs_to_dbm_conversion_factor,
+                                                  float      db_to_dbfs_conversion_factor)
+{
+  node["dbfs_to_dbm_conversion_factor"] = dbfs_to_dbm_conversion_factor;
+  node["db_to_dbfs_conversion_factor"]  = db_to_dbfs_conversion_factor;
+}
+
+void ocudu::fill_du_low_config_in_yaml_schema(YAML::Node& node, const du_low_unit_config& config)
+{
+  fill_du_low_metrics_section(node, config.metrics_cfg);
+  fill_du_low_log_section(node["log"], config.loggers);
+  fill_du_low_trace_section(node["trace"], config.tracer);
+  fill_du_low_expert_execution_section(node["expert_execution"], config.expert_execution_cfg);
+  fill_du_low_expert_section(node["expert_phy"], config.expert_phy_cfg);
+  if (config.hal_config) {
+    fill_du_low_hal_section(node["hal"], config.hal_config.value());
+  }
+  fill_du_low_power_calibration_section(node["power_calibration"],
+                                        config.power_calibration.dbfs_to_dbm_conversion_factor,
+                                        config.power_calibration.db_to_dbfs_conversion_factor);
+}

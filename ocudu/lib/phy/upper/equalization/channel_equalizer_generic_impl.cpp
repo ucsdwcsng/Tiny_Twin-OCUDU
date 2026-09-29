@@ -1,0 +1,655 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// \brief Channel equalizer implementation for the Zero Forcing and the Minimum Mean Square Error.
+
+#include "channel_equalizer_generic_impl.h"
+#include "equalize_mmse_mxn_simd.h"
+#include "equalize_zf_1xn.h"
+#include "equalize_zf_2xn.h"
+#include "equalize_zf_mxn_simd.h"
+#include "interleave_layers.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/adt/interval.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ocuduvec/copy.h"
+#include "ocudu/phy/support/re_buffer.h"
+#include "ocudu/phy/upper/equalization/modular_ch_est_list.h"
+
+using namespace ocudu;
+
+/// Assert that the dimensions of the equalizer input and output data structures match.
+static inline void assert_sizes(span<const cf_t>                      eq_symbols,
+                                span<const float>                     eq_noise_vars,
+                                const re_buffer_reader<cbf16_t>&      ch_symbols,
+                                const channel_equalizer::ch_est_list& ch_estimates,
+                                span<const float>                     noise_var_estimates)
+{
+  // Rx symbols dimensions.
+  unsigned ch_symb_nof_re       = ch_symbols.get_nof_re();
+  unsigned ch_symb_nof_rx_ports = ch_symbols.get_nof_slices();
+
+  // Output symbols dimensions.
+  unsigned eq_symb_nof_re = eq_symbols.size();
+
+  // Noise var estimates dimensions.
+  unsigned nvar_ests_nof_rx_ports = noise_var_estimates.size();
+
+  // Output noise vars dimensions.
+  unsigned eq_nvars_nof_re = eq_noise_vars.size();
+
+  // Channel estimates dimensions.
+  unsigned ch_ests_nof_re        = ch_estimates.get_nof_re();
+  unsigned ch_ests_nof_rx_ports  = ch_estimates.get_nof_rx_ports();
+  unsigned ch_ests_nof_tx_layers = ch_estimates.get_nof_tx_layers();
+
+  // Assert that the number of Resource Elements is the same for both inputs.
+  ocudu_assert(ch_symb_nof_re == ch_ests_nof_re,
+               "The number of channel estimates (i.e., {}) is not equal to the number of input RE (i.e., {}).",
+               ch_symb_nof_re,
+               ch_ests_nof_re);
+
+  // Assert that the number of Resource Elements is the same for both outputs.
+  ocudu_assert(eq_symb_nof_re == eq_nvars_nof_re,
+               "The number of equalized RE (i.e., {}) is not equal to the number of noise variances (i.e., {}).",
+               eq_symb_nof_re,
+               eq_nvars_nof_re);
+
+  // Assert that the number of receive ports is within the valid range.
+  static constexpr interval<unsigned, true> nof_rx_ports_range(1, channel_equalizer_generic_impl::max_nof_ports);
+  ocudu_assert(nof_rx_ports_range.contains(ch_ests_nof_rx_ports),
+               "The number of receive ports (i.e., {}) must be in the range {}.",
+               ch_ests_nof_rx_ports,
+               nof_rx_ports_range);
+
+  // Assert that the number of receive ports matches.
+  ocudu_assert((ch_ests_nof_rx_ports == ch_symb_nof_rx_ports) && (ch_ests_nof_rx_ports == nvar_ests_nof_rx_ports),
+               "Number of Rx ports does not match: \n"
+               "Received symbols Rx ports:\t {}\n"
+               "Noise variance estimates Rx ports: \t {}\n"
+               "Channel estimates Rx ports:\t {}",
+               ch_symb_nof_rx_ports,
+               nvar_ests_nof_rx_ports,
+               ch_ests_nof_rx_ports);
+
+  // Assert that the number of transmit layers matches.
+  ocudu_assert(ch_ests_nof_re * ch_ests_nof_tx_layers == eq_symb_nof_re,
+               "The number of channel estimates (i.e., {}) and number of layers (i.e., {}) is not consistent with the "
+               "number of equalized RE (i.e., {}).",
+               ch_ests_nof_re,
+               ch_ests_nof_tx_layers,
+               eq_symb_nof_re);
+}
+
+/// Calls the equalizer function for receive spatial diversity with the appropriate number of receive ports.
+template <unsigned NOF_PORTS>
+static void equalize_zf_single_tx_layer(unsigned                              nof_ports,
+                                        span<cf_t>                            eq_symbols,
+                                        span<float>                           eq_noise_vars,
+                                        const re_buffer_reader<cbf16_t>&      ch_symbols,
+                                        const channel_equalizer::ch_est_list& ch_estimates,
+                                        span<const float>                     noise_var,
+                                        float                                 tx_scaling)
+{
+  if (NOF_PORTS != nof_ports) {
+    // Recursive call.
+    return equalize_zf_single_tx_layer<NOF_PORTS - 1>(
+        nof_ports, eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+  }
+
+  // Perform equalization.
+  equalize_zf_1xn<NOF_PORTS>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+}
+
+/// Specialization for a single receive port.
+template <>
+void equalize_zf_single_tx_layer<1>(unsigned /**/,
+                                    span<cf_t>                            eq_symbols,
+                                    span<float>                           eq_noise_vars,
+                                    const re_buffer_reader<cbf16_t>&      ch_symbols,
+                                    const channel_equalizer::ch_est_list& ch_estimates,
+                                    span<const float>                     noise_var,
+                                    float                                 tx_scaling)
+{
+  // Perform equalization.
+  equalize_zf_1xn<1>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+}
+
+template <unsigned NOF_PORTS>
+static void equalize_zf_single_tx_layer_reduction(span<cf_t>                            eq_symbols,
+                                                  span<float>                           eq_noise_vars,
+                                                  const re_buffer_reader<cbf16_t>&      ch_symbols,
+                                                  const channel_equalizer::ch_est_list& ch_estimates,
+                                                  span<const float>                     noise_var,
+                                                  float                                 tx_scaling)
+{
+  static constexpr unsigned nof_layers = 1;
+  unsigned                  nof_ports  = noise_var.size();
+
+  // Function for checking if a noise variance is valid.
+  const auto func_valid_noise_var = [](float nvar) {
+    return (nvar > 0) && (nvar < std::numeric_limits<float>::infinity());
+  };
+
+  // Count the number of valid noise variances.
+  unsigned nof_valid_noise_var = std::count_if(noise_var.begin(), noise_var.end(), func_valid_noise_var);
+
+  // No valid noise variances, fill output with invalid data.
+  if (nof_valid_noise_var == 0) {
+    ocuduvec::zero(eq_symbols);
+    ocuduvec::fill(eq_noise_vars, std::numeric_limits<float>::infinity());
+    return;
+  }
+
+  // Exclude the ports that are invalid.
+  if (nof_valid_noise_var != nof_ports) {
+    // Reduce ports.
+    static_vector<float, NOF_PORTS>              reduced_noise_var(nof_valid_noise_var);
+    modular_re_buffer_reader<cbf16_t, NOF_PORTS> reduced_ch_symbols(nof_ports, ch_symbols.get_nof_re());
+    modular_ch_est_list<NOF_PORTS>               reduced_ch_estimates(ch_symbols.get_nof_re(), nof_ports, nof_layers);
+    for (unsigned i_port = 0, i_reduced_port = 0; i_port != nof_ports; ++i_port) {
+      if (func_valid_noise_var(noise_var[i_port])) {
+        reduced_noise_var[i_reduced_port] = noise_var[i_port];
+        reduced_ch_symbols.set_slice(i_reduced_port, ch_symbols.get_slice(i_port));
+        reduced_ch_estimates.set_channel(ch_estimates.get_channel(i_port, 0), i_reduced_port, 0);
+        ++i_reduced_port;
+      }
+    }
+
+    // Equalize. The number of ports must be at least one less than before.
+    equalize_zf_single_tx_layer<NOF_PORTS - 1>(nof_valid_noise_var,
+                                               eq_symbols,
+                                               eq_noise_vars,
+                                               reduced_ch_symbols,
+                                               reduced_ch_estimates,
+                                               reduced_noise_var,
+                                               tx_scaling);
+    return;
+  }
+
+  // Perform equalization for all ports.
+  equalize_zf_single_tx_layer<NOF_PORTS>(
+      nof_valid_noise_var, eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+}
+
+template <unsigned NofLayers, unsigned NofPorts>
+static void equalize_zf_mxn(span<cf_t>                            eq_symbols,
+                            span<float>                           noise_vars,
+                            const re_buffer_reader<cbf16_t>&      ch_symbols,
+                            const channel_equalizer::ch_est_list& ch_estimates,
+                            float                                 noise_var_est,
+                            float                                 tx_scaling)
+{
+  unsigned i_re   = 0;
+  unsigned nof_re = ch_symbols.get_nof_re();
+
+  ocudu_assert(eq_symbols.size() == NofLayers * nof_re, "Invalid equalized symbol size.");
+  ocudu_assert(noise_vars.size() == NofLayers * nof_re, "Invalid noise variance size.");
+  ocudu_assert(ch_symbols.get_nof_slices() == NofPorts,
+               "Invalid channel symbols number of ports (i.e., {}).",
+               ch_symbols.get_nof_slices());
+  ocudu_assert(ch_estimates.get_nof_rx_ports() == NofPorts,
+               "Invalid channel estimates number of ports (i.e., {}).",
+               ch_estimates.get_nof_rx_ports());
+  ocudu_assert(ch_estimates.get_nof_tx_layers() == NofLayers,
+               "Invalid channel estimates number of layers (i.e., {}).",
+               ch_estimates.get_nof_tx_layers());
+
+  // Skip processing if the noise variance is NaN, infinity or negative.
+  if (!std::isnormal(noise_var_est) || (noise_var_est < 0.0F)) {
+    ocuduvec::zero(eq_symbols);
+    std::fill(noise_vars.begin(), noise_vars.end(), std::numeric_limits<float>::infinity());
+    return;
+  }
+
+  // Extract views of input data.
+  std::array<span<const cbf16_t>, NofPorts>                        ch_symbols_view;
+  std::array<std::array<span<const cbf16_t>, NofLayers>, NofPorts> ch_estimates_view;
+  for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+    ch_symbols_view[i_port] = ch_symbols.get_slice(i_port);
+    for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+      ch_estimates_view[i_port][i_layer] = ch_estimates.get_channel(i_port, i_layer);
+    }
+  }
+
+  // Process entire batches of OCUDU_SIMD_CF_SIZE batches.
+  for (unsigned nof_re_end = (nof_re / OCUDU_SIMD_CF_SIZE) * OCUDU_SIMD_CF_SIZE; i_re != nof_re_end;
+       i_re += OCUDU_SIMD_CF_SIZE) {
+    // Prepare channel matrix.
+    simd_cf_t ch_symbols_re[NofPorts];
+    simd_cf_t ch_estimates_re[NofPorts][NofLayers];
+    for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+      ch_symbols_re[i_port] = ocudu_simd_loadu(&ch_symbols_view[i_port][i_re]);
+      for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+        simd_cf_t ch_estimates_simd = ocudu_simd_loadu(&ch_estimates_view[i_port][i_layer][i_re]);
+        ch_estimates_simd *= tx_scaling;
+        ch_estimates_re[i_port][i_layer] = ch_estimates_simd;
+      }
+    }
+
+    simd_cf_t eq_symbols_re[NofLayers];
+    simd_f_t  noise_vars_re[NofLayers];
+
+    equalize_zf_mxn_simd<NofLayers, NofPorts>(
+        eq_symbols_re, noise_vars_re, ch_symbols_re, ch_estimates_re, noise_var_est);
+
+    // Store results.
+    interleave_layers_simd<NofLayers>(eq_symbols.subspan(i_re * NofLayers, OCUDU_SIMD_CF_SIZE * NofLayers),
+                                      eq_symbols_re);
+    interleave_layers_simd<NofLayers>(noise_vars.subspan(i_re * NofLayers, OCUDU_SIMD_F_SIZE * NofLayers),
+                                      noise_vars_re);
+  }
+
+  // Calculate remainder number RE to process.
+  nof_re = nof_re - i_re;
+
+  // Prepare channel matrix.
+  simd_cf_t ch_symbols_re[NofPorts];
+  simd_cf_t ch_estimates_re[NofPorts][NofLayers];
+  for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+    std::array<cbf16_t, OCUDU_SIMD_CF_SIZE> temp_ch_symbols = {};
+    ocuduvec::copy(span<cbf16_t>(temp_ch_symbols).first(nof_re), ch_symbols_view[i_port].last(nof_re));
+    ch_symbols_re[i_port] = ocudu_simd_loadu(temp_ch_symbols.data());
+
+    for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+      std::array<cbf16_t, OCUDU_SIMD_CF_SIZE> temp_ch_estimates = {};
+      ocuduvec::copy(span<cbf16_t>(temp_ch_estimates).first(nof_re), ch_estimates_view[i_port][i_layer].last(nof_re));
+
+      simd_cf_t ch_estimates_simd = ocudu_simd_loadu(temp_ch_estimates.data());
+      ch_estimates_simd *= tx_scaling;
+      ch_estimates_re[i_port][i_layer] = ch_estimates_simd;
+    }
+  }
+
+  simd_cf_t eq_symbols_re[NofLayers];
+  simd_f_t  noise_vars_re[NofLayers];
+
+  // Actual equalization.
+  equalize_zf_mxn_simd<NofLayers, NofPorts>(
+      eq_symbols_re, noise_vars_re, ch_symbols_re, ch_estimates_re, noise_var_est);
+
+  // Store results.
+  interleave_layers_generic<NofLayers>(eq_symbols.subspan(i_re * NofLayers, nof_re * NofLayers), eq_symbols_re);
+  interleave_layers_generic<NofLayers>(noise_vars.subspan(i_re * NofLayers, nof_re * NofLayers), noise_vars_re);
+}
+
+template <unsigned NofLayers, unsigned NofPorts>
+static void equalize_mmse_mxn(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  unsigned i_re   = 0;
+  unsigned nof_re = ch_symbols.get_nof_re();
+
+  ocudu_assert(eq_symbols.size() == NofLayers * nof_re, "Invalid equalized symbol size.");
+  ocudu_assert(noise_vars.size() == NofLayers * nof_re, "Invalid noise variance size.");
+  ocudu_assert(ch_symbols.get_nof_slices() == NofPorts,
+               "Invalid channel symbols number of ports (i.e., {}).",
+               ch_symbols.get_nof_slices());
+  ocudu_assert(ch_estimates.get_nof_rx_ports() == NofPorts,
+               "Invalid channel estimates number of ports (i.e., {}).",
+               ch_estimates.get_nof_rx_ports());
+  ocudu_assert(ch_estimates.get_nof_tx_layers() == NofLayers,
+               "Invalid channel estimates number of layers (i.e., {}).",
+               ch_estimates.get_nof_tx_layers());
+
+  // Skip processing if the noise variance is NaN, infinity or negative.
+  if (!std::isnormal(noise_var_est) || (noise_var_est < 0.0F)) {
+    ocuduvec::zero(eq_symbols);
+    std::fill(noise_vars.begin(), noise_vars.end(), std::numeric_limits<float>::infinity());
+    return;
+  }
+
+  // Extract views of input data.
+  std::array<span<const cbf16_t>, NofPorts>                        ch_symbols_view;
+  std::array<std::array<span<const cbf16_t>, NofLayers>, NofPorts> ch_estimates_view;
+  for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+    ch_symbols_view[i_port] = ch_symbols.get_slice(i_port);
+    for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+      ch_estimates_view[i_port][i_layer] = ch_estimates.get_channel(i_port, i_layer);
+    }
+  }
+
+  // Process entire batches of OCUDU_SIMD_CF_SIZE batches.
+  for (unsigned nof_re_end = (nof_re / OCUDU_SIMD_CF_SIZE) * OCUDU_SIMD_CF_SIZE; i_re != nof_re_end;
+       i_re += OCUDU_SIMD_CF_SIZE) {
+    // Prepare channel matrix.
+    simd_cf_t ch_symbols_re[NofPorts];
+    simd_cf_t ch_estimates_re[NofPorts][NofLayers];
+    for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+      ch_symbols_re[i_port] = ocudu_simd_loadu(&ch_symbols_view[i_port][i_re]);
+      for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+        simd_cf_t ch_estimates_simd = ocudu_simd_loadu(&ch_estimates_view[i_port][i_layer][i_re]);
+        ch_estimates_simd *= tx_scaling;
+        ch_estimates_re[i_port][i_layer] = ch_estimates_simd;
+      }
+    }
+
+    simd_cf_t eq_symbols_re[NofLayers];
+    simd_f_t  noise_vars_re[NofLayers];
+
+    equalize_mmse_mxn_simd<NofLayers, NofPorts>(
+        eq_symbols_re, noise_vars_re, ch_symbols_re, ch_estimates_re, noise_var_est);
+
+    // Store results.
+    interleave_layers_simd<NofLayers>(eq_symbols.subspan(i_re * NofLayers, OCUDU_SIMD_CF_SIZE * NofLayers),
+                                      eq_symbols_re);
+    interleave_layers_simd<NofLayers>(noise_vars.subspan(i_re * NofLayers, OCUDU_SIMD_F_SIZE * NofLayers),
+                                      noise_vars_re);
+  }
+
+  // Calculate remainder number RE to process.
+  nof_re = nof_re - i_re;
+
+  // Prepare channel matrix.
+  simd_cf_t ch_symbols_re[NofPorts];
+  simd_cf_t ch_estimates_re[NofPorts][NofLayers];
+  for (unsigned i_port = 0; i_port != NofPorts; ++i_port) {
+    std::array<cbf16_t, OCUDU_SIMD_CF_SIZE> temp_ch_symbols = {};
+    ocuduvec::copy(span<cbf16_t>(temp_ch_symbols).first(nof_re), ch_symbols_view[i_port].last(nof_re));
+    ch_symbols_re[i_port] = ocudu_simd_loadu(temp_ch_symbols.data());
+
+    for (unsigned i_layer = 0; i_layer != NofLayers; ++i_layer) {
+      std::array<cbf16_t, OCUDU_SIMD_CF_SIZE> temp_ch_estimates = {};
+      ocuduvec::copy(span<cbf16_t>(temp_ch_estimates).first(nof_re), ch_estimates_view[i_port][i_layer].last(nof_re));
+
+      simd_cf_t ch_estimates_simd = ocudu_simd_loadu(temp_ch_estimates.data());
+      ch_estimates_simd *= tx_scaling;
+      ch_estimates_re[i_port][i_layer] = ch_estimates_simd;
+    }
+  }
+
+  simd_cf_t eq_symbols_re[NofLayers];
+  simd_f_t  noise_vars_re[NofLayers];
+
+  // Actual equalization.
+  equalize_mmse_mxn_simd<NofLayers, NofPorts>(
+      eq_symbols_re, noise_vars_re, ch_symbols_re, ch_estimates_re, noise_var_est);
+
+  // Store results.
+  interleave_layers_generic<NofLayers>(eq_symbols.subspan(i_re * NofLayers, nof_re * NofLayers), eq_symbols_re);
+  interleave_layers_generic<NofLayers>(noise_vars.subspan(i_re * NofLayers, nof_re * NofLayers), noise_vars_re);
+}
+
+static void equalize_zf_3x4(span<cf_t>                            eq_symbols,
+                            span<float>                           noise_vars,
+                            const re_buffer_reader<cbf16_t>&      ch_symbols,
+                            const channel_equalizer::ch_est_list& ch_estimates,
+                            float                                 noise_var_est,
+                            float                                 tx_scaling)
+{
+  equalize_zf_mxn<3, 4>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_zf_4x4(span<cf_t>                            eq_symbols,
+                            span<float>                           noise_vars,
+                            const re_buffer_reader<cbf16_t>&      ch_symbols,
+                            const channel_equalizer::ch_est_list& ch_estimates,
+                            float                                 noise_var_est,
+                            float                                 tx_scaling)
+{
+  equalize_zf_mxn<4, 4>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_zf_3x8(span<cf_t>                            eq_symbols,
+                            span<float>                           noise_vars,
+                            const re_buffer_reader<cbf16_t>&      ch_symbols,
+                            const channel_equalizer::ch_est_list& ch_estimates,
+                            float                                 noise_var_est,
+                            float                                 tx_scaling)
+{
+  equalize_zf_mxn<3, 8>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_zf_4x8(span<cf_t>                            eq_symbols,
+                            span<float>                           noise_vars,
+                            const re_buffer_reader<cbf16_t>&      ch_symbols,
+                            const channel_equalizer::ch_est_list& ch_estimates,
+                            float                                 noise_var_est,
+                            float                                 tx_scaling)
+{
+  equalize_zf_mxn<4, 8>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_2x2(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<2, 2>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_2x4(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<2, 4>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_3x4(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<3, 4>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_4x4(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<4, 4>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_2x8(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<2, 8>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_3x8(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<3, 8>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+static void equalize_mmse_4x8(span<cf_t>                            eq_symbols,
+                              span<float>                           noise_vars,
+                              const re_buffer_reader<cbf16_t>&      ch_symbols,
+                              const channel_equalizer::ch_est_list& ch_estimates,
+                              float                                 noise_var_est,
+                              float                                 tx_scaling)
+{
+  equalize_mmse_mxn<4, 8>(eq_symbols, noise_vars, ch_symbols, ch_estimates, noise_var_est, tx_scaling);
+}
+
+bool channel_equalizer_generic_impl::is_supported(channel_equalizer_algorithm_type algorithm,
+                                                  unsigned                         nof_ports,
+                                                  unsigned                         nof_layers)
+{
+  // Only one, two and four ports are currently supported.
+  if ((nof_ports != 1) && (nof_ports != 2) && (nof_ports != 4) && (nof_ports != 8)) {
+    return false;
+  }
+
+  // The number of layers cannot be greater than the number of ports.
+  if (nof_ports < nof_layers) {
+    return false;
+  }
+
+  // ZF and MMSE algorithms support from one to four layers.
+  static constexpr interval<unsigned, true> nof_layers_range(1, 4);
+  return nof_layers_range.contains(nof_layers);
+}
+
+bool channel_equalizer_generic_impl::is_supported(unsigned nof_ports, unsigned nof_layers)
+{
+  return is_supported(type, nof_ports, nof_layers);
+}
+
+void channel_equalizer_generic_impl::equalize(span<cf_t>                       eq_symbols,
+                                              span<float>                      eq_noise_vars,
+                                              const re_buffer_reader<cbf16_t>& ch_symbols,
+                                              const ch_est_list&               ch_estimates,
+                                              span<const float>                noise_var_estimates,
+                                              float                            tx_scaling)
+{
+  // Make sure that the input and output symbol lists and channel estimate dimensions are valid.
+  assert_sizes(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var_estimates);
+
+  ocudu_assert(tx_scaling > 0, "Tx scaling factor must be positive.");
+
+  // Channel dimensions.
+  unsigned nof_rx_ports  = ch_estimates.get_nof_rx_ports();
+  unsigned nof_tx_layers = ch_estimates.get_nof_tx_layers();
+
+  // Select the most pessimistic noise variance.
+  float noise_var = *std::max_element(noise_var_estimates.begin(), noise_var_estimates.end());
+
+  // Zero Forcing algorithm.
+  if (type == channel_equalizer_algorithm_type::zf) {
+    // Single transmit layer and any number of receive ports.
+    if (nof_tx_layers == 1) {
+      equalize_zf_single_tx_layer_reduction<max_nof_ports>(
+          eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var_estimates, tx_scaling);
+      return;
+    }
+
+    // Two transmit layers and two receive ports.
+    if ((nof_rx_ports == 2) && (nof_tx_layers == 2)) {
+      equalize_zf_2xn<2>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+      return;
+    }
+
+    // Four receive ports.
+    if (nof_rx_ports == 4) {
+      // Two transmit layers.
+      if (nof_tx_layers == 2) {
+        equalize_zf_2xn<4>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Three transmit layers.
+      if (nof_tx_layers == 3) {
+        equalize_zf_3x4(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Four transmit layer.
+      if (nof_tx_layers == 4) {
+        equalize_zf_4x4(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+    }
+
+    // Eight receive ports.
+    if (nof_rx_ports == 8) {
+      // Two transmit layers.
+      if (nof_tx_layers == 2) {
+        equalize_zf_2xn<8>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Three transmit layers.
+      if (nof_tx_layers == 3) {
+        equalize_zf_3x8(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Four transmit layer.
+      if (nof_tx_layers == 4) {
+        equalize_zf_4x8(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+    }
+  }
+
+  // Minimum Mean Square Error algorithm.
+  if (type == channel_equalizer_algorithm_type::mmse) {
+    // Single transmit layer and any number of receive ports.
+    if (nof_tx_layers == 1) {
+      // For one Tx layer, and including scaling for better LLR calculation, the MMSE equalizer is equivalent to the ZF
+      // one.
+      equalize_zf_single_tx_layer_reduction<max_nof_ports>(
+          eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var_estimates, tx_scaling);
+      return;
+    }
+
+    // Two transmit layers and two receive ports.
+    if ((nof_rx_ports == 2) && (nof_tx_layers == 2)) {
+      equalize_mmse_2x2(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+      return;
+    }
+
+    // Four receive ports.
+    if (nof_rx_ports == 4) {
+      // Two transmit layers.
+      if (nof_tx_layers == 2) {
+        equalize_mmse_2x4(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Three transmit layers.
+      if (nof_tx_layers == 3) {
+        equalize_mmse_3x4(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Four transmit layer.
+      if (nof_tx_layers == 4) {
+        equalize_mmse_4x4(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+    }
+
+    // Eight receive ports.
+    if (nof_rx_ports == 8) {
+      // Two transmit layers.
+      if (nof_tx_layers == 2) {
+        equalize_mmse_2x8(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Three transmit layers.
+      if (nof_tx_layers == 3) {
+        equalize_mmse_3x8(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+
+      // Four transmit layer.
+      if (nof_tx_layers == 4) {
+        equalize_mmse_4x8(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
+        return;
+      }
+    }
+  }
+
+  ocudu_assertion_failure(
+      "Invalid combination of channel spatial topology (i.e., {} Rx ports, {} Tx layers) and algorithm (i.e., {}).",
+      ch_estimates.get_nof_rx_ports(),
+      ch_estimates.get_nof_tx_layers(),
+      to_string(type));
+}

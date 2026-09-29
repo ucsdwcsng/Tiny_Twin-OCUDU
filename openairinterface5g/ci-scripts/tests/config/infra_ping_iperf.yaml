@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+test:
+  Host: localhost
+  NetworkScript: echo "inet 127.0.0.1 mtu 1500"

@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/scheduler/config/scheduler_config.h"
+#include "ocudu/scheduler/mac_scheduler.h"
+
+namespace ocudu {
+
+/// Create L2 scheduler object.
+std::unique_ptr<mac_scheduler> create_scheduler(const scheduler_config& sched_cfg);
+
+} // namespace ocudu

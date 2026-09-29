@@ -1,0 +1,21 @@
+#!/bin/sh
+set -x
+
+mkdir -p /var/log/nr-log
+echo "NR demon-reload:" >> /var/log/nr-log/nr-systemctl.log
+systemctl daemon-reload >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-CUUP enable:" >> /var/log/nr-log/nr-systemctl.log
+systemctl enable nr-cuup.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-CUUP start:" >> /var/log/nr-log/nr-systemctl.log
+systemctl start nr-cuup.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-SOFTMODEM enable:" >> /var/log/nr-log/nr-systemctl.log
+systemctl enable nr-softmodem.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+echo "NR-SOFTMODEM start:" >> /var/log/nr-log/nr-systemctl.log
+systemctl start nr-softmodem.service >> /var/log/nr-log/nr-systemctl.log  2>&1
+# Add ldconfig
+echo "Running ldconfig..." >> /var/log/nr-log/nr-systemctl.log
+if command -v ldconfig >> /var/log/nr-log/nr-systemctl.log 2>&1; then
+    ldconfig
+else
+    echo "Warning: ldconfig not found"
+fi

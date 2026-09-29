@@ -1,0 +1,13 @@
+[Unit]
+Description=lte-softmodem
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/lte-softmodem -O /etc/openairinterface/lte/enb.band7.tm1.50PRB.usrpb210.conf --device.name oai_usrpdevif
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

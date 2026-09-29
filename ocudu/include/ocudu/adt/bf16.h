@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/adt/strong_type.h"
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+
+namespace ocudu {
+
+/// \brief Brain floating point (\c bfloat16).
+///
+/// Custom 16-bit floating point. It consits of 1-bit sign, 8-bit exponent and 7-bit fraction.
+/// \note This type is meant for storage purposes only, no operations other than equality comparison are allowed.
+using bf16_t = strong_type<uint16_t, struct strong_bf16_tag, strong_equality>;
+
+/// \brief Converts an IEEE 754 single-precision 32-bit float to \c bfloat16.
+///
+/// The 16 least significant bits of the fractional part are removed. The remaining 7 (most significant) bits are
+/// rounded according to the "half to nearest even" method.
+inline bf16_t to_bf16(float value)
+{
+  // Reinterpret the value as a 32-bit unsigned integer.
+  uint32_t temp_u32;
+  std::memcpy(&temp_u32, reinterpret_cast<void*>(&value), 4);
+
+  // The 16 least significant bits of the fractional part are removed. The remaining 7 (most significant) bits are
+  // rounded according to the "half to nearest even" method: when the removed part is exactly 0.5 (i.e., a single one
+  // followed by 15 zeros), we take the closest even value. In base-10 notation, this means that 2.5 is rounded to 2,
+  // while 3.5 is rounded to 4. All other values are rounded to the closest integer (e.g., 3.4 to 3 and 3.8 to 4).
+  temp_u32 += 0x7fff + ((temp_u32 >> 16) & 1);
+
+  // Discard the 16 least significant bits.
+  uint16_t temp_u16 = temp_u32 >> 16;
+
+  // Reinterpret 16-bit unsigned integer as a BF16.
+  return bf16_t(temp_u16);
+}
+
+/// Converts an \c int16 value to \c bfloat16. The conversion adjusts the input magnitude range [-scale, +scale] to the
+/// output magnitude range [-1.0, 1.0].
+inline bf16_t to_bf16(int16_t value, float scale)
+{
+  const float gain = 1.0f / scale;
+  float       out  = static_cast<float>(value) * gain;
+  return to_bf16(out);
+}
+
+/// Converts a \c bfloat16 to IEEE 754 single-precision 32-bit float.
+inline float to_float(bf16_t value)
+{
+  // Reinterpret BF16 as 16-bit unsigned integer.
+  uint16_t temp_u16 = value.value();
+
+  // Extend value as a 32-bit unsigned integer.
+  uint32_t temp_u32;
+  temp_u32 = static_cast<uint32_t>(temp_u16) << 16;
+
+  // Reinterpret the value as a single-precision 32-bit float.
+  float ret;
+  std::memcpy(&ret, &temp_u32, 4);
+
+  return ret;
+}
+
+/// Converts a \c bfloat16 value to \c int16. The conversion scales the input before rounding it to the nearest integer.
+inline int16_t to_int16(bf16_t value, float scale)
+{
+  float temp = to_float(value);
+  return static_cast<int16_t>(std::round(temp * scale));
+}
+
+/// \brief Checks whether a \c bfloat16 value is NaN.
+///
+/// A \c bfloat16 value is NaN when its exponent is all 1s and its mantissa is non-zero. This is a pure bit-check — no
+/// float conversion or FPU instruction is involved.
+constexpr bool is_nan(bf16_t value)
+{
+  return (value.value() & 0x7fff) > 0x7f80;
+}
+
+} // namespace ocudu

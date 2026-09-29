@@ -1,0 +1,310 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/bounded_bitset.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ran/csi_report/csi_report_packed.h"
+#include "ocudu/ran/phy_time_unit.h"
+#include "ocudu/ran/rnti.h"
+#include "ocudu/ran/slot_pdu_capacity_constants.h"
+#include "ocudu/ran/slot_point.h"
+#include "ocudu/ran/srs/srs_channel_matrix.h"
+#include "ocudu/ran/uci/uci_constants.h"
+#include "ocudu/ran/uci/uci_mapping.h"
+#include <optional>
+#include <variant>
+
+namespace ocudu {
+
+/// CRC indication PDU.
+struct mac_crc_pdu {
+  /// RNTI value corresponding to the UE that generated this PDU.
+  rnti_t rnti;
+  /// HARQ process ID.
+  uint8_t harq_id;
+  /// True if transport block is successfully decoded, otherwise false.
+  bool tb_crc_success;
+  /// PUSCH SINR value in dB.
+  std::optional<float> ul_sinr_dB;
+  /// PUSCH RSRP value in dBFS.
+  std::optional<float> ul_rsrp_dBFS;
+  /// Time alignment.
+  std::optional<phy_time_unit> time_advance_offset;
+  /// Index of the RA preamble that originated this PDU, set only for MsgA PUSCH receptions.
+  std::optional<uint8_t> rapid;
+};
+
+/// List of Uplink CRC indication PDUs for a given slot.
+struct mac_crc_indication_message {
+  /// Slot point corresponding to the reception of this indication.
+  slot_point sl_rx;
+  /// List of CRC PDUs carried in this indication.
+  static_vector<mac_crc_pdu, MAX_PUSCH_PDUS_PER_SLOT> crcs;
+};
+
+/// UCI indication PDU.
+struct mac_uci_pdu {
+  /// UCI multiplexed in the PUSCH.
+  struct pusch_type {
+    /// HARQ related information.
+    struct harq_information {
+      /// Creates an HARQ information object when the HARQ was not detected by the underlying layers.
+      static harq_information create_undetected_harq_info(unsigned expected_nof_bits)
+      {
+        harq_information info;
+        info.is_valid = false;
+        info.payload.resize(expected_nof_bits);
+
+        return info;
+      }
+
+      /// Creates an HARQ information object when the HARQ was successfully detected by the underlying layers.
+      static harq_information create_detected_harq_info(const bounded_bitset<uci_constants::MAX_NOF_HARQ_BITS>& payload)
+      {
+        harq_information info;
+        info.is_valid = true;
+        info.payload  = payload;
+
+        return info;
+      }
+
+      /// Indicates detection outcome.
+      bool is_valid;
+      /// \brief Contents of HARQ, excluding any CRC.
+      ///
+      /// \n Example: If the number of HARQ bits is 20, then it is represented as:
+      /// [ HARQ_bit_19 ... HARQ_bit_0 ] => [ MSB ... LSB ].
+      /// NOTE: If \c is_valid == true, then the HARQs bits set in \c payload should be interpreted as an ACK (if the
+      /// bit is 1) or NACK (if the bit is 0).
+      /// If \c is_valid == false, then all HARQs bits set in \c payload should be interpreted as not-detected; note
+      /// that these bits cannot be ignored when \c is_valid == false, as the "not-detected" outcome will be used to
+      /// acknowledge (negatively) the HARQ processes corresponding to each single bit.
+      bounded_bitset<uci_constants::MAX_NOF_HARQ_BITS> payload;
+    };
+
+    /// CSI report related information.
+    struct csi_information {
+      /// Indicates detection outcome.
+      bool is_valid;
+      /// Contents of CSI, excluding any CRC.
+      /// Example: If the number of CSI bits is 20, then it is represented as:
+      /// [ CSI_bit_19 ... CSI_bit_0 ] => [ MSB ... LSB ].
+      /// NOTE: if \c is_valid == false, then the CSI payload will be ignored.
+      csi_report_packed payload;
+    };
+
+    // This user provided constructor is added here to fix a Clang compilation error related to the use of nested types
+    // with std::optional.
+    pusch_type() {}
+
+    /// Metric of channel quality in dB.
+    std::optional<float> ul_sinr_dB;
+    /// Timing Advance Offset measured for the UE.
+    std::optional<phy_time_unit> time_advance_offset;
+    /// RSSI report in dBFS.
+    std::optional<float> rssi_dBFS;
+    /// RSRP report in dBFS.
+    std::optional<float> rsrp_dBFS;
+    /// HARQ information.
+    std::optional<harq_information> harq_info;
+    /// CSI Part 1 report information.
+    std::optional<csi_information> csi_part1_info;
+    /// CSI Part 2 report information.
+    std::optional<csi_information> csi_part2_info;
+  };
+
+  /// UCI carried in PUCCH Format0 or Format1.
+  struct pucch_f0_or_f1_type {
+    /// Scheduling Request related information.
+    struct sr_information {
+      /// Set to true if a SR is detected, otherwise false.
+      bool detected;
+    };
+
+    /// HARQ related information.
+    struct harq_information {
+      static constexpr size_t NOF_HARQS_PER_UCI = 2;
+      /// HARQ bits.
+      static_vector<uci_pucch_f0_or_f1_harq_values, NOF_HARQS_PER_UCI> harqs;
+    };
+
+    // This user provided constructor is added here to fix a Clang compilation error related to the use of nested types
+    // with std::optional.
+    pucch_f0_or_f1_type() {}
+
+    /// Metric of channel quality in dB.
+    std::optional<float> ul_sinr_dB;
+    /// Timing Advance Offset measured for the UE.
+    std::optional<phy_time_unit> time_advance_offset;
+    /// RSSI report in dBFS.
+    std::optional<float> rssi_dBFS;
+    /// RSRP report in dBFS.
+    std::optional<float> rsrp_dBFS;
+    /// SR information.
+    std::optional<sr_information> sr_info;
+    /// HARQ information.
+    std::optional<harq_information> harq_info;
+  };
+
+  /// UCI carried in PUCCH Format2, Format3 or Format4.
+  struct pucch_f2_or_f3_or_f4_type {
+    /// Maximum number of SR bits expected on the PUCCH transmission.
+    static constexpr size_t MAX_SR_PAYLOAD_SIZE_BITS = 4;
+    using sr_information                             = bounded_bitset<MAX_SR_PAYLOAD_SIZE_BITS>;
+
+    /// HARQ related information.
+    struct harq_information {
+      /// Creates an HARQ information object when the HARQ was not detected by the underlying layers.
+      static harq_information create_undetected_harq_info(unsigned expected_nof_bits)
+      {
+        harq_information info;
+        info.is_valid = false;
+        info.payload.resize(expected_nof_bits);
+
+        return info;
+      }
+
+      /// Creates an HARQ information object when the HARQ was successfully detected by the underlying layers.
+      static harq_information create_detected_harq_info(const bounded_bitset<uci_constants::MAX_NOF_HARQ_BITS>& payload)
+      {
+        harq_information info;
+        info.is_valid = true;
+        info.payload  = payload;
+
+        return info;
+      }
+
+      /// Indicates detection outcome.
+      bool is_valid;
+      /// \brief Contents of HARQ, excluding any CRC.
+      ///
+      /// \n Example: If the number of HARQ bits is 20, then it is represented as:
+      /// [ HARQ_bit_19 ... HARQ_bit_0 ] => [ MSB ... LSB ].
+      /// NOTE: If \c is_valid == true, then the HARQs bits set in \c payload should be interpreted as an ACK (if the
+      /// bit is 1) or NACK (if the bit is 0).
+      /// If \c is_valid == false, then all HARQs bits set in \c payload should be interpreted as not-detected; note
+      /// that these bits cannot be ignored when \c is_valid == false, as the "not-detected" outcome will be used to
+      /// acknowledge (negatively) the HARQ processes corresponding to each single bit.
+      bounded_bitset<uci_constants::MAX_NOF_HARQ_BITS> payload;
+    };
+
+    /// CSI report related information.
+    struct csi_information {
+      /// Indicates detection outcome.
+      bool is_valid;
+      /// Contents of CSI, excluding any CRC.
+      /// Example: If the number of CSI bits is 20, then it is represented as:
+      /// [ CSI_bit_19 ... CSI_bit_0 ] => [ MSB ... LSB ].
+      /// NOTE: if \c is_valid == false, then the CSI payload will be ignored.
+      csi_report_packed payload;
+    };
+
+    // This user provided constructor is added here to fix a Clang compilation error related to the use of nested types
+    // with std::optional.
+    pucch_f2_or_f3_or_f4_type() {}
+
+    /// Metric of channel quality in dB.
+    std::optional<float> ul_sinr_dB;
+    /// Timing Advance Offset measured for the UE.
+    std::optional<phy_time_unit> time_advance_offset;
+    /// RSSI report in dBFS.
+    std::optional<float> rssi_dBFS;
+    /// RSRP report in dBFS.
+    std::optional<float> rsrp_dBFS;
+    /// SR information.
+    std::optional<sr_information> sr_info;
+    /// HARQ information.
+    std::optional<harq_information> harq_info;
+    /// CSI Part 1 report information.
+    std::optional<csi_information> csi_part1_info;
+    /// CSI Part 2 report information.
+    std::optional<csi_information> csi_part2_info;
+  };
+
+  /// RNTI value corresponding to the UE that generated this PDU.
+  rnti_t rnti;
+  /// UCI PDU multiplexed either in the PUSCH or encoded in the PUCCH.
+  std::variant<pusch_type, pucch_f0_or_f1_type, pucch_f2_or_f3_or_f4_type> pdu;
+};
+
+/// List of UCI indication PDUs for a given slot.
+struct mac_uci_indication_message {
+  /// Slot point corresponding to the reception of this indication.
+  slot_point sl_rx;
+  /// List of UCI PDUs carried in this indication.
+  static_vector<mac_uci_pdu, MAX_UCI_PDUS_PER_UCI_IND> ucis;
+};
+
+struct mac_srs_pdu {
+  struct normalized_channel_iq_matrix {
+    /// Channel matrix reported in the SRS codebook-based report.
+    /// \remark This Channel matrix assumes that the SRS usage is codebook-based, which is the only usage currently
+    /// supported.
+    srs_channel_matrix channel_matrix;
+  };
+  struct positioning_report {
+    /// UL relative Time of Arrival. Values: {-985024Tc,...,985024Tc}.
+    std::optional<phy_time_unit> ul_rtoa;
+    /// RSRP report in dBFS.
+    std::optional<float> ul_rsrp_dBFS;
+    /// Azimuth Angle of Arrival, in degrees. Values: {0,...,359.9}.
+    std::optional<float> azimuth_aoa;
+    /// Zenith Angle of Arrival, in degrees. Values: {0,...,179.9}.
+    std::optional<float> zenith_aoa;
+  };
+
+  mac_srs_pdu() = default;
+  mac_srs_pdu(rnti_t rnti_, std::optional<phy_time_unit> ta, srs_channel_matrix& matrix) :
+    rnti(rnti_), time_advance_offset(ta), report(normalized_channel_iq_matrix{matrix})
+  {
+  }
+  mac_srs_pdu(rnti_t                       rnti_,
+              std::optional<phy_time_unit> ta,
+              std::optional<phy_time_unit> rtoa,
+              std::optional<float>         rsrp_dbfs) :
+    rnti(rnti_), time_advance_offset(ta), report(positioning_report{rtoa, rsrp_dbfs})
+  {
+  }
+
+  /// RNTI value corresponding to the UE that generated this PDU.
+  rnti_t rnti;
+  /// Timing Advance Offset measured for the UE.
+  std::optional<phy_time_unit> time_advance_offset;
+  /// \brief Report, which can be of several types, namely normalized channel IQ matrix, positioning.
+  std::variant<normalized_channel_iq_matrix, positioning_report> report;
+};
+
+/// List of SRS indication PDUs for a given slot.
+struct mac_srs_indication_message {
+  /// Slot point corresponding to the reception of this indication.
+  slot_point sl_rx;
+  /// List of SRS PDUs carried in this indication.
+  static_vector<mac_srs_pdu, MAX_SRS_PDUS_PER_SRS_IND> srss;
+};
+
+/// Interface to handle feedback information from the PHY.
+class mac_cell_control_information_handler
+{
+public:
+  virtual ~mac_cell_control_information_handler() = default;
+
+  /// \brief Handles a CRC indication.
+  ///
+  /// There can be more than one CRC indication per slot.
+  virtual void handle_crc(const mac_crc_indication_message& msg) = 0;
+
+  /// \brief Handles an UCI indication.
+  ///
+  /// The UCI indication can be received on both PUSCH and PUCCH. There can be more than one UCI indication per slot.
+  virtual void handle_uci(const mac_uci_indication_message& msg) = 0;
+
+  /// \brief Handles an SRS indication.
+  ///
+  /// There can be more than one SRS indication per slot.
+  virtual void handle_srs(const mac_srs_indication_message& msg) = 0;
+};
+
+} // namespace ocudu

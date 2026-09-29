@@ -1,0 +1,82 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-e1</htmlTabRef>
+  <htmlTabName>CUCP-CUUP-DU E1+F1 split</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb oai-nr-cuup oai-nr-ue</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_e1</yaml_path>
+    <services>mysql oai-amf oai-smf oai-upf</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G RAN RF sim SA (1 CU-CP, 3 CU-UPs, 3 DUs)</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_e1</yaml_path>
+    <services>oai-cucp oai-cuup oai-cuup2 oai-cuup3 oai-du oai-du2 oai-du3</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G NR-UE RF sim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_e1</yaml_path>
+    <services>oai-nr-ue oai-nr-ue2 oai-nr-ue3</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE (Wait for IP)</desc>
+    <id>rfsim5g_ue rfsim5g_ue2 rfsim5g_ue3</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping ext-dn from all NR-UEs</desc>
+    <id>rfsim5g_ue rfsim5g_ue2 rfsim5g_ue3</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_5gc_fixed_ip</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <node>localhost</node>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_e1</yaml_path>
+    <analysis>
+      <services>oai-cucp=EndsWithBye oai-cuup=EndsWithBye oai-cuup2=EndsWithBye oai-cuup3=EndsWithBye oai-du=RetxCheck=1,0,0,0 oai-du=EndsWithBye oai-du2=RetxCheck=1,0,0,0 oai-du2=EndsWithBye oai-du3=RetxCheck=1,0,0,0 oai-du3=EndsWithBye oai-nr-ue oai-nr-ue2 oai-nr-ue3</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb oai-nr-cuup oai-nr-ue</images>
+  </testCase>
+
+</testCaseList>

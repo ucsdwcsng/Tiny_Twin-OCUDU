@@ -1,0 +1,127 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+set_directory_properties(PROPERTIES LABELS "support")
+
+include_directories(../../..)
+
+add_subdirectory(network)
+add_subdirectory(executors)
+add_subdirectory(format)
+add_subdirectory(rate_limiting)
+add_subdirectory(synchronization)
+
+add_executable(timer_test timer_test.cpp)
+target_link_libraries(timer_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+add_test(timer_test timer_test)
+set_tests_properties(timer_test PROPERTIES LABELS "tsan")
+
+add_executable(config_schema_test config_schema_test.cpp)
+target_link_libraries(config_schema_test ocudu_support GTest::gtest ocudu_gtest_main)
+target_include_directories(config_schema_test PRIVATE ${CMAKE_SOURCE_DIR}/external)
+add_test(config_schema_test config_schema_test)
+
+add_executable(cli11_utils_schema_test cli11_utils_schema_test.cpp)
+target_link_libraries(cli11_utils_schema_test ocudu_support ocudu_yaml_util GTest::gtest ocudu_gtest_main)
+target_include_directories(cli11_utils_schema_test PRIVATE ${CMAKE_SOURCE_DIR}/external)
+add_test(cli11_utils_schema_test cli11_utils_schema_test)
+
+add_executable(function_signature_test function_signature_test.cpp)
+add_test(function_signature_test function_signature_test)
+
+add_executable(async_event_test async_event_test.cpp)
+target_link_libraries(async_event_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(async_event_test async_event_test)
+
+add_executable(async_task_test async_task_test.cpp)
+target_link_libraries(async_task_test ocudulog GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(async_task_test)
+
+add_executable(when_all_test when_all_test.cpp)
+target_link_libraries(when_all_test ocudulog GTest::gtest ocudu_gtest_main)
+add_test(when_all_test when_all_test)
+
+add_executable(async_exec_test async_exec_test.cpp)
+target_link_libraries(async_exec_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(async_exec_test)
+
+add_executable(async_queue_test async_queue_test.cpp)
+target_link_libraries(async_queue_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+add_test(async_queue_test async_queue_test)
+
+add_executable(fifo_async_task_scheduler_test fifo_async_task_scheduler_test.cpp)
+target_link_libraries(fifo_async_task_scheduler_test ocudulog ocudu_support)
+add_test(fifo_async_task_scheduler_test fifo_async_task_scheduler_test)
+
+add_executable(unique_thread_test unique_thread_test.cpp)
+target_link_libraries(unique_thread_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(unique_thread_test PROPERTIES LABELS "tsan")
+
+add_executable(stats_test stats_test.cpp)
+target_link_libraries(stats_test ocudulog GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(stats_test)
+
+add_executable(bit_encoding_test bit_encoding_test.cpp)
+target_link_libraries(bit_encoding_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(bit_encoding_test)
+
+add_executable(async_event_observer_test async_event_observer_test.cpp protocol_transaction_manager_test.cpp)
+target_link_libraries(async_event_observer_test ocudulog ocudu_support GTest::gtest ocudu_gtest_main)
+gtest_discover_tests(async_event_observer_test)
+
+add_executable(memory_block_list_test memory_block_list_test.cpp)
+target_link_libraries(memory_block_list_test ocudu_support GTest::gtest ocudu_gtest_main)
+add_test(memory_block_list_test memory_block_list_test)
+
+add_executable(ring_buffer_pool_test ring_buffer_pool_test.cpp)
+target_link_libraries(ring_buffer_pool_test ocudu_support gtest ocudu_gtest_main)
+add_test(ring_buffer_pool_test ring_buffer_pool_test)
+
+add_executable(object_pool_test unbounded_object_pool_test.cpp bounded_object_pool_test.cpp)
+target_link_libraries(object_pool_test ocudu_support gtest ocudu_gtest_main)
+add_test(object_pool_test object_pool_test)
+
+add_executable(free_list_memory_pool_test free_list_memory_pool_test.cpp free_list_recycling_object_pool_test.cpp)
+target_link_libraries(free_list_memory_pool_test ocudu_support gtest ocudu_gtest_main)
+add_test(free_list_memory_pool_test free_list_memory_pool_test)
+
+add_executable(fixed_size_memory_pool_test fixed_size_memory_pool_test.cpp)
+target_link_libraries(fixed_size_memory_pool_test ocudu_support gtest ocudu_gtest_main)
+add_test(fixed_size_memory_pool_test fixed_size_memory_pool_test)
+set_tests_properties(fixed_size_memory_pool_test PROPERTIES LABELS "tsan")
+
+add_executable(units_test units_test.cpp)
+target_link_libraries(units_test ocudulog ocudu_support gtest ocudu_gtest_main)
+add_test(units_test units_test)
+
+add_executable(backtrace_test backtrace_test.cpp)
+target_link_libraries(backtrace_test PRIVATE ocudu_support)
+add_backward(backtrace_test)
+
+add_executable(validator_helpers_test config/validator_helpers_test.cpp)
+target_link_libraries(validator_helpers_test ocudu_support gtest ocudu_gtest_main)
+add_test(validator_helpers_test validator_helpers_test)
+
+add_executable(event_tracer_test tracing/event_tracer_test.cpp)
+target_link_libraries(event_tracer_test ocudu_support gtest ocudu_gtest_main)
+add_test(event_tracer_test event_tracer_test)
+
+add_executable(complex_normal_random_test complex_normal_random_test.cpp)
+target_link_libraries(complex_normal_random_test ocudulog gtest ocudu_gtest_main)
+add_test(complex_normal_random_test complex_normal_random_test)
+
+add_executable(transform_optional_test transform_optional_test.cpp)
+target_link_libraries(transform_optional_test ocudulog gtest ocudu_gtest_main)
+add_test(transform_optional_test transform_optional_test)
+
+add_executable(resource_usage_test tracing/resource_usage_test.cpp)
+target_link_libraries(resource_usage_test ocudu_support ocudulog gtest ocudu_gtest_main)
+add_test(resource_usage_test resource_usage_test)
+
+add_executable(math_test math/mod_math_utils_test.cpp math/curve_fitting_find_max_test.cpp)
+target_link_libraries(math_test ocudu_support_math ocuduvec gtest ocudu_gtest_main)
+add_test(math_test math_test)
+
+add_executable(bit_ops_test math/bit_ops_test.cpp)
+target_link_libraries(bit_ops_test ocudu_support_math gtest ocudu_gtest_main)
+add_test(bit_ops_test bit_ops_test)

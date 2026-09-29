@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ran_slice_instance.h"
+
+using namespace ocudu;
+
+static unsigned get_min_k2(span<const pusch_time_domain_resource_allocation> pusch_td_res)
+{
+  return std::min_element(pusch_td_res.begin(),
+                          pusch_td_res.end(),
+                          [](const pusch_time_domain_resource_allocation& lhs,
+                             const pusch_time_domain_resource_allocation& rhs) { return lhs.k2 < rhs.k2; })
+      ->k2;
+}
+
+ran_slice_instance::ran_slice_instance(ran_slice_id_t                 id_,
+                                       const cell_configuration&      cell_cfg_,
+                                       const slice_rrm_policy_config& cfg_,
+                                       ue_repository&                 ues_) :
+  id(id_),
+  cell_cfg(&cell_cfg_),
+  cfg(cfg_),
+  min_k2(get_min_k2(cell_cfg->params.ul_cfg_common.init_ul_bwp.pusch_cfg_common->pusch_td_alloc_list)),
+  pdsch_rb_count_per_slot(get_allocator_ring_size_gt_min(SCHEDULER_MAX_K0 + 1)),
+  pusch_rb_count_per_slot(get_allocator_ring_size_gt_min(SCHEDULER_MAX_K2 + cell_cfg->ntn_cs_koffset)),
+  slice_ues(id, cell_cfg->cell_index, ues_)
+{
+  std::fill(pdsch_rb_count_per_slot.begin(), pdsch_rb_count_per_slot.end(), 0);
+  std::fill(pusch_rb_count_per_slot.begin(), pusch_rb_count_per_slot.end(), 0);
+}
+
+void ran_slice_instance::slot_indication(slot_point slot_tx)
+{
+  static constexpr float exp_avg_coeff = 0.1;
+
+  // Recompute rate of DL allocation for slice and clear the PDSCH RB count of the slot that just became finalized:
+  // since PDSCH TDRA k0 offsets (including repetition occasions) are never negative, no round from here on can still
+  // write into slot_tx - 1.
+  auto& pdsch_slot_to_clear = pdsch_rb_count_per_slot[(slot_tx - 1).count() % pdsch_rb_count_per_slot.size()];
+  avg_pdsch_rbs_per_slot += exp_avg_coeff * (pdsch_slot_to_clear - avg_pdsch_rbs_per_slot);
+  pdsch_slot_to_clear = 0;
+
+  // Recompute rate of UL allocation for slice and clear PUSCH RB count in previous slot.
+  auto& pusch_slot_to_clear = pusch_rb_count_per_slot[(slot_tx + min_k2 - 1).count() % pusch_rb_count_per_slot.size()];
+  avg_pusch_rbs_per_slot += exp_avg_coeff * (pusch_slot_to_clear - avg_pusch_rbs_per_slot);
+  pusch_slot_to_clear = 0;
+
+  // Reset last alloc slot if the difference becomes too large, to avoid ambiguity.
+  if (last_pdsch_alloc_slot.valid() and
+      slot_tx > last_pdsch_alloc_slot + MAX_SLOTS_SINCE_LAST_PXSCH + cell_cfg->ntn_cs_koffset) {
+    last_pdsch_alloc_slot.clear();
+  }
+  if (last_pusch_alloc_slot.valid() and
+      slot_tx > last_pusch_alloc_slot + MAX_SLOTS_SINCE_LAST_PXSCH + cell_cfg->ntn_cs_koffset) {
+    last_pusch_alloc_slot.clear();
+  }
+}

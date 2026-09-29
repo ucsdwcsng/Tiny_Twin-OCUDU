@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+
+services:
+    dpdk-init:
+        image: docker.io/library/oai-dpdk-init:latest
+        network_mode: host
+        container_name: dpdk-init
+        entrypoint: "/tmp/setup_sriov.sh"
+        privileged: true
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ./setup_sriov_benetel.sh:/tmp/setup_sriov.sh
+            - /lib/modules:/lib/modules
+            - /usr/lib/modules:/usr/lib/modules
+    oai-gnb:
+        image: ${REGISTRY-oaisoftwarealliance/}oai-gnb-fhi72:${TAG:-develop}
+        privileged: true
+        network_mode: "host"
+        container_name: oai-gnb
+        environment:
+            TZ: Europe/Paris
+            USE_ADDITIONAL_OPTIONS: --thread-pool 7,8,9,10,11,12 --device.name oran_fhlib_5g_mplane --log_config.global_log_options level,nocolor,time,line_num,function
+        devices:
+            - /dev/vfio:/dev/vfio/
+        volumes:
+            - ../../conf_files/gnb.sa.band78.106prb.fhi72.4x4-benetel550-9b-mplane.conf:/opt/oai-gnb/etc/gnb.conf
+            - /dev/hugepages:/dev/hugepages
+            - /home/oaicicd/.ssh/id_rsa.pub:/opt/oai-gnb/etc/id_rsa.pub
+            - /home/oaicicd/.ssh/id_rsa:/opt/oai-gnb/etc/id_rsa
+        # Please change these values based on your system
+        cpuset: "0-12"
+        depends_on:
+           dpdk-init:
+             condition: service_completed_successfully
+        healthcheck:
+           test: /bin/bash -c "/opt/oai-gnb/bin/check-prach-io.sh"
+           start_period: 60s
+           start_interval: 500ms
+           interval: 5s
+           timeout: 5s
+           retries: 10

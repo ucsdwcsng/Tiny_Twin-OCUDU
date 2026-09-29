@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Generate a docker compose override that runs the gNB with N OAI UEs through the ZMQ broker (zmq_broker/).
+
+    ./gen_multi_ue_compose.py --ues 4       # writes docker-compose.4ue.yml + open5gs/subscriber_db_4ue.csv
+    docker compose -f docker-compose.yml -f docker-compose.4ue.yml up -d
+    docker compose -f docker-compose.yml -f docker-compose.4ue.yml down
+
+Layout (same as run_multi_ue.sh): broker 10.53.1.254; UE i at 10.53.1.(3+i), IMSI 00101 + (123456780+i-1), RX port
+broker:(4999+i), PDU session IP 10.45.1.(1+i). UE 1 reuses the "ue" service of docker-compose.yml, UEs 2.. extend it.
+
+Above 8 UEs the gNB needs a longer CSI period (only 8 periodic-CSI PUCCH offsets at 20 ms) and more PRACH
+retransmissions (all UEs send PRACH in the same occasion), so --csi-period defaults to 80 and --preamble-trans-max to 200
+there.
+
+Per-UE channel: UE i mounts configs/oaiue{i}_zmq.conf if that file exists, otherwise the shared configs/oaiue_zmq.conf
+(UE 1 also uses oaiue_zmq.conf unless oaiue1_zmq.conf exists). In a config, DL is the rx_* settings and UL the tx_*
+settings (e.g. rx_tap_file / tx_tap_file). The IMSI and rx_channels in those files are overridden per UE on the
+command line, so copies of oaiue_zmq.conf can be used as they are. Trace files referenced by a config must exist in
+traces/ (mounted at /traces).
+"""
+
+import argparse
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BROKER_IP = "10.53.1.254"
+MAX_UES = 32
+TAP_FILE_RE = re.compile(r'^\s*((?:rx|tx)_tap_file(?:_imag)?)\s*=\s*"([^"]*)"\s*;', re.MULTILINE)
+EFFECTS_RE = re.compile(r"^\s*channel_effects_enabled\s*=\s*([^;\s]+)\s*;", re.MULTILINE)
+# The subscriber key/OPc of configs/oaiue_zmq.conf, shared by every UE.
+SUBSCRIBER_KEYS = "00112233445566778899aabbccddeeff,opc,63bfa50ee6523365ff14c1f45f88737d,8000,9"
+UE_ARGS = ["-O", "/oaie_zmq.conf", "-C", "3489420000", "-r", "51", "--numerology", "1", "--band", "78", "-E",
+           "--ue-scan-carrier"]
+
+
+def ue_ip(i):
+    return f"10.53.1.{3 + i}"
+
+
+def ue_imsi(i):
+    return f"00101{123456780 + i - 1:010d}"
+
+
+def ue_service(i):
+    return "ue" if i == 1 else f"ue{i}"
+
+
+def ue_container(i):
+    return "ocudu_ue_tinytwin" if i == 1 else f"ocudu_ue{i}_tinytwin"
+
+
+def ue_config(i):
+    """UE i's config file relative to this directory: configs/oaiue{i}_zmq.conf if present, else the shared one."""
+    own = f"configs/oaiue{i}_zmq.conf"
+    return own if os.path.isfile(os.path.join(HERE, own)) else "configs/oaiue_zmq.conf"
+
+
+def check_config(path):
+    """One-line channel summary of a UE config; exits if an enabled channel references a missing trace file."""
+    with open(os.path.join(HERE, path)) as f:
+        text = "\n".join(line.split("#", 1)[0] for line in f)
+    effects = EFFECTS_RE.search(text)
+    enabled = effects is None or effects.group(1).lower() not in ("0", "false")
+    traces = {}
+    for key, value in TAP_FILE_RE.findall(text):
+        if not value:
+            continue
+        host = os.path.join(HERE, "traces", value[len("/traces/"):])
+        if not value.startswith("/traces/") or not os.path.isfile(host):
+            msg = f'{path}: {key} = "{value}" is not a file in {HERE}/traces/'
+            if enabled:
+                sys.exit(msg)
+            print(f"warning: {msg} (ignored while channel_effects_enabled is 0, but the UE fails to start once it is "
+                  f"enabled)", file=sys.stderr)
+        traces[key] = value
+    dl = traces.get("rx_tap_file", "rx_taps")
+    ul = traces.get("tx_tap_file", "tx_taps")
+    return f"DL {dl}, UL {ul}" + ("" if enabled else "  [channel_effects_enabled 0: no channel applied]")
+
+
+def quote(value):
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def ue_block(i):
+    config = ue_config(i)
+    out = [f"  {ue_service(i)}:"]
+    if i > 1:
+        out += ["    extends:",
+                "      file: docker-compose.yml",
+                "      service: ue",
+                f"    container_name: {ue_container(i)}",
+                "    depends_on:",
+                "      broker:",
+                "        condition: service_started",
+                "    networks:",
+                "      ran:",
+                f"        ipv4_address: {ue_ip(i)}"]
+    if config != "configs/oaiue_zmq.conf":
+        # Same container path as the base service's config mount, so this mount replaces it.
+        out += ["    volumes:", f"      - ./{config}:/oaie_zmq.conf:ro"]
+    out.append("    command:")
+    out += [f"      - {quote(a)}" for a in UE_ARGS]
+    out += ["      - --uicc0.imsi", f"      - {quote(ue_imsi(i))}",
+            "      - --zmq.[0].rx_channels", f"      - tcp://{BROKER_IP}:{4999 + i}"]
+    return out
+
+
+def compose_text(n, csi_period, preamble_trans_max, subscriber_file, command_line):
+    out = [f"# gNB + {n} OAI UE(s) through the ZMQ broker. Generated by: {command_line}",
+           "# Layered on docker-compose.yml:",
+           "#",
+           f"#   docker compose -f docker-compose.yml -f docker-compose.{n}ue.yml up -d",
+           f"#   docker compose -f docker-compose.yml -f docker-compose.{n}ue.yml down",
+           "#",
+           "# up builds the broker image only if it is missing; after changing zmq_broker/ run \"... build broker\" (not",
+           "# --build, which also rebuilds the gNB image). UE i uses configs/oaiue{i}_zmq.conf if it existed when this",
+           "# file was generated, else configs/oaiue_zmq.conf. Regenerate this file rather than editing it by hand.",
+           "",
+           "services:",
+           "  5gc:",
+           "    environment:",
+           "      SUBSCRIBER_DB: /open5gs/subscriber_db.csv",
+           "    volumes:",
+           f"      - ./{subscriber_file}:/open5gs/subscriber_db.csv:ro",
+           "",
+           "  gnb:",
+           "    configs:",
+           "      - gnb_config.yml",
+           "      - gnb_compose_config.yml",
+           "      - gnb_broker_config.yml",
+           "    command: gnb -c /gnb_config.yml -c /gnb_compose_config.yml -c /gnb_broker_config.yml",
+           "",
+           "  broker:",
+           "    container_name: ocudu_zmq_broker",
+           "    image: tiny-twin-zmq-broker",
+           "    build:",
+           "      context: ../../zmq_broker",
+           "    depends_on:",
+           "      gnb:",
+           "        condition: service_started",
+           "    networks:",
+           "      ran:",
+           f"        ipv4_address: {BROKER_IP}",
+           "    command:",
+           "      - --gnb-tx",
+           "      - tcp://10.53.1.3:4556",
+           "      - --gnb-rx",
+           "      - tcp://0.0.0.0:4557"]
+    for i in range(1, n + 1):
+        out += ["      - --ue", f"      - tcp://0.0.0.0:{4999 + i},tcp://{ue_ip(i)}:4557"]
+    for i in range(1, n + 1):
+        out.append("")
+        out += ue_block(i)
+    out += ["",
+            "configs:",
+            "  gnb_broker_config.yml:",
+            "    content: |",
+            "      ru_sdr:",
+            f"        device_args: tx_port=tcp://0.0.0.0:4556,rx_port=tcp://{BROKER_IP}:4557,base_srate=23.04e6"]
+    if csi_period or preamble_trans_max:
+        out.append("      cell_cfg:")
+        if csi_period:
+            out += ["        csi:", f"          csi_rs_period: {csi_period}"]
+        if preamble_trans_max:
+            out += ["        prach:", f"          preamble_trans_max: {preamble_trans_max}"]
+    return "\n".join(out) + "\n"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--ues", type=int, required=True, help=f"number of UEs (1-{MAX_UES})")
+    parser.add_argument("--csi-period", type=int, choices=[10, 20, 40, 80],
+                        help="gNB CSI-RS period in ms (default: 80 above 8 UEs, else the gNB config's 20)")
+    parser.add_argument("--preamble-trans-max", type=int, choices=[3, 4, 5, 6, 7, 8, 10, 20, 50, 100, 200],
+                        help="gNB PRACH preamble_trans_max (default: 200 above 8 UEs, else the gNB config's 7)")
+    parser.add_argument("--out", help="compose file to write (default docker-compose.<N>ue.yml next to this script)")
+    args = parser.parse_args()
+    n = args.ues
+    if not 1 <= n <= MAX_UES:
+        parser.error(f"--ues must be 1-{MAX_UES}")
+
+    csi_period = args.csi_period or (80 if n > 8 else None)
+    preamble_trans_max = args.preamble_trans_max or (200 if n > 8 else None)
+    if n > 8 and csi_period in (10, 20):
+        print(f"warning: {n} UEs with a {csi_period} ms CSI period: the gNB rejects UEs beyond 8", file=sys.stderr)
+
+    out_path = os.path.abspath(args.out or os.path.join(HERE, f"docker-compose.{n}ue.yml"))
+    if os.path.dirname(out_path) != HERE:
+        sys.exit(f"--out must be in {HERE}: the compose file refers to docker-compose.yml, configs/ and traces/ "
+                 "relative to it")
+
+    summaries = {path: check_config(path) for path in sorted({ue_config(i) for i in range(1, n + 1)})}
+
+    subscriber_file = f"open5gs/subscriber_db_{n}ue.csv"
+    with open(os.path.join(HERE, subscriber_file), "w") as f:
+        for i in range(1, n + 1):
+            f.write(f"ue{i},{ue_imsi(i)},{SUBSCRIBER_KEYS},10.45.1.{1 + i}\n")
+    command_line = " ".join([os.path.basename(sys.argv[0])] + sys.argv[1:])
+    with open(out_path, "w") as f:
+        f.write(compose_text(n, csi_period, preamble_trans_max, subscriber_file, command_line))
+
+    name = os.path.basename(out_path)
+    print(f"Wrote {name} and {subscriber_file} ({n} UE(s)"
+          + (f", CSI period {csi_period} ms" if csi_period else "")
+          + (f", preamble_trans_max {preamble_trans_max}" if preamble_trans_max else "") + ")")
+    for i in range(1, n + 1):
+        config = ue_config(i)
+        print(f"  UE {i:2d}  {ue_ip(i):12s} IMSI {ue_imsi(i)}  {config}: {summaries[config]}")
+    print(f"Start: docker compose -f docker-compose.yml -f {name} up -d")
+    print(f"Stop:  docker compose -f docker-compose.yml -f {name} down")
+
+
+if __name__ == "__main__":
+    main()

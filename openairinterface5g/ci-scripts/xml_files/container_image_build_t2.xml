@@ -1,0 +1,26 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>build-tab</htmlTabRef>
+  <htmlTabName>Build Images with T2 support</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace for server 0</desc>
+    <node>stonechat</node>
+  </testCase>
+
+  <testCase>
+    <class>Build_Image</class>
+    <desc>Build Images with T2</desc>
+    <kind>fhi72-t2</kind>
+    <node>stonechat</node>
+  </testCase>
+
+  <testCase>
+    <class>Push_Local_Registry</class>
+    <desc>Push Images to Local Registry</desc>
+    <node>stonechat</node>
+  </testCase>
+
+</testCaseList>

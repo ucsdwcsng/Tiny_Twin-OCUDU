@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+#---------------------------------------------------------------------
+#
+# Dockerfile for the Open-Air-Interface BUILD service
+#   Valid for RHEL9
+#
+#---------------------------------------------------------------------
+
+FROM ran-base:latest AS phy-sim-build
+
+RUN rm -Rf /oai-ran
+WORKDIR /oai-ran
+COPY . .
+
+#only install address and undefined behavior sanitizer for this container, the others don't need it
+RUN dnf install -y libasan libubsan
+
+#run build_oai to build the target image
+RUN /bin/sh oaienv && \ 
+    mkdir -p cmake_targets/ran_build/build && \
+    cd cmake_targets/ran_build/build && \
+    cmake3 -GNinja ../../.. \
+        -DAVX512=OFF -DCMAKE_C_FLAGS=-Werror -DCMAKE_CXX_FLAGS=-Werror \
+        -DENABLE_PHYSIM_TESTS=ON \
+        -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON \
+        -DT_TRACER=OFF \
+        -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/opt/oai-physim/bin && \
+    ninja -k10 -j36
+
+#start from scratch for target executable
+FROM registry.redhat.io/ubi9/ubi:latest AS oai-physim
+
+RUN dnf update -y && \
+    dnf install -y \
+        lksctp-tools \
+        tzdata \
+        libgfortran \
+        hostname \
+        sudo \
+        procps-ng \
+        net-tools \
+        iputils \
+        cmake \
+        bc \
+        iproute && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/local-lib.conf && \
+    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/local-lib.conf
+
+WORKDIR /opt/oai-physim/bin
+COPY --from=phy-sim-build /opt/oai-physim/bin/ /opt/oai-physim/bin/
+
+COPY --from=phy-sim-build \
+    /oai-ran/cmake_targets/ran_build/build/libcoding.so \
+    /usr/lib64/libasan.so.6 \
+    /usr/lib64/libubsan.so.1 \
+    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
+    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
+    /usr/local/lib/
+
+RUN ldconfig && \
+    echo "---- ldd on physim executables ----" && \
+    ldd /opt/oai-physim/bin/dlsim \
+        /opt/oai-physim/bin/nr_dlsim \
+        /opt/oai-physim/bin/nr_prachsim \
+        /opt/oai-physim/bin/nr_ulschsim \
+        /opt/oai-physim/bin/polartest \
+        /opt/oai-physim/bin/ulsim \
+        /opt/oai-physim/bin/ldpctest \
+        /opt/oai-physim/bin/nr_dlschsim \
+        /opt/oai-physim/bin/nr_pbchsim \
+        /opt/oai-physim/bin/nr_psbchsim \
+        /opt/oai-physim/bin/nr_pucchsim \
+        /opt/oai-physim/bin/nr_ulsim \
+        /opt/oai-physim/bin/smallblocktest && \
+    echo "---- ldd on shared libraries ----" && \
+    ldd /usr/local/lib/libcoding.so \
+        /usr/local/lib/libdfts.so \
+        /usr/local/lib/libldpc*.so
+
+# Copy the relevant configuration files for phySim
+WORKDIR /opt/oai-physim/
+
+COPY --from=phy-sim-build \
+    /oai-ran/cmake_targets/ran_build/build/openair1/SIMULATION/tests/CTestTestfile.cmake \
+    /opt/oai-physim/
+
+RUN mkdir -p /oai-ran/openair1/SIMULATION/tests
+
+COPY --from=phy-sim-build \
+    /oai-ran/openair1/SIMULATION/tests/RunTimedTest.cmake \
+    /oai-ran/openair1/SIMULATION/tests/analyze-timing.sh \
+    /oai-ran/openair1/SIMULATION/tests/
+
+#CMD ["sleep", "infinity"]

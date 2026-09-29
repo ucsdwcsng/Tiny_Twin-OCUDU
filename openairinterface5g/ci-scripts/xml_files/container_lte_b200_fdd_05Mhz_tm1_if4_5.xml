@@ -1,0 +1,169 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>test-fdd-05-tm1-if4-5</htmlTabRef>
+  <htmlTabName>Test-FDD-05MHz-TM1-IF4.5</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States</desc>
+    <node>hutch</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>hutch</node>
+    <images>oai-enb</images>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Reset USRP</desc>
+    <node>hutch</node>
+    <command>sudo -S b2xx_fx3_utils --reset-device</command>
+  </testCase>
+
+  <testCase>
+    <class>Initialize_UE</class>
+    <desc>Initialize UE</desc>
+    <id>adb_ue_1 adb_ue_2</id>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>hutch</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy RRU (FDD/Band7/5MHz/B200) in a container</desc>
+    <node>hutch</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_05Mhz_if4.5</yaml_path>
+    <services>rru_fdd</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy RCC (FDD/Band7/5MHz) in a container</desc>
+    <node>hutch</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_05Mhz_if4.5</yaml_path>
+    <services>rcc_fdd</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach UEs</desc>
+    <id>adb_ue_1 adb_ue_2</id>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>ping (5MHz - 20 sec)</desc>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+    <id>adb_ue_1 adb_ue_2</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - DL/15Mbps/UDP)(30 sec)(balanced profile)</desc>
+    <iperf_args>-u -b 15M -t 30 -R</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>50</iperf_bitrate_threshold>
+    <id>adb_ue_1 adb_ue_2</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - DL/15Mbps/UDP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 15M -t 30 -R</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <id>adb_ue_1</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - DL/TCP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-t 30 -R</iperf_args>
+    <id>adb_ue_2</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - UL/9Mbps/UDP)(30 sec)(balanced profile)</desc>
+    <iperf_args>-u -b 9M -t 30</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>50</iperf_bitrate_threshold>
+    <iperf_profile>balanced</iperf_profile>
+    <id>adb_ue_1 adb_ue_2</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - UL/9Mbps/UDP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-u -b 9M -t 30</iperf_args>
+    <iperf_packetloss_threshold>50</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>50</iperf_bitrate_threshold>
+    <id>adb_ue_1</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (5MHz - UL/TCP)(30 sec)(single-ue profile)</desc>
+    <iperf_args>-t 30</iperf_args>
+    <id>adb_ue_1</id>
+    <svr_id>ltebox-nano</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach UEs</desc>
+    <id>adb_ue_1 adb_ue_2</id>
+  </testCase>
+
+  <testCase>
+    <class>Terminate_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Terminate UE</desc>
+    <id>adb_ue_1 adb_ue_2</id>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy RCC/RRU</desc>
+    <node>hutch</node>
+    <yaml_path>ci-scripts/yaml_files/lte_b200_fdd_05Mhz_if4.5</yaml_path>
+    <analysis>
+      <services>rru_fdd=EndsWithBye rcc_fdd=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States</desc>
+    <node>hutch</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>hutch</node>
+    <images>oai-enb</images>
+  </testCase>
+
+</testCaseList>

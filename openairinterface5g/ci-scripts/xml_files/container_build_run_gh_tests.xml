@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>build-run-test-gh-tab</htmlTabRef>
+  <htmlTabName>Build and Run Unit Tests with CUDA</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Build_Run_Tests</class>
+    <desc>Build and Run UnitTests</desc>
+    <dockerfile>docker/Dockerfile.unittest.cuda.ubuntu</dockerfile>
+    <runtime-opt>--gpus all</runtime-opt>
+    <ctest-opt>-L cuda</ctest-opt>
+    <node>localhost</node>
+  </testCase>
+
+</testCaseList>

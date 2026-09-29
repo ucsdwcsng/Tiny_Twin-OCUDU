@@ -1,0 +1,12 @@
+IndentWidth: 4
+ColumnLimit: 120
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortCaseLabelsOnASingleLine: true
+PointerAlignment: Left
+AlignEscapedNewlines: Left
+BreakAfterAttributes: Always
+PenaltyReturnTypeOnItsOwnLine: 60
+AlwaysBreakAfterReturnType: None
+Cpp11BracedListStyle: true
+BreakBeforeBraces: Attach
+InsertBraces: true

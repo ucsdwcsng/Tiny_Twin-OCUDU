@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../ngap_error_indication_helper.h"
+#include "../ue_context/ngap_ue_context.h"
+#include "ocudu/ngap/ngap.h"
+#include "ocudu/support/async/async_task.h"
+
+namespace ocudu::ocucp {
+
+class ngap_ue_context_release_procedure
+{
+public:
+  ngap_ue_context_release_procedure(
+      const cu_cp_ue_context_release_command&                           command_,
+      const ngap_ue_ids&                                                ue_ids_,
+      std::unordered_map<cu_cp_ue_index_t, error_indication_request_t>& stored_error_indications_,
+      ngap_cu_cp_notifier&                                              cu_cp_notifier_,
+      ngap_message_notifier&                                            amf_notifier_,
+      ngap_ue_logger&                                                   logger_);
+
+  void operator()(coro_context<async_task<void>>& ctx);
+
+  static const char* name() { return "UE Context Release Procedure"; }
+
+private:
+  // Result senders.
+  bool send_ue_context_release_complete();
+
+  cu_cp_ue_context_release_command                                  command;
+  const ngap_ue_ids                                                 ue_ids;
+  std::unordered_map<cu_cp_ue_index_t, error_indication_request_t>& stored_error_indications;
+  cu_cp_ue_context_release_complete                                 ue_context_release_complete;
+  ngap_cu_cp_notifier&                                              cu_cp_notifier;
+  ngap_message_notifier&                                            amf_notifier;
+  ngap_ue_logger                                                    logger;
+};
+
+} // namespace ocudu::ocucp

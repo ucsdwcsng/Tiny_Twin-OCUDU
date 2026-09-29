@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+services:
+  doxygen:
+    image: ${CI_REGISTRY_IMAGE}/doxygen:${DOXYGEN_VERSION}-${PLANTUML_VERSION}
+    build:
+      context: ../.gitlab/ci/doxygen
+      dockerfile: Dockerfile
+      args:
+        DOXYGEN_VERSION: ${DOXYGEN_VERSION}
+        PLANTUML_VERSION: ${PLANTUML_VERSION}
+    volumes:
+      - ../:/workdir
+    user: "${UID}:${GID}"
+    environment:
+      DOXYGEN_TARGET: ${DOXYGEN_TARGET:-doxygen}
+    command: >
+      sh -c "
+      rm -Rf build_doxygen &&
+      mkdir build_doxygen &&
+      cd build_doxygen &&
+      cmake -DENABLE_UHD=False -DBUILD_TESTING=False .. &&
+      make -j $$(nproc) $$DOXYGEN_TARGET
+      "

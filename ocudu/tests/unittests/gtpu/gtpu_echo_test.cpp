@@ -1,0 +1,132 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "gtpu_test_shared.h"
+#include "lib/gtpu/gtpu_tunnel_logger.h"
+#include "ocudu/gtpu/gtpu_echo_factory.h"
+#include "ocudu/gtpu/gtpu_tunnel_common_rx.h"
+#include "ocudu/gtpu/gtpu_tunnel_common_tx.h"
+#include <gtest/gtest.h>
+#include <sys/socket.h>
+
+using namespace ocudu;
+
+class gtpu_tunnel_tx_upper_dummy : public gtpu_tunnel_common_tx_upper_layer_notifier
+{
+  void on_new_pdu(byte_buffer buf, const ::sockaddr_storage& dest_addr) final
+  {
+    last_tx   = std::move(buf);
+    last_addr = dest_addr;
+  }
+
+public:
+  byte_buffer      last_tx;
+  sockaddr_storage last_addr = {};
+};
+
+class gtpu_tunnel_rx_upper_dummy : public gtpu_tunnel_common_rx_upper_layer_interface
+{
+public:
+  void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) final
+  {
+    last_rx   = std::move(pdu);
+    last_addr = src_addr;
+  }
+
+  byte_buffer      last_rx;
+  sockaddr_storage last_addr = {};
+};
+
+/// Fixture class for GTP-U echo tests
+class gtpu_echo_test : public ::testing::Test
+{
+public:
+  gtpu_echo_test() :
+    logger(ocudulog::fetch_basic_logger("TEST", false)), gtpu_logger(ocudulog::fetch_basic_logger("GTPU", false))
+  {
+  }
+
+protected:
+  void SetUp() override
+  {
+    // init test's logger
+    ocudulog::init();
+    logger.set_level(ocudulog::basic_levels::debug);
+
+    // init GTP-U logger
+    gtpu_logger.set_level(ocudulog::basic_levels::debug);
+    gtpu_logger.set_hex_dump_max_size(100);
+  }
+
+  void TearDown() override
+  {
+    // flush logger after each test
+    ocudulog::flush();
+  }
+
+  // Test logger
+  ocudulog::basic_logger& logger;
+
+  // GTP-U logger
+  ocudulog::basic_logger& gtpu_logger;
+
+  // GTP-U echo entity
+  std::unique_ptr<gtpu_echo> echo;
+
+  // Surrounding tester
+  gtpu_tunnel_tx_upper_dummy gtpu_tx = {};
+};
+
+/// \brief Test correct creation of echo entity
+TEST_F(gtpu_echo_test, entity_creation)
+{
+  null_dlt_pcap dummy_pcap;
+  // init echo entity
+  gtpu_echo_creation_message msg = {.gtpu_pcap = dummy_pcap, .tx_upper = gtpu_tx};
+  echo                           = create_gtpu_echo(msg);
+
+  ASSERT_NE(echo, nullptr);
+}
+
+/// \brief Test correct reception of an echo message and check for the response
+TEST_F(gtpu_echo_test, rx_echo_req_tx_echo_rep)
+{
+  null_dlt_pcap dummy_pcap;
+  // init echo entity
+  gtpu_echo_creation_message msg = {.gtpu_pcap = dummy_pcap, .tx_upper = gtpu_tx};
+  echo                           = create_gtpu_echo(msg);
+
+  sockaddr_storage orig_addr = {};
+  byte_buffer      echo_req  = byte_buffer::create(gtpu_echo_request_sn_65535).value();
+
+  gtpu_tunnel_common_rx_upper_layer_interface* rx = echo->get_rx_upper_layer_interface();
+  rx->handle_pdu(std::move(echo_req), orig_addr);
+
+  ASSERT_FALSE(gtpu_tx.last_tx.empty());
+  byte_buffer echo_rep = byte_buffer::create(gtpu_echo_response_sn_65535).value();
+  ASSERT_EQ(gtpu_tx.last_tx, echo_rep);
+}
+
+/// \brief Test correct reception of an error indication message
+TEST_F(gtpu_echo_test, rx_error_indication)
+{
+  null_dlt_pcap dummy_pcap;
+  // init echo entity
+  gtpu_echo_creation_message msg = {.gtpu_pcap = dummy_pcap, .tx_upper = gtpu_tx};
+  echo                           = create_gtpu_echo(msg);
+
+  sockaddr_storage orig_addr        = {};
+  byte_buffer      error_indication = byte_buffer::create(gtpu_error_indication).value();
+
+  gtpu_tunnel_common_rx_upper_layer_interface* rx = echo->get_rx_upper_layer_interface();
+  rx->handle_pdu(std::move(error_indication), orig_addr);
+
+  ASSERT_TRUE(gtpu_tx.last_tx.empty());
+}
+
+int main(int argc, char** argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

@@ -1,0 +1,15 @@
+#!/bin/sh
+set -x
+
+mkdir -p /var/log/lte-log
+echo "LTE-SOFTMODEM stop:" >> /var/log/lte-log/lte-systemctl.log
+systemctl stop lte-softmodem.service >> /var/log/lte-log/lte-systemctl.log  2>&1
+echo "LTE-SOFTMODEM disable:" >> /var/log/lte-log/lte-systemctl.log
+systemctl disable lte-softmodem.service >> /var/log/lte-log/lte-systemctl.log  2>&1
+# Then update library cache
+echo "Running ldconfig after uninstall..." >> /var/log/lte-log/lte-systemctl.log
+if command -v ldconfig >> /var/log/lte-log/lte-systemctl.log 2>&1; then
+    ldconfig
+else
+    echo "Warning: ldconfig not found"
+fi

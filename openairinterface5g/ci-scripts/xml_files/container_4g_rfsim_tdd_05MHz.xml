@@ -1,0 +1,142 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-4glte-tdd05mhz</htmlTabRef>
+  <htmlTabName>Monolithic eNB - TDD 05MHz</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-enb oai-lte-ue</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy Cassandra Database</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_rfsimulator_tdd_05MHz</yaml_path>
+    <services>cassandra db_init</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>30</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 4G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_rfsimulator_tdd_05MHz</yaml_path>
+    <services>oai_hss oai_mme oai_spgwc oai_spgwu trf_gen</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>10</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 4G eNB RF sim (TDD 05MHz)</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_rfsimulator_tdd_05MHz</yaml_path>
+    <services>oai_enb0</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>30</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 4G LTE-UE RF sim (TDD 05MHz)</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_rfsimulator_tdd_05MHz</yaml_path>
+    <services>oai_ue0</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>10</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping Traffic-Gen from LTE-UE</desc>
+    <id>rfsim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping LTE-UE from Traffic-Gen</desc>
+    <id>rfsim4g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim4g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf UDP DL</desc>
+    <id>rfsim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_args>-u -t 30 -b 2M -R</iperf_args>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf UDP UL</desc>
+    <id>rfsim4g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim4g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_args>-u -t 30 -b 1M</iperf_args>
+    <iperf_packetloss_threshold>25</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 4G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/4g_rfsimulator_tdd_05MHz</yaml_path>
+    <analysis>
+      <services>oai_enb0=EndsWithBye oai_ue0</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-enb oai-lte-ue</images>
+  </testCase>
+
+</testCaseList>

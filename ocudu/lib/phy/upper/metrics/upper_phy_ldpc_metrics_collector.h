@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "aggregators/ldpc_decoder_metrics_aggregator.h"
+#include "aggregators/ldpc_encoder_metrics_aggregator.h"
+#include "aggregators/ldpc_rate_dematcher_metrics_aggregator.h"
+#include "aggregators/ldpc_rate_matcher_metrics_aggregator.h"
+#include "ocudu/phy/upper/upper_phy_metrics.h"
+
+namespace ocudu {
+
+/// LDPC processing metrics collector.
+class upper_phy_ldpc_metrics_collector
+{
+public:
+  /// Collects the metrics from the LDPC aggregators and writes them into the given metrics argument.
+  void collect_metrics(upper_phy_ldpc_metrics& metrics);
+
+  /// Returns LDPC decoding metric aggregator's interface for metrics notification.
+  ldpc_decoder_metric_notifier& get_ldpc_decoder_notifier() { return ldpc_decoder_aggregator; }
+
+  /// Returns LDPC encoding metric aggregator's interface for metrics notification.
+  ldpc_encoder_metric_notifier& get_ldpc_encoder_notifier() { return ldpc_encoder_aggregator; }
+
+  /// Returns LDPC rate matching metric aggregator's interface for metrics notification.
+  ldpc_rate_matcher_metric_notifier& get_ldpc_rate_matcher_notifier() { return ldpc_rate_matcher_aggregator; }
+
+  /// Returns LDPC rate dematching metric aggregator's interface for metrics notification.
+  ldpc_rate_dematcher_metric_notifier& get_ldpc_rate_dematcher_notifier() { return ldpc_rate_dematcher_aggregator; }
+
+private:
+  /// LDPC decoder metrics aggregator.
+  ldpc_decoder_metrics_aggregator ldpc_decoder_aggregator;
+  /// LDPC rate matcher metrics aggregator.
+  ldpc_rate_matcher_metrics_aggregator ldpc_rate_matcher_aggregator;
+  /// LDPC rate dematcher metrics aggregator.
+  ldpc_rate_dematcher_metrics_aggregator ldpc_rate_dematcher_aggregator;
+  /// LDPC encoder metrics aggregator.
+  ldpc_encoder_metrics_aggregator ldpc_encoder_aggregator;
+};
+
+} // namespace ocudu

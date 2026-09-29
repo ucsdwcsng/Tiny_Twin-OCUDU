@@ -1,0 +1,420 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// Channel estimation-related declarations.
+
+#pragma once
+
+#include "ocudu/adt/complex.h"
+#include "ocudu/adt/span.h"
+#include "ocudu/adt/tensor.h"
+#include "ocudu/phy/upper/channel_state_information.h"
+#include "ocudu/ran/cyclic_prefix.h"
+#include "ocudu/ran/pusch/pusch_constants.h"
+#include "ocudu/support/ocudu_assert.h"
+
+namespace ocudu {
+
+/// \brief Describes channel estimation results.
+/// \warning Instantiating an object of this class entails a heap memory allocation.
+class channel_estimate
+{
+private:
+  /// Maximum supported number of receive ports.
+  static constexpr unsigned MAX_RX_PORTS = 16;
+
+  /// Maximum supported number of transmission layers.
+  static constexpr unsigned MAX_TX_LAYERS = pusch_constants::MAX_NOF_LAYERS;
+
+  /// Maximum number of transmit&ndash;receive paths.
+  static constexpr unsigned MAX_TX_RX_PATHS = MAX_TX_LAYERS * MAX_RX_PORTS;
+
+  /// Maximum total number of REs in a channel estimate.
+  static constexpr unsigned MAX_BUFFER_SIZE = MAX_TX_RX_PATHS * MAX_NOF_SUBCARRIERS * MAX_NSYMB_PER_SLOT;
+
+public:
+  /// Describes the data structure containing the channel estimate.
+  struct channel_estimate_dimensions {
+    /// Number of contiguous PRBs considered for channel estimation.
+    unsigned nof_prb = 0;
+    /// Number of contiguous OFDM symbols considered for channel estimation.
+    unsigned nof_symbols = 0;
+    /// Number of receive ports.
+    unsigned nof_rx_ports = 0;
+    /// Number of transmit layers.
+    unsigned nof_tx_layers = 0;
+  };
+
+  /// Default constructor: creates a max-size channel estimate object.
+  channel_estimate() : channel_estimate({MAX_NOF_PRBS, MAX_NSYMB_PER_SLOT, MAX_RX_PORTS, MAX_TX_LAYERS}) {}
+
+  /// Constructor: creates a channel estimate object with the given dimensions.
+  explicit channel_estimate(const channel_estimate_dimensions& dims) :
+    max_dims(dims),
+    nof_subcarriers(dims.nof_prb * NOF_SUBCARRIERS_PER_RB),
+    nof_symbols(dims.nof_symbols),
+    nof_rx_ports(dims.nof_rx_ports),
+    nof_tx_layers(dims.nof_tx_layers),
+    ce({nof_subcarriers, nof_symbols, nof_rx_ports, nof_tx_layers})
+  {
+    ocudu_assert(
+        dims.nof_prb <= MAX_NOF_PRBS, "Requested {} RBs, but at most {} are allowed.", dims.nof_prb, MAX_NOF_PRBS);
+    ocudu_assert(dims.nof_symbols <= MAX_NSYMB_PER_SLOT,
+                 "Requested {} OFDM symbols, but at most {} are allowed.",
+                 dims.nof_symbols,
+                 MAX_NSYMB_PER_SLOT);
+    ocudu_assert(dims.nof_rx_ports <= MAX_RX_PORTS,
+                 "Requested {} receive ports, but at most {} are supported.",
+                 dims.nof_rx_ports,
+                 static_cast<unsigned>(MAX_RX_PORTS));
+    ocudu_assert(dims.nof_tx_layers <= MAX_TX_LAYERS,
+                 "Requested {} transmission layers, but at most {} are supported.",
+                 dims.nof_tx_layers,
+                 static_cast<unsigned>(MAX_TX_LAYERS));
+
+    unsigned nof_paths = dims.nof_tx_layers * dims.nof_rx_ports;
+
+    // Exposes the memory reserved for channel estimates.
+    ce.resize({dims.nof_prb * static_cast<unsigned>(NOF_SUBCARRIERS_PER_RB),
+               dims.nof_symbols,
+               dims.nof_rx_ports,
+               dims.nof_tx_layers});
+
+    // Set all reserved memory to one.
+    span<cbf16_t> data = ce.get_view<4>({});
+    std::fill(data.begin(), data.end(), 1.0F);
+
+    // Reserve memory for the rest of channel statistics.
+    noise_variance.reserve(MAX_RX_PORTS);
+    noise_variance.resize(nof_rx_ports);
+    epre.reserve(MAX_RX_PORTS);
+    epre.resize(nof_rx_ports);
+    rsrp.reserve(MAX_TX_RX_PATHS);
+    rsrp.resize(nof_paths);
+    snr.reserve(MAX_RX_PORTS);
+    snr.resize(nof_rx_ports);
+    time_alignment.reserve(MAX_TX_RX_PATHS);
+    time_alignment.resize(nof_paths);
+    cfo.reserve(MAX_TX_RX_PATHS);
+    cfo.resize(nof_paths);
+  }
+
+  /// Default destructor
+  ~channel_estimate() = default;
+
+  /// \name Getters.
+  ///@{
+  /// Returns the estimated noise variance for the given Rx port (linear scale).
+  float get_noise_variance(unsigned rx_port) const { return noise_variance[rx_port]; }
+
+  /// Returns the estimated noise variance for the given Rx port (dB scale).
+  float get_noise_variance_dB(unsigned rx_port) const { return convert_power_to_dB(get_noise_variance(rx_port)); }
+
+  /// Returns the estimated RSRP for the path between the given Rx port and Tx layer (linear scale).
+  float get_rsrp(unsigned rx_port, unsigned tx_layer = 0) const { return rsrp[path_to_index(rx_port, tx_layer)]; }
+
+  /// Returns a view to the estimated RSRP for all Rx ports for the given Tx layer (linear scale).
+  span<const float> get_rsrp_all_ports(unsigned tx_layer = 0) const
+  {
+    unsigned start_idx = path_to_index(0, tx_layer);
+    return span<const float>(rsrp).subspan(start_idx, nof_rx_ports);
+  }
+
+  /// Returns the estimated RSRP for the path between the given Rx port and Tx layer (dB scale).
+  float get_rsrp_dB(unsigned rx_port, unsigned tx_layer = 0) const
+  {
+    return convert_power_to_dB(get_rsrp(rx_port, tx_layer));
+  }
+
+  /// \brief Returns the average EPRE for the given Rx port (linear scale).
+  ///
+  /// \remark The EPRE is defined as the average received power (including noise) across all REs carrying DM-RS.
+  float get_epre(unsigned rx_port) const { return epre[rx_port]; }
+
+  /// \brief Returns the average EPRE for the given Rx port (dB scale).
+  ///
+  /// \remark The EPRE is defined as the average received power (including noise) across all REs carrying DM-RS.
+  float get_epre_dB(unsigned rx_port) const { return convert_power_to_dB(get_epre(rx_port)); }
+
+  /// Returns the estimated SNR for the given Rx port (linear scale).
+  float get_snr(unsigned rx_port) const { return snr[rx_port]; }
+
+  /// Returns the estimated average SNR for a given layer (linear scale).
+  float get_layer_average_snr(unsigned tx_layer = 0) const
+  {
+    float noise_var_all_ports = 0.0F;
+    float rsrp_all_ports      = 0.0F;
+
+    // Add the noise and signal power contributions of all Rx ports.
+    for (unsigned i_rx_port = 0; i_rx_port != nof_rx_ports; ++i_rx_port) {
+      noise_var_all_ports += noise_variance[i_rx_port];
+      rsrp_all_ports += rsrp[path_to_index(i_rx_port, tx_layer)];
+    }
+
+    if (std::isnormal(noise_var_all_ports)) {
+      return rsrp_all_ports / noise_var_all_ports;
+    }
+
+    return 0;
+  }
+
+  /// Returns the estimated SNR for the given Rx port (dB scale).
+  float get_snr_dB(unsigned rx_port) const { return convert_power_to_dB(get_snr(rx_port)); }
+
+  /// Returns the estimated time alignment in PHY time units between the given Rx port and Tx layer.
+  phy_time_unit get_time_alignment(unsigned rx_port, unsigned tx_layer = 0) const
+  {
+    return time_alignment[path_to_index(rx_port, tx_layer)];
+  }
+
+  /// Returns the carrier frequency offset in hertz estimated for the given Rx port and Tx layer.
+  std::optional<float> get_cfo_Hz(unsigned rx_port, unsigned tx_layer = 0) const
+  {
+    return cfo[path_to_index(rx_port, tx_layer)];
+  }
+
+  /// \brief Returns a read-write view to the RE channel estimates of the path between the given Rx port and Tx layer.
+  ///
+  /// The view is represented as a vector indexed by i) subcarriers and ii) OFDM symbols.
+  span<cbf16_t> get_path_ch_estimate(unsigned rx_port, unsigned tx_layer = 0)
+  {
+    ocudu_assert(rx_port < nof_rx_ports,
+                 "The receive port index (i.e., {}) exceeds the number of receive ports (i.e., {}).",
+                 rx_port,
+                 nof_rx_ports);
+    ocudu_assert(tx_layer < nof_tx_layers,
+                 "The transmit layer index (i.e., {}) exceeds the number of transmit layers (i.e., {}).",
+                 tx_layer,
+                 nof_tx_layers);
+    return ce.get_view<2>({rx_port, tx_layer});
+  }
+
+  /// \brief Returns a read-only view to the RE channel estimates of the path between the given Rx port and Tx layer.
+  ///
+  /// The view is represented as a vector indexed by i) subcarriers and ii) OFDM symbols.
+  span<const cbf16_t> get_path_ch_estimate(unsigned rx_port, unsigned tx_layer = 0) const
+  {
+    ocudu_assert(rx_port < nof_rx_ports,
+                 "The receive port index (i.e., {}) exceeds the number of receive ports (i.e., {}).",
+                 rx_port,
+                 nof_rx_ports);
+    ocudu_assert(tx_layer < nof_tx_layers,
+                 "The transmit layer index (i.e., {}) exceeds the number of transmit layers (i.e., {}).",
+                 tx_layer,
+                 nof_tx_layers);
+    return ce.get_view<2>({rx_port, tx_layer});
+  }
+
+  /// \brief Returns a read-write view to the RE channel estimates for a given OFDM symbol, Rx port and Tx layer.
+  ///
+  /// The view is represented as a vector indexed by subcarrier.
+  span<cbf16_t> get_symbol_ch_estimate(unsigned i_symbol, unsigned rx_port = 0, unsigned tx_layer = 0)
+  {
+    return ce.get_view<1>({i_symbol, rx_port, tx_layer});
+  }
+
+  /// \brief Returns a read-only view to the RE channel estimates for a given OFDM symbol, Rx port and Tx layer.
+  ///
+  /// The view is represented as a vector indexed by subcarrier.
+  span<const cbf16_t> get_symbol_ch_estimate(unsigned i_symbol, unsigned rx_port = 0, unsigned tx_layer = 0) const
+  {
+    return ce.get_view<1>({i_symbol, rx_port, tx_layer});
+  }
+
+  /// \brief Gets the general Channel State Information.
+  ///
+  /// \param[out] csi Channel State Information object where the CSI parameters are stored.
+  void get_channel_state_information(channel_state_information& csi) const
+  {
+    // EPRE and RSRP are reported as a linear average of the results for all Rx ports.
+    float    epre_lin      = 0.0F;
+    unsigned best_rx_port  = 0;
+    float    best_path_snr = 0.0F;
+    for (unsigned i_rx_port = 0; i_rx_port != nof_rx_ports; ++i_rx_port) {
+      // Accumulate EPRE and RSRP values.
+      epre_lin += get_epre(i_rx_port);
+
+      // Determine the Rx port with better SNR.
+      float port_snr = get_snr(i_rx_port);
+      if (port_snr > best_path_snr) {
+        best_path_snr = port_snr;
+        best_rx_port  = i_rx_port;
+      }
+    }
+
+    // Set the RSRP according to the estimated values for each receive port. For now, only the RSRP of layer 0 is used.
+    csi.set_rsrp_lin(get_rsrp_all_ports());
+
+    epre_lin /= static_cast<float>(nof_rx_ports);
+
+    csi.set_epre(convert_power_to_dB(epre_lin));
+
+    // Use the time alignment of the channel path with best SNR.
+    csi.set_time_alignment(get_time_alignment(best_rx_port, 0));
+
+    // Use the CFO of the channel path with best SNR.
+    std::optional<float> cfo_help = get_cfo_Hz(best_rx_port, 0);
+    if (cfo_help.has_value()) {
+      csi.set_cfo(*cfo_help);
+    }
+
+    // SINR is reported by averaging the signal and noise power contributions of all Rx ports.
+    csi.set_sinr_dB(channel_state_information::sinr_type::channel_estimator,
+                    convert_power_to_dB(get_layer_average_snr(0)));
+  }
+
+  ///@}
+
+  /// \name Setters.
+  ///@{
+  /// Sets the estimated noise variance for the given Rx port (linear scale).
+  void set_noise_variance(float var_val, unsigned rx_port) { noise_variance[rx_port] = var_val; }
+
+  /// Sets the estimated RSRP for the given Rx port and Tx layer (linear scale).
+  void set_rsrp(float rsrp_val, unsigned rx_port, unsigned tx_layer = 0)
+  {
+    rsrp[path_to_index(rx_port, tx_layer)] = rsrp_val;
+  }
+
+  /// Sets the average EPRE for the given Rx port (linear scale).
+  void set_epre(float epre_val, unsigned rx_port) { epre[rx_port] = epre_val; }
+
+  /// Sets the estimated SNR for the given Rx port (linear scale).
+  void set_snr(float snr_val, unsigned rx_port) { snr[rx_port] = snr_val; }
+
+  /// Sets the estimated time alignment in PHY units of time for the path between the given Rx port and Tx layer.
+  void set_time_alignment(phy_time_unit ta, unsigned rx_port, unsigned tx_layer = 0)
+  {
+    time_alignment[path_to_index(rx_port, tx_layer)] = ta;
+  }
+
+  /// Sets the estimated carrier frequency offset in hertz for the path between the given Rx port and Tx layer.
+  void set_cfo_Hz(std::optional<float> new_cfo, unsigned rx_port, unsigned tx_layer = 0)
+  {
+    cfo[path_to_index(rx_port, tx_layer)] = new_cfo;
+  }
+
+  /// Sets the channel estimate for the resource element at the given coordinates.
+  void set_ch_estimate(cf_t ce_val, unsigned subcarrier, unsigned symbol, unsigned rx_port = 0, unsigned tx_layer = 0)
+  {
+    ce[{subcarrier, symbol, rx_port, tx_layer}] = ce_val;
+  }
+  ///@}
+
+  /// Resizes internal buffers.
+  void resize(const channel_estimate_dimensions& dims)
+  {
+    nof_subcarriers = dims.nof_prb * NOF_SUBCARRIERS_PER_RB;
+    nof_symbols     = dims.nof_symbols;
+    nof_rx_ports    = dims.nof_rx_ports;
+    nof_tx_layers   = dims.nof_tx_layers;
+
+    unsigned nof_paths = nof_rx_ports * nof_tx_layers;
+    ocudu_assert(nof_paths <= MAX_TX_RX_PATHS,
+                 "Total requested paths ({}) exceed maximum available ({}).",
+                 nof_paths,
+                 static_cast<unsigned>(MAX_TX_RX_PATHS));
+    noise_variance.resize(nof_paths);
+    epre.resize(nof_paths);
+    rsrp.resize(nof_paths);
+    snr.resize(nof_paths);
+    cfo.resize(nof_paths);
+
+    unsigned nof_res = nof_paths * nof_subcarriers * nof_symbols;
+    ocudu_assert(nof_res <= MAX_BUFFER_SIZE,
+                 "Total requested REs ({}) exceed maximum available ({}).",
+                 nof_res,
+                 static_cast<unsigned>(MAX_BUFFER_SIZE));
+    ce.resize({static_cast<unsigned>(NOF_SUBCARRIERS_PER_RB) * dims.nof_prb,
+               dims.nof_symbols,
+               dims.nof_rx_ports,
+               dims.nof_tx_layers});
+  }
+
+  /// Returns channel estimate dimensions.
+  channel_estimate_dimensions size() const
+  {
+    channel_estimate_dimensions tmp;
+    tmp.nof_prb       = nof_subcarriers / NOF_SUBCARRIERS_PER_RB;
+    tmp.nof_symbols   = nof_symbols;
+    tmp.nof_rx_ports  = nof_rx_ports;
+    tmp.nof_tx_layers = nof_tx_layers;
+    return tmp;
+  }
+
+  /// Returns channel estimate maximum dimensions.
+  const channel_estimate_dimensions& capacity() const { return max_dims; }
+
+private:
+  /// Maximum channel state dimensions, it is set once during initialization.
+  const channel_estimate_dimensions max_dims;
+
+  /// Number of subcarriers considered for channel estimation.
+  unsigned nof_subcarriers;
+
+  /// Number of OFDM symbols considered for channel estimation.
+  unsigned nof_symbols;
+
+  /// Number of receive antenna ports.
+  unsigned nof_rx_ports;
+
+  /// Number of transmission layers.
+  unsigned nof_tx_layers;
+
+  /// \name Containers for channel statistics.
+  /// The statistics are stored in one-dimensional vectors. Indices vary, first, with the Rx port and, second, with the
+  /// Tx layer (e.g., the index corresponding to the second Rx port and to Tx layer 4 is \f$(2-1) + (4-1) *
+  /// \mathtt{nof\_rx\_ports}\f$).
+  ///@{
+  /// Estimated noise variances (linear scale).
+  std::vector<float> noise_variance;
+
+  /// Estimated reference signal received powers (linear scale).
+  std::vector<float> rsrp;
+
+  /// Average energies per resource element (linear scale).
+  std::vector<float> epre;
+
+  /// Estimated signal-to-noise ratios (linear scale).
+  std::vector<float> snr;
+
+  /// Estimated time alignment.
+  std::vector<phy_time_unit> time_alignment;
+
+  /// Estimated CFO.
+  std::vector<std::optional<float>> cfo;
+  ///@}
+
+  /// \brief Container for channel estimates.
+  ///
+  /// The channel estimate should be thought as four-dimensional tensor with dimensions representing, in order,
+  /// subcarriers, OFDM symbols, receive ports and, finally, transmit layers. However, it is represented as a single
+  /// vector, indexed in the same order: i) subcarriers, ii) OFDM symbols, iii) Rx ports, and iv) Tx layers.
+  dynamic_tensor<4, cbf16_t> ce;
+
+  /// Transforms a port-layer pair into a linear index.
+  unsigned path_to_index(unsigned rx_port, unsigned tx_layer = 0) const
+  {
+    ocudu_assert(
+        rx_port < nof_rx_ports, "Requested Rx antenna port {} is out of bound (max. {})", rx_port, nof_rx_ports);
+    ocudu_assert(
+        tx_layer < nof_tx_layers, "Requested Rx antenna port {} is out of bound (max. {})", rx_port, nof_tx_layers);
+    return rx_port + nof_rx_ports * tx_layer;
+  }
+
+  /// Transforms a four-dimensional coordinate into a linear index.
+  unsigned coords_to_index(unsigned subcarrier, unsigned symbol, unsigned rx_port = 0, unsigned tx_layer = 0) const
+  {
+    ocudu_assert(
+        subcarrier < nof_subcarriers, "Requested subcarrier {} is out of bound (max. {})", subcarrier, nof_subcarriers);
+    ocudu_assert(symbol < nof_symbols, "Requested OFDM symbol {} is out of bound (max. {})", symbol, nof_symbols);
+    ocudu_assert(
+        rx_port < nof_rx_ports, "Requested Rx antenna port {} is out of bound (max. {})", rx_port, nof_rx_ports);
+    ocudu_assert(tx_layer < nof_tx_layers, "Requested Tx layer {} is out of bound (max. {})", tx_layer, nof_tx_layers);
+    return subcarrier + nof_subcarriers * (symbol + nof_symbols * (rx_port + nof_rx_ports * tx_layer));
+  }
+};
+
+} // namespace ocudu

@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "ocudu/ocuduvec/convolution.h"
+#include "ocudu/ocuduvec/simd.h"
+
+using namespace ocudu;
+using namespace ocuduvec;
+
+void ocudu::ocuduvec::detail::multiply_and_accumulate(span<float> out, span<const float> x, span<const float> y)
+{
+  unsigned y_mid     = y.size() / 2;
+  unsigned out_start = y_mid - (y.size() % 2 == 0 ? 1 : 0);
+
+  for (unsigned m = 0, m_end = y.size(); m != m_end; ++m) {
+    int y_index = y.size() - 1 - m;
+
+    unsigned x_start = m;
+    unsigned x_end   = std::min(x.size(), x.size() - y.size() + m + 1);
+
+    span<const float> x_chunk = x.subspan(x_start, x_end - x_start);
+
+    for (unsigned i = 0, i_end = x_chunk.size(); i != i_end; ++i) {
+      out[i + out_start] += x_chunk[i] * y[y_index];
+    }
+  }
+}
+
+void ocudu::ocuduvec::detail::multiply_and_accumulate(span<cf_t> out, span<const cf_t> x, span<const float> y)
+{
+  unsigned y_mid     = y.size() / 2;
+  unsigned out_start = (y_mid - (y.size() % 2 == 0 ? 1 : 0)) * 2;
+
+  span<float> out_float(reinterpret_cast<float*>(out.data()), 2 * out.size());
+
+  span<const float> x_float(reinterpret_cast<const float*>(x.data()), 2 * x.size());
+  unsigned          i_x = 0;
+#if OCUDU_SIMD_F_SIZE
+  unsigned out_end = (x.size() - y.size()) * 2;
+  for (unsigned i_x_end = (out_end / OCUDU_SIMD_F_SIZE) * OCUDU_SIMD_F_SIZE; i_x != i_x_end; i_x += OCUDU_SIMD_F_SIZE) {
+    simd_f_t result = ocudu_simd_f_zero();
+    auto     y_it   = y.rbegin();
+    for (unsigned i_y = 0, i_y_end = y.size(); i_y != i_y_end; ++i_y) {
+      simd_f_t y_vector = ocudu_simd_f_set1(*y_it++);
+      simd_f_t x_vals   = ocudu_simd_f_loadu(x_float.data() + i_x + (i_y * 2));
+      simd_f_t partial  = ocudu_simd_f_mul(x_vals, y_vector);
+      result            = ocudu_simd_f_add(result, partial);
+    }
+    ocudu_simd_f_storeu(out_float.data() + out_start + i_x, result);
+  }
+#endif
+  unsigned extra = out_start + i_x;
+  for (unsigned i_y = 0, i_y_end = y.size(); i_y != i_y_end; ++i_y) {
+    unsigned y_index = y.size() - 1 - i_y;
+    unsigned x_start = (extra - out_start) + (i_y * 2);
+    unsigned x_end   = (std::min(x.size(), x.size() - y.size() + i_y + 1)) * 2;
+    unsigned count   = 0;
+    i_x              = x_start;
+    for (unsigned i_end = x_end; i_x != i_end; ++i_x) {
+      out_float[extra + count] += x_float[i_x] * y[y_index];
+      ++count;
+    }
+  }
+}
+
+void ocudu::ocuduvec::detail::multiply_and_accumulate(span<cf_t> out, span<const float> x, span<const cf_t> y)
+{
+  unsigned y_mid     = y.size() / 2;
+  unsigned out_start = y_mid - (y.size() % 2 == 0 ? 1 : 0);
+
+  for (unsigned m = 0, m_end = y.size(); m != m_end; ++m) {
+    int y_index = y.size() - 1 - m;
+
+    unsigned x_start = m;
+    unsigned x_end   = std::min(x.size(), x.size() - y.size() + m + 1);
+
+    span<const float> x_chunk = x.subspan(x_start, x_end - x_start);
+
+    for (unsigned i = 0, i_end = x_chunk.size(); i != i_end; ++i) {
+      out[i + out_start] += x_chunk[i] * y[y_index];
+    }
+  }
+}

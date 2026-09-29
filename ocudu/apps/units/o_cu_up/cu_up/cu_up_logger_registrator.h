@@ -1,0 +1,50 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "cu_up_unit_logger_config.h"
+#include "ocudu/ocudulog/ocudulog.h"
+
+namespace ocudu {
+
+/// Registers the CU-UP loggers in the logger service.
+inline void register_cu_up_loggers(const cu_up_unit_logger_config& log_cfg)
+{
+  for (const auto& id : {"CU-UP"}) {
+    auto& cu_up_logger = ocudulog::fetch_basic_logger(id, false);
+    cu_up_logger.set_level(log_cfg.cu_level);
+    cu_up_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+  }
+
+  auto& pdcp_logger = ocudulog::fetch_basic_logger("PDCP", false);
+  pdcp_logger.set_level(log_cfg.pdcp_level);
+  pdcp_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& e1ap_logger = ocudulog::fetch_basic_logger("CU-UP-E1", false);
+  e1ap_logger.set_level(log_cfg.e1ap_level);
+  e1ap_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& f1u_logger = ocudulog::fetch_basic_logger("CU-F1-U", false);
+  f1u_logger.set_level(log_cfg.f1u_level);
+  f1u_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& gtpu_logger = ocudulog::fetch_basic_logger("GTPU", false);
+  gtpu_logger.set_level(log_cfg.gtpu_level);
+  gtpu_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& sdap_logger = ocudulog::fetch_basic_logger("SDAP", false);
+  sdap_logger.set_level(log_cfg.sdap_level);
+  sdap_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& sec_logger = ocudulog::fetch_basic_logger("SEC", false);
+  sec_logger.set_level(log_cfg.sec_level);
+  sec_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& rohc_logger = ocudulog::fetch_basic_logger("ROHC", false);
+  rohc_logger.set_level(log_cfg.rohc_level);
+  rohc_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+}
+
+} // namespace ocudu

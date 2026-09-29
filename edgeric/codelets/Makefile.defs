@@ -1,0 +1,25 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+CC = clang
+CXX = clang++
+
+INC= -I${JBPF_OUT_DIR}/inc -I${SRSRAN_INC_DIR} -I${NANO_PB} \
+-I${SRSRAN_EXTERNAL_DIR} -I${SRSRAN_EXTERNAL_DIR}/fmt/include \
+-I${CPP_INC} -I${CPP_INC}/x86_64-pc-linux-gnu 
+
+# Use to disable JBPF_PATH printf
+# Use to enable JBPF printf - useful in developing tests
+CFLAGS = -O2 -target bpf -Wall -DJBPF_EXPERIMENTAL_FEATURES -DJBPF_DEBUG_ENABLED -D__x86_64__ -Wno-reorder-init-list  
+CXXFLAGS = -O2 -target bpf -Wall -std=gnu++17 -DJBPF_EXPERIMENTAL_FEATURES -DJBPF_DEBUG_ENABLED -D__x86_64__ -fpermissive -Wno-incompatible-pointer-types -Wno-pedantic -Wno-reorder-init-list 
+
+C_SOURCES = $(wildcard *.c)
+CPP_SOURCES = $(wildcard *.cpp)
+
+C_OBJECTS = $(C_SOURCES:.c=.o)       # Object files for C sources
+CPP_OBJECTS = $(CPP_SOURCES:.cpp=.o) # Object files for C++ sources
+
+# All top level folders with codelets
+DIRS := $(shell find . -maxdepth 1 -type d ! -name .)
+
+

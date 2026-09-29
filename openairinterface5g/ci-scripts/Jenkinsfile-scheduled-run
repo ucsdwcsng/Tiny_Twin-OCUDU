@@ -1,0 +1,206 @@
+#!/bin/groovy
+/*
+ * SPDX-License-Identifier: LicenseRef-CSSL-1.0
+ */
+
+def pythonExecutor = params.pythonExecutor
+def testXMLFile = params.pythonTestXmlFile
+def mainPythonAllXmlFiles = ""
+def buildStageStatus = true
+def JOB_TIMESTAMP
+
+// Name of the resource
+def lockResources = []
+if (params.LockResources != null && params.LockResources.trim().length() > 0)
+  params.LockResources.trim().split(",").each{lockResources += [resource: it.trim()]}
+
+// Global Parameters. Normally they should be populated when the master job
+// triggers the slave job with parameters
+
+def targetBranch = params.targetBranch ?: 'develop'
+def testRepository = params.repository ?: 'git@asterix:/home/git/openairinterface5g.git'
+def testBranch = params.branch ?: "latest"
+def mergeWithTarget = params.mergeWithTarget ?: false
+def sourceBranch = params.sourceBranch ?: testBranch
+
+def flexricOption = ""
+def runWithOC = false
+
+//-------------------------------------------------------------------------------
+// Pipeline start
+pipeline {
+  agent {
+    label pythonExecutor
+  }
+  options {
+    timestamps()
+    ansiColor('xterm')
+    lock(extra: lockResources)
+  }
+
+  stages {
+    stage("Build Init") {
+      steps {
+        script {
+          echo '\u2705 \u001B[94mBuild Init\u001B[0m'
+          JOB_TIMESTAMP = sh(returnStdout: true, script: 'date --utc --rfc-3339=seconds | sed -e "s#+00:00##"').trim()
+        }
+        // update the build name and description
+        buildName "${params.requestNumber}"
+        buildDescription "Branch : ${sourceBranch}"
+      }
+    }
+    stage ('Verify Parameters') {
+      steps {
+        script {
+          echo '\u2705 \u001B[94mVerify Parameters\u001B[0m'
+          def allParametersPresent = true
+
+          if (params.LockResources == null) {
+            echo "no LockResources given"
+            allParametersPresent = false
+          }
+          if (params.workspace == null) {
+            echo "no workspace given"
+            allParametersPresent = false
+          }
+          if (params.OC_Credentials != null) {
+            echo "This pipeline is configured to run with Openshift Cluster."
+            runWithOC = true
+            if (params.OC_ProjectName == null) {
+              echo "no OC_ProjectName given"
+              allParametersPresent = false
+            }
+          }
+          if (params.Flexric_Tag != null) {
+            echo "This pipeline is configured to run with a FlexRIC deployment."
+            echo "Appending FlexRicTag option to the list of options"
+            flexricOption = "--FlexRicTag=${params.Flexric_Tag}"
+            echo "Using new Flexric option: ${flexricOption}"
+          }
+
+	  if (testBranch == 'latest') {
+            echo "Detecting latest commit and branch from repo"
+            def latest_integration = sh(script: "git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin/integration_* | sort -k2 -nr | head -n1 | cut -d' ' -f1", returnStdout: true).trim()
+            def latest_develop = sh(script: "git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin/develop* | sort -k2 -nr | head -n1 | cut -d' ' -f1", returnStdout: true).trim()
+            def dev_date = sh(script: "git log ${latest_develop} -1 --format=%ct", returnStdout: true).trim().toInteger()
+            def int_date = sh(script: "git log ${latest_integration} -1 --format=%ct", returnStdout: true).trim().toInteger()
+            def selected_ref = (dev_date > int_date) ? "origin/develop" : latest_integration
+            sourceBranch = selected_ref.replaceFirst("^origin/", "")
+            commitID = sh(script: "git rev-parse ${selected_ref}", returnStdout: true).trim()
+            echo "Found branch ${sourceBranch}, commit ${commitID}"
+            testBranch = "${sourceBranch}-${commitID}"
+	  }
+
+          echo "CI executor node    :   ${pythonExecutor}"
+          echo "Testing Repository  :   ${testRepository}"
+          echo "Testing Branch      :   ${testBranch}"
+
+          if (allParametersPresent) {
+            echo '\u2705 \u001B[94m All parameters are present\u001B[0m'
+          } else {
+            echo "\u274C Some parameters are missing"
+            sh "./ci-scripts/fail.sh"
+          }
+        }
+      }
+    }
+    stage ("Deploy and Test") {
+      steps {
+        script {
+          dir ('ci-scripts') {
+            String[] myXmlTestSuite = testXMLFile.split("\\r?\\n")
+            for (xmlFile in myXmlTestSuite) {
+              if (fileExists(xmlFile)) {
+                mainPythonAllXmlFiles += "--XMLTestFile=" + xmlFile + " "
+                echo "Test XML file         :   ${xmlFile}"
+              } else {
+                echo "Test XML file ${xmlFile}: no such file"
+              }
+            }
+            sh """
+              python3 main.py --mode=InitiateHtml --repository=${testRepository} \
+                              --branch=${testBranch} ${mainPythonAllXmlFiles}
+            """
+            if (runWithOC) {
+              withCredentials([usernamePassword(credentialsId: "${params.OC_Credentials}", usernameVariable: 'OC_Username', passwordVariable: 'OC_Password')]) {
+                for (xmlFile in myXmlTestSuite) {
+                  if (fileExists(xmlFile)) {
+                    try {
+                      timeout (time: 150, unit: 'MINUTES') {
+                        sh """
+                          python3 main.py --mode=TesteNB --repository=${testRepository} \
+                                          --branch=${testBranch} \
+                                          --ranAllowMerge=${mergeWithTarget} --targetBranch=${targetBranch} \
+                                          --workspace=${params.workspace} --XMLTestFile=${xmlFile} \
+                                          --OCUserName=${OC_Username} --OCPassword=${OC_Password} --OCProjectName=${OC_ProjectName} \
+                                          ${flexricOption}
+                        """
+                      }
+                    } catch (Exception e) {
+                      currentBuild.result = 'FAILURE'
+                      buildStageStatus = false
+                    }
+                  }
+                }
+              }
+            } else {
+              for (xmlFile in myXmlTestSuite) {
+                if (fileExists(xmlFile)) {
+                  try {
+                    timeout (time: 150, unit: 'MINUTES') {
+                      sh """
+                        python3 main.py --mode=TesteNB --repository=${testRepository} \
+                                        --branch=${testBranch} \
+                                        --ranAllowMerge=${mergeWithTarget} --targetBranch=${targetBranch} \
+                                        --workspace=${params.workspace} --XMLTestFile=${xmlFile} \
+                                        ${flexricOption}
+                      """
+                    }
+                  } catch (Exception e) {
+                    currentBuild.result = 'FAILURE'
+                    buildStageStatus = false
+                  }
+                }
+              }
+            }
+          sh "python3 main.py --mode=FinalizeHtml --finalStatus=${buildStageStatus}"
+          }
+        }
+      }
+    }
+    stage ("Log Collection") {
+      steps {
+        script {
+	  echo '\u2705 \u001B[94mLog Collection\u001B[0m'
+          dir ('ci-scripts') {
+            // Zipping all archived log files
+              sh "mkdir test_logs"
+              sh "mv *.log* test_logs || true"
+              // Zip all log files matching cmake_targets/{*.log*,log/*} into test_logs_XXXX.zip
+              if (fileExists('../cmake_targets/log')) {
+                sh "mv ../cmake_targets/log/* test_logs || true"
+              }
+              sh "zip -r -qq test_logs_${env.BUILD_ID}.zip *test_log*/"
+              sh "rm -rf *test_log*/"
+              if (fileExists("test_logs_${env.BUILD_ID}.zip")) {
+                archiveArtifacts artifacts: "test_logs_${env.BUILD_ID}.zip"
+              }
+            if (fileExists("test_results.html")) {
+              def reportName = "test_results-${env.JOB_NAME}.html"
+              sh "mv test_results.html ${reportName}"
+              sh """
+                sed -i -e 's#TEMPLATE_BUILD_TIME#${JOB_TIMESTAMP}#' \
+                       -e 's#TEMPLATE_JOB_NAME#${JOB_NAME}#' \
+		       -e 's@build #TEMPLATE_BUILD_ID@build #${BUILD_ID}@' \
+                       -e 's#Build-ID: TEMPLATE_BUILD_ID#Build-ID: <a href=\"${BUILD_URL}\">${BUILD_ID}</a>#' \
+                       ${reportName}
+	      """
+              archiveArtifacts artifacts: "${reportName}"
+            }
+          }
+        }
+      }
+    }
+  }
+}

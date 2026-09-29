@@ -1,0 +1,108 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>test-5g-fhi72-8x8-benetel</htmlTabRef>
+  <htmlTabName>100 MHz 8x8 TDD SA Benetel</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>stonechat</node>
+    <images>oai-gnb-fhi72-t2</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace for server 0</desc>
+    <node>stonechat</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy DU (TDD/Band77/100MHz/Benetel/8x8) in a container</desc>
+    <yaml_path>ci-scripts/yaml_files/sa_fhi_7.2_benetel_8x8_du</yaml_path>
+    <services>oai-du</services>
+    <node>stonechat</node>
+    <num_attempts>2</num_attempts>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach UE</desc>
+    <id>up3</id>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>20</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping: 100 pings in 10 sec</desc>
+    <id>up3</id>
+    <svr_id>oc-cn5g-20899-always-on</svr_id>
+    <ping_args>-c 100 -i 0.1</ping_args>
+    <ping_packetloss_threshold>20</ping_packetloss_threshold>
+    <ping_rttavg_threshold>15</ping_rttavg_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (DL/200Mbps/UDP)(60 sec)</desc>
+    <may_fail>true</may_fail>
+    <iperf_args>-u -b 200M -t 60 -R -l1428 -p 5209</iperf_args>
+    <id>up3</id>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+    <iperf_profile>balanced</iperf_profile>
+    <svr_id>oc-cn5g-20899-always-on</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>iperf (DL/400Mbps/UDP)(60 sec)</desc>
+    <may_fail>true</may_fail>
+    <iperf_args>-u -b 400M -t 60 -R -l 1428 -p 5209</iperf_args>
+    <id>up3</id>
+    <iperf_packetloss_threshold>20</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>80</iperf_bitrate_threshold>
+    <svr_id>oc-cn5g-20899-always-on</svr_id>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <always_exec>true</always_exec>
+    <desc>Detach UE</desc>
+    <id>up3</id>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>5</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy DU</desc>
+    <yaml_path>ci-scripts/yaml_files/sa_fhi_7.2_benetel_8x8_du</yaml_path>
+    <services>oai-du</services>
+    <node>stonechat</node>
+    <analysis>
+      <services>oai-du=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>stonechat</node>
+    <images>oai-gnb-fhi72-t2</images>
+  </testCase>
+
+</testCaseList>

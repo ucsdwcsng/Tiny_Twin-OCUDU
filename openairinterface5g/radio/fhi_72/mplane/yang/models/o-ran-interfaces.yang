@@ -1,0 +1,736 @@
+module o-ran-interfaces {
+  yang-version 1.1;
+  namespace "urn:o-ran:interfaces:1.0";
+  prefix "o-ran-int";
+
+
+  import ietf-inet-types {
+    prefix "inet";
+  }
+
+  import iana-if-type {
+    prefix "ianaift";
+  }
+
+  import ietf-interfaces {
+    prefix "if";
+  }
+
+  import ietf-ip {
+    prefix "ip";
+  }
+
+  import ietf-hardware {
+    prefix "hw";
+  }
+
+  import ietf-yang-types {
+    prefix "yang";
+  }
+
+  import iana-hardware {
+    prefix "ianahw";
+  }
+
+  import o-ran-wg4-features {
+    prefix "feat";
+  }
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the YANG definitions for managing the O-RAN
+     interfaces.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 16.0.0
+
+      1) added new MACsec bypass policy.";
+
+    reference "ORAN-WG4.M.0-v16.00";
+  }
+
+  revision "2024-04-15" {
+    description
+      "version 15.0.0
+
+      1) added new config false only leaf for maximum payload size.
+      2) new configuration for TCP MSS.";
+
+    reference "ORAN-WG4.M.0-v15.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 5.2.0
+
+      1) typographical corrections in descriptions.";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2021-03-22" {
+    description
+      "version 5.1.0
+
+      1) typographical corrections in descriptions.";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2020-12-10" {
+    description
+      "version 5.0.0
+
+      1) new functionality to describe over subscribed resources";
+
+    reference "ORAN-WG4.M.0-v05.00";
+  }
+
+  revision "2020-04-17" {
+    description
+      "version 1.2.0
+
+      1) updated descriptions to clarify operation when vlan-tagging is false";
+
+    reference "ORAN-WG4.M.0-v03.00";
+  }
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) increasing max elements for user plane DSCP markings to 64
+      2) re-organizing layout to facilitate cross-WG adoption, whilst ensuring
+      nodes are syntactically and semantically equivalent";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  feature UDPIP-BASED-CU-PLANE {
+    description
+      "This feature indicates that the RU supports the UDP/IP based transport
+      for the CU plane.";
+  }
+
+  feature ALIASMAC-BASED-CU-PLANE {
+    description
+      "This feature indicates that the RU supports the alias MAC address
+       based transport for the CU plane.";
+  }
+
+  typedef pcp {
+    type uint8 {
+      range "0..7";
+    }
+    description
+      "Priority Code Point. PCP is a 3-bit field that refers to the
+      class of service applied to a VLAN tagged frame.  The
+      field specifies a priority value between 0 and 7, these values
+      can be used by quality of service (QoS) to prioritize
+      different classes of traffic.";
+    reference
+     "IEEE 802.1Q-2014: Virtual Bridged Local Area Networks";
+  }
+
+  typedef mss {
+    type uint16;
+    description
+      "Type definition for TCP Maximum Segment Size.";
+  }
+
+  typedef ethertype-string {
+   type string {
+     pattern '([0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}))';
+   }
+   description
+    "A 2 octect hexadecimal string with octets represented as hex digits
+     separated by colons.";
+  }
+
+  grouping cos-marking {
+    description
+      "Configuration data for CU Plane ethernet CoS marking.
+      This grouping is only applicable to an interface when vlan-tagging is
+      set to TRUE for that interface. In other cases, it may be ignored.";
+    container class-of-service {
+      description
+        "CoS Configuration";
+      leaf u-plane-marking {
+        type pcp;
+        default 7;
+        description
+          "Marking used for default u-plane flows.
+          7 represents highest priority for u-plane marking";
+      }
+      leaf c-plane-marking {
+        type pcp;
+        default 7;
+        description "7 represents highest priority for c-plane marking";
+      }
+      leaf m-plane-marking {
+        type pcp;
+        default 2;
+        description "2 represents highest excellent effort for m-plane marking";
+      }
+      leaf s-plane-marking {
+        type pcp;
+        default 7;
+        description "7 represents highest priority for s-plane marking";
+      }
+      leaf other-marking {
+        type pcp;
+        default 1;
+        description "1 represents best effort for other marking";
+      }
+      list enhanced-uplane-markings{
+        key "up-marking-name";
+        max-elements 4;
+        description
+          "list of mappings for enhanced (non-default) u-plane markings";
+        leaf up-marking-name {
+          type string;
+          description "The name of the marking";
+        }
+        leaf enhanced-marking {
+          type pcp;
+          description "the enhanced u-plane marking";
+        }
+      }
+    }
+  }
+
+  grouping dscp-marking {
+    description
+      "Configuration data for CU Plane DSCP marking";
+    container diffserv-markings {
+      description
+        "DSCP Configuration";
+      leaf u-plane-marking {
+        type inet:dscp;
+        default 46;
+        description
+          "Marking used for default u-plane flows.
+          46 represents expedited forwarding";
+      }
+      leaf c-plane-marking {
+        type inet:dscp;
+        default 46;
+        description "46 represents expedited forwarding";
+      }
+      leaf s-plane-marking {
+        type inet:dscp;
+        default 46;
+        description "46 represents expedited forwarding";
+      }
+      leaf other-marking {
+        type inet:dscp;
+        default 0;
+        description "0 represents best effort forwarding";
+      }
+      list enhanced-uplane-markings{
+        key up-marking-name;
+        max-elements 64;
+        description
+          "list of mappings for enhanced (non-default) u-plane markings";
+        leaf up-marking-name {
+          type string;
+          description "The name of the marking";
+        }
+        leaf enhanced-marking {
+          type inet:dscp;
+          description "the enhanced u-plane marking";
+        }
+      }
+    }
+  }
+
+  grouping tcp-config {
+    description "grouping for per-interface tcp configuration";
+
+    container tcp {
+      presence "tcp configuration";
+      description "per interface TCP configuration";
+
+      leaf mss-adjust {
+        type mss;
+        description
+          "Maximum Segment Size (MSS) used in the MSS Option sent
+          in the TCP initial handshake over this interface and
+          which specifies an upper bound for the TCP MSS of packets
+          that can be received on this interface.
+
+          NOTE, this can be used to reduce the packet size for NETCONF/TLS
+          or NETCONF/SSH to reduce head-of-line blocking due to M-Plane
+          packets sent over the fronthaul downlink interface";
+      }
+    }
+  }
+
+  grouping macsec-bypass-grouping {
+    description "grouping for MACsec bypass policy";
+
+    container macsec-bypass-policy {
+      if-feature feat:MACSEC-BYPASS-POLICY;
+      description
+        "This is a top level container for MACsec policies.
+         These policies can only be enforced on the base
+         Ethernet interface.
+
+         MAC, EtherType and vlan-id based policies are defined to
+         be applied to the base-interface.
+
+         VLAN based policies can additionally be implicitly
+         enforced by configuring the SecY on a VLAN interface and
+         do not use this container.";
+
+      list policy {
+        key "name";
+        description
+          "Each policy list entry has a matching criteria. Any frame
+          matching the criteris will be forwarded via the uncontrolled port.";
+        leaf name {
+          type string;
+            description
+              "The name of the MACsec policy.";
+        }
+        choice policy-type {
+
+          case mac {
+            leaf-list destination-mac-address {
+              type yang:mac-address;
+              description
+                "Destination IEEE 802 Media Access Control (MAC)
+                address of frames egressing via interface.";
+            }
+          }
+          case ethertype {
+            leaf-list ethertype {
+              type ethertype-string;
+              description
+                "list of ethertypes in frames egressing the interface.";
+            }
+          }
+          case vlan-id {
+            leaf-list vlan-id {
+              type uint16 {
+                range "1..4094";
+              }
+              description
+                "list of vlan-ids in frames egressing the interface.";
+            }
+          }
+          description
+            "choice of policy types";
+        }
+      }
+    }
+  }
+
+  grouping macsec-bypass-capabilities {
+    description "grouping for MACsec bypass capabilities";
+
+    container macsec-bypass-capabilities {
+      if-feature feat:MACSEC-BYPASS-POLICY;
+      config false;
+      description
+        "This is a container for MACsec bypass capabilities.";
+
+      leaf per-interface-policy-list-max-elements {
+        type uint16;
+        default 100;
+        description
+          "the maximum number of list of elements
+          for each instance of the list
+          /if:interfaces/if:interface/o-ran-int:/macsec-bypass-policy/o-ran-int/policy.";
+      }
+      leaf cummulative-policy-list-max-elements {
+        type uint16;
+        default 100;
+        description
+          "the maximum cummulative number of list entries for
+          all instances of the list
+          /if:interfaces/if:interface/o-ran-int:/macsec-bypass-policy/o-ran-int/policy";
+      }
+      leaf-list supported-policy {
+        type enumeration {
+          enum MAC {
+            description
+              "O-RU supports MAC address based by-pass policies
+              for frames egressing a base-interface.";
+          }
+          enum ETHERTYPE {
+            description
+              "O-RU supports ethertype based by-pass policies
+              for frames egressing a base-interface.";
+          }
+          enum VLAN {
+            description
+              "O-RU supports vlan-id based by-pass policies
+              for frames egressing a base-interface.";
+          }
+        }
+        description
+          "The type of mac bypass policies supported by the O-RU
+          on frames egressing a base-interface.
+
+          An O-RU supporting the MACSEC-BYPASS-POLICY shall include
+          at least one of the defined policies in this list.";
+      }
+    }
+  }
+
+  rpc reset-interface-counters {
+    description
+      "Management plane triggered restart of the interface counters.";
+  }
+
+// Cross Working Group Augmentations Follow
+
+// Cross Working Group augmentations for basic Ethernet leafs
+
+  augment "/if:interfaces/if:interface" {
+    when "if:type = 'ianaift:ethernetCsmacd'" {
+      description "Applies to Ethernet interfaces";
+    }
+    description
+      "Augment the interface model with parameters for
+      base Ethernet interface";
+
+    leaf l2-mtu {
+      type uint16 {
+        range "64 .. 65535";
+      }
+      units bytes;
+      default 1500;
+      description
+        "The maximum size of layer 2 frames that may be transmitted
+        or received on the interface (excluding any FCS overhead).
+        For Ethernet interfaces it also excludes the
+        4-8 byte overhead of any known (i.e. explicitly matched by
+        a child sub-interface) 801.1Q VLAN tags.";
+    }
+
+    leaf maximum-ethernet-payload-size {
+      type uint16 {
+        range "1500 .. 9000";
+      }
+      units bytes;
+      config false;
+      description
+        "The maximum size of the Ethernet payload that an O-RU can transmit
+        or receive on the interface (excluding any frame header,
+        maximum frame payload size, frame checksum
+        sequence and any 802.1Q tag).
+
+        TAKE NOTE - THE FORMULA IN THIS DESCRIPTION DIFFERS FROM THE
+        FORMULA IN THE DESCRIPTION OF THE l2-mtu LEAF.
+
+        THIS LEAF CORRESPONDS TO THE DATA/PAYLOAD **ONLY** AND DOES **NOT**
+        INCLUDE ANY OTHER FRAME OVERHEAD LIKE SOURCE/DESTINATION ADDRESSES,
+        LENGTH, 802.1Q TAGS OR FCS.";
+    }
+
+    leaf vlan-tagging {
+      type boolean;
+      default true;
+      description
+        "Indicates if VLAN tagging is used.
+        Default true is used to enable equipment to autonomously discover that
+        it is connected to a trunk port.
+
+        This may be set to false, for example, when the O-RU is directly
+        connected to the O-DU. In such cases, native Ethernet frames may be
+        used across the O-RAN interface, i.e., any PCP markings defined
+        in the cos-markings grouping are NOT used by the O-RU and any default
+        value or configured value using those leafs may be ignored by the O-RAN
+        equipment.";
+    }
+    uses cos-marking;
+
+// interface-grouping insert - begin;
+
+    leaf-list interface-groups-id {
+      type leafref {
+        path "/if:interfaces/o-ran-int:interface-grouping/o-ran-int:interfaces-groups/o-ran-int:interface-group-id";
+      }
+      config false;
+      description
+        "an optional leaf used when the sustained rate able to be supported by an interface
+        is less than nominal bit rate indicated by o-ran-transceiver.yang
+
+        Identifies interface grouping particular physical hardware MAC address belongs to.";
+    }
+
+// interface-grouping insert - end;
+  }
+
+// augmentation for MACsec bypass policies
+  augment "/if:interfaces/if:interface" {
+    when "if:type = 'ianaift:ethernetCsmacd'" {
+      description "Applies to Ethernet interfaces";
+    }
+    if-feature feat:MACSEC-BYPASS-POLICY;
+    description
+      "Augment the interface model with bypass parameters for
+      base Ethernet interface";
+
+    uses macsec-bypass-grouping;
+  }
+
+  augment "/if:interfaces" {
+    if-feature feat:MACSEC-BYPASS-POLICY;
+    description "augmentation for MACsec bypass capabilitites";
+
+    uses macsec-bypass-capabilities;
+  }
+
+
+// Cross Working Group augmentation for l2vlan interfaces for VLAN definition
+
+  augment "/if:interfaces/if:interface" {
+    when "if:type = 'ianaift:l2vlan'";
+    description "augments for VLAN definition";
+    leaf base-interface {
+      type if:interface-ref;
+      must "/if:interfaces/if:interface[if:name = current()]"
+            + "/o-ran-int:vlan-tagging = 'true'" {
+        description
+          "The base interface must have VLAN tagging enabled.";
+      }
+      description
+        "The base interface for the VLAN sub-interface.";
+    }
+    leaf vlan-id {
+      type uint16 {
+        range "1..4094";
+      }
+      description
+        "The VLAN-ID.";
+    }
+  }
+
+// Cross Working Group augmentation for both ethernetCsmacd and l2vlan interfaces
+
+  augment "/if:interfaces/if:interface" {
+    when "(if:type = 'ianaift:ethernetCsmacd') or
+          (if:type = 'ianaift:l2vlan')" {
+      description "Applies to ethernetCsmacd and l2vlan interfaces";
+    }
+    description
+      "Augment the interface model with parameters for all
+      both ethernetCsmacd and l2vlan interfaces.";
+    leaf last-cleared {
+      type yang:date-and-time;
+      config false;
+      description
+        "Timestamp of the last time the interface counters were
+        cleared.";
+    }
+  }
+
+// Cross Working Group augmentation to ietf-ip covering DSCP for M-Plane
+
+augment "/if:interfaces/if:interface/ip:ipv4" {
+  description "augments for IPv4 based M-Plane transport";
+  leaf m-plane-marking {
+    type inet:dscp;
+    default 18;
+    description "18 represents AF21 or 'immediate traffic'";
+  }
+}
+augment "/if:interfaces/if:interface/ip:ipv6" {
+  description "augments for IPv6 based M-Plane transport";
+  leaf m-plane-marking {
+    type inet:dscp;
+    default 18;
+    description "18 represents AF21 or 'immediate traffic'";
+  }
+}
+
+// Cross Working Group augmentation to ietf-ip covering TCP MSS for M-Plane
+
+augment "/if:interfaces/if:interface/ip:ipv4" {
+  if-feature feat:PER-INT-TCP-MSS;
+  description "augments for IPv4 based CUS transport";
+  uses tcp-config;
+}
+augment "/if:interfaces/if:interface/ip:ipv6" {
+  if-feature feat:PER-INT-TCP-MSS;
+  description "augments for IPv6 based CUS transport";
+  uses tcp-config;
+}
+
+
+// WG4 Specific Augmentations Follow
+
+// WG4 Augmentation for basic Ethernet leafs
+
+  augment "/if:interfaces/if:interface" {
+    when "if:type = 'ianaift:ethernetCsmacd'" {
+      description
+        "Applies to WG4 Ethernet interfaces for alias MAC based CU-Plane";
+    }
+    if-feature ALIASMAC-BASED-CU-PLANE;
+    description
+      "Augment the interface model with parameters for
+      base Ethernet interface";
+
+    leaf-list alias-macs {
+      type yang:mac-address;
+
+      description
+        "Augments interfaces with range of alias MAC addresses.";
+    }
+
+  }
+
+// WG4 Augmentation for both ethernetCsmacd and l2vlan interfaces
+
+  augment "/if:interfaces/if:interface" {
+    when "(if:type = 'ianaift:ethernetCsmacd') or
+          (if:type = 'ianaift:l2vlan')" {
+      description "Applies to ethernetCsmacd and l2vlan interfaces";
+    }
+    description
+      "Augment the interface model with parameters for all
+      both ethernetCsmacd and l2vlan interfaces.";
+    leaf mac-address {
+      type yang:mac-address;
+
+      description
+        "The MAC address of the interface.";
+    }
+
+    container port-reference {
+      description
+        "a port reference used by other O-RAN modules";
+      leaf port-name {
+        type leafref {
+          path '/hw:hardware/hw:component/hw:name';
+        }
+        must "derived-from-or-self(deref(current())/../hw:class, 'ianahw:port')";
+// TAKE NOTE - depending on version of pyang, this may generate various
+// warnings, e.g., warning: XPath for "port-name" does not exist
+        description
+          "O-RAN interfaces use a reference to a physical port component.
+
+          In this case, the component name referenced must be of class type
+          port, i.e., when /hw:hardware/hw:component/hw:class is derived from
+          ianahw:port";
+      }
+      leaf port-number {
+        type uint8;
+        description
+          "A number allocated by the server which identifies a port.
+          Port number value is 0 to N-1 where N is number of ports
+          in the device.
+
+          This value is fixed for the lifetime of the equipment, i.e., cannot be
+          changed during equipment reboots.";
+      }
+    }
+  }
+
+// WG4 specific augmentation to ietf-ip covering DSCP for CUS Plane
+
+  augment "/if:interfaces/if:interface/ip:ipv4" {
+    if-feature UDPIP-BASED-CU-PLANE;
+    description "augments for IPv4 based CUS transport";
+    uses dscp-marking;
+  }
+  augment "/if:interfaces/if:interface/ip:ipv6" {
+    if-feature UDPIP-BASED-CU-PLANE;
+    description "augments for IPv6 based CUS transport";
+    uses dscp-marking;
+  }
+
+// Other Working Group Specific Augmentations Follow Here
+
+// interface-grouping insert - begin;
+
+  augment "/if:interfaces" {
+    description "augments interfaces for groupings of physical hardware addresses that can be used to group Ethernet ports";
+
+    container interface-grouping {
+
+      presence
+        "indicates maximum sustained throughput of an O-RU is less than the combined bandwidth of all physical ports";
+
+      config false;
+
+      description
+        "A container used by an O-RU where the maximum sustained throughput
+        of an O-RU is less than the combined bandwidth of all physical ports";
+
+      list interfaces-groups {
+        key interface-group-id;
+        description "List of interface groups.";
+
+        leaf interface-group-id {
+          type uint8;
+          description "interface group identifier.";
+        }
+
+        leaf max-sustainable-ingress-bandwidth {
+          type uint32;
+          units Mbps;
+          description
+            "Maximum sustainable ingress bandwidth the interface group can handle. The sustainable bandwidth is calculated
+            over one radio frame.
+
+            The peak ingress bandwidth may exceed the sustainable bandwidth for periods shorter than a radio frame period.";
+        }
+
+        leaf max-sustainable-egress-bandwidth {
+          type uint32;
+          units Mbps;
+          description
+            "Maximum sustainable egress bandwidth the interface group can handle. The sustainable bandwidth is calculated
+            over one radio frame.";
+        }
+      }
+    }
+  }
+// interface-grouping insert - end;
+
+}

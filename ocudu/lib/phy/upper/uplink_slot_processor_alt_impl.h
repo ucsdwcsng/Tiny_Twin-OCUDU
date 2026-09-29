@@ -1,0 +1,69 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/support/resource_grid_reader.h"
+#include "ocudu/phy/upper/phy_tap/phy_tap.h"
+#include "ocudu/phy/upper/uplink_slot_processor.h"
+#include "ocudu/ran/slot_point.h"
+
+namespace ocudu {
+
+/// \brief Alternative uplink slot processor implementation.
+///
+/// Uplink processor that only processes PRACH and reports resource grids that are not associated with any reception
+/// request.
+///
+/// This implementation is used when there are no uplink receive requests.
+class uplink_slot_processor_alt_impl : public uplink_slot_processor
+{
+public:
+  /// \brief Creates a dummy instance from a base processor.
+  /// \param[in] base_ Base instance used for handling PRACH.
+  /// \param[in] grid_ Reference to the uplink processor resource grid.
+  /// \param[in] tap_  Optional pointer to the PHY tap.
+  uplink_slot_processor_alt_impl(uplink_slot_processor& base_, const resource_grid_reader& grid_, phy_tap* tap_) :
+    base(base_), grid(grid_), tap(tap_)
+  {
+  }
+
+  /// Activates the alternative processor for the current slot context.
+  void activate_slot(slot_point slot_) { slot.emplace(slot_); }
+
+  /// Deactivates the slot.
+  void deactivate_slot() { slot.reset(); }
+
+  // See the uplink_slot_processor interface for documentation.
+  void handle_rx_symbol(unsigned end_symbol_index, bool is_valid) override
+  {
+    if ((tap != nullptr) && (end_symbol_index == grid.get_nof_symbols() - 1) && (slot.has_value())) {
+      tap->handle_quiet_grid(grid, *slot);
+    }
+  }
+
+  // See the uplink_slot_processor interface for documentation.
+  void process_prach(shared_prach_buffer buffer, const prach_buffer_context& context) override
+  {
+    base.process_prach(std::move(buffer), context);
+  }
+
+  // See the uplink_slot_processor interface for documentation.
+  void discard_slot() override
+  {
+    // Ignore.
+  }
+
+private:
+  /// Base processor, used for processing PRACH.
+  uplink_slot_processor& base;
+  /// Reference to the resource grid associated with the uplink processor.
+  const resource_grid_reader& grid;
+  /// Optional physical layer tap. Set to \c nullptr if not available.
+  phy_tap* tap;
+  /// Activated slot context.
+  std::optional<slot_point> slot;
+};
+
+} // namespace ocudu

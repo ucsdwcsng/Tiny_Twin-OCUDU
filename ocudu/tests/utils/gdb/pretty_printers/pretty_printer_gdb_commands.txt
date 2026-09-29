@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+cd ../../../../..
+set width 0
+set height 0
+set verbose off
+source .gdbinit
+
+run
+bt -full
+quit

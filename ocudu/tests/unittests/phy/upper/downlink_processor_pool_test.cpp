@@ -1,0 +1,124 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "downlink_processor_test_doubles.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/phy/upper/upper_phy_factories.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+
+TEST(DownlingProcessorPool, ProcessorOk)
+{
+  downlink_processor_pool_config dl_procs;
+  subcarrier_spacing             scs = subcarrier_spacing::kHz30;
+  unsigned                       id  = 0;
+
+  downlink_processor_pool_config::downlink_processor_set info{scs, {}};
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id));
+  dl_procs.dl_processors.push_back(std::move(info));
+
+  std::unique_ptr<downlink_processor_pool> dl_proc_pool = create_dl_processor_pool({std::move(dl_procs)});
+
+  slot_point                     slot(to_numerology_value(scs), 0, 0);
+  downlink_processor_controller& dl_processor = dl_proc_pool->get_processor_controller(slot);
+
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor).get_id(), id);
+}
+
+TEST(DownlingProcessorPool, SameSlotDifferentProcessor)
+{
+  downlink_processor_pool_config dl_procs;
+  subcarrier_spacing             scs = subcarrier_spacing::kHz30;
+  unsigned                       id  = 0;
+
+  downlink_processor_pool_config::downlink_processor_set info{scs, {}};
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id));
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id + 1));
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id + 2));
+  dl_procs.dl_processors.push_back(std::move(info));
+
+  std::unique_ptr<downlink_processor_pool> dl_proc_pool = create_dl_processor_pool({std::move(dl_procs)});
+
+  slot_point                     slot(to_numerology_value(scs), 0, 0);
+  downlink_processor_controller& dl_processor_0 = dl_proc_pool->get_processor_controller(slot);
+  downlink_processor_controller& dl_processor_1 = dl_proc_pool->get_processor_controller(slot);
+
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_0).get_id(), id);
+  ASSERT_NE(static_cast<downlink_processor_spy&>(dl_processor_1).get_id(), id);
+  ASSERT_TRUE(&dl_processor_0 != &dl_processor_1);
+}
+
+TEST(DownlingProcessorPool, ConsecutiveProcessorOk)
+{
+  downlink_processor_pool_config                         dl_procs;
+  subcarrier_spacing                                     scs = subcarrier_spacing::kHz30;
+  unsigned                                               id0 = 0;
+  unsigned                                               id1 = 1;
+  downlink_processor_pool_config::downlink_processor_set info{scs, {}};
+
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id0));
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(id1));
+  dl_procs.dl_processors.push_back(std::move(info));
+
+  std::unique_ptr<downlink_processor_pool> dl_proc_pool = create_dl_processor_pool({std::move(dl_procs)});
+
+  slot_point                     first(to_numerology_value(scs), 0, 0);
+  downlink_processor_controller& dl_processor_0 = dl_proc_pool->get_processor_controller(first);
+  slot_point                     second(to_numerology_value(scs), 0, 1);
+  downlink_processor_controller& dl_processor_1 = dl_proc_pool->get_processor_controller(second);
+
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_0).get_id(), id0);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_1).get_id(), id1);
+}
+
+TEST(DownlingProcessorPool, CircularBufferOk)
+{
+  downlink_processor_pool_config                         dl_procs;
+  subcarrier_spacing                                     scs = subcarrier_spacing::kHz30;
+  downlink_processor_pool_config::downlink_processor_set info{scs, {}};
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(0));
+  info.procs.emplace_back(std::make_unique<downlink_processor_spy>(1));
+  dl_procs.dl_processors.push_back(std::move(info));
+
+  std::unique_ptr<downlink_processor_pool> dl_proc_pool = create_dl_processor_pool({std::move(dl_procs)});
+
+  slot_point                     first(to_numerology_value(scs), 0, 0);
+  downlink_processor_controller& dl_processor_0 = dl_proc_pool->get_processor_controller(first);
+  slot_point                     second(to_numerology_value(scs), 0, 1);
+  downlink_processor_controller& dl_processor_1 = dl_proc_pool->get_processor_controller(second);
+  slot_point                     third(to_numerology_value(scs), 0, 2);
+  downlink_processor_controller& dl_processor_2 = dl_proc_pool->get_processor_controller(third);
+
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_0).get_id(), 0);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_1).get_id(), 1);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_2).get_id(), 0);
+}
+
+TEST(DownlingProcessorPool, TwoNumerologiesTwoProcessors)
+{
+  downlink_processor_pool_config dl_procs;
+  for (auto scs : {subcarrier_spacing::kHz30, subcarrier_spacing::kHz120}) {
+    downlink_processor_pool_config::downlink_processor_set info{scs, {}};
+    info.procs.emplace_back(std::make_unique<downlink_processor_spy>(to_numerology_value(scs) * 10 + 0));
+    info.procs.emplace_back(std::make_unique<downlink_processor_spy>(to_numerology_value(scs) * 10 + 1));
+    dl_procs.dl_processors.push_back(std::move(info));
+  }
+
+  std::unique_ptr<downlink_processor_pool> dl_proc_pool = create_dl_processor_pool({std::move(dl_procs)});
+
+  slot_point                     first(1, 0, 0);
+  downlink_processor_controller& dl_processor_010 = dl_proc_pool->get_processor_controller(first);
+  slot_point                     second(1, 0, 1);
+  downlink_processor_controller& dl_processor_011 = dl_proc_pool->get_processor_controller(second);
+  slot_point                     third(3, 0, 0);
+  downlink_processor_controller& dl_processor_030 = dl_proc_pool->get_processor_controller(third);
+  slot_point                     fourth(3, 0, 1);
+  downlink_processor_controller& dl_processor_031 = dl_proc_pool->get_processor_controller(fourth);
+
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_010).get_id(), 10);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_011).get_id(), 11);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_030).get_id(), 30);
+  ASSERT_EQ(static_cast<downlink_processor_spy&>(dl_processor_031).get_id(), 31);
+}

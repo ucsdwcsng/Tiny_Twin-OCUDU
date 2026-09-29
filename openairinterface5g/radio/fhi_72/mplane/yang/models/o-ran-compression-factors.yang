@@ -1,0 +1,642 @@
+module o-ran-compression-factors {
+  yang-version 1.1;
+  namespace "urn:o-ran:compression-factors:1.0";
+  prefix "o-ran-compression-factors";
+
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module defines the module capabilities for
+    the O-RAN Radio Unit U-Plane configuration.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 16.0.0
+
+      1) Clarify handling of deprecated leaf compression-format.
+      2) Add in SINR compression details";
+
+   reference "ORAN-WG4.M.0-v16.00";
+  }
+
+  revision "2023-08-14" {
+    description
+      "version 13.0.0
+
+      1) New compression methods BFP-SRES-MASK-IN-SEC-HEADER and MOD-SRES-MASK-IN-SEC-HEADER.";
+
+   reference "ORAN-WG4.M.0-v13.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 8.0.0
+
+      1) typographical corrections in descriptions.
+      2) Configuration for Beamforming weights were added together with changes
+         and updates to compressions.
+      3) add new beamspace compression enumeration for BEAMSPACE_TYPEII.";
+
+   reference "ORAN-WG4.M.0-v08.00";
+  }
+
+  revision "2021-03-22" {
+   description
+     "version 4.1.0
+
+     1) typographical corrections in descriptions.";
+
+   reference "ORAN-WG4.M.0-v04.00";
+  }
+
+  revision "2020-08-10" {
+   description
+     "version 4.0.0
+
+     1) supporting compression types per endpoint
+     2) adding feature for configurable fs-offset for compression";
+
+   reference "ORAN-WG4.M.0-v04.00";
+  }
+
+   revision "2020-04-17" {
+    description
+      "version 3.0.0
+
+      1) adding selective RE sending compression types";
+
+    reference "ORAN-WG4.M.0-v03.00";
+  }
+
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) changes related to compression bit-width presentation";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  feature CONFIGURABLE-FS-OFFSET {
+    description
+      "Presence of this feature means that O-RU supports configurable fs-offset for compression.";
+  }
+
+  typedef ci-compression-method-def {
+    type enumeration {
+      enum NO_COMPRESSION {
+        description
+          "No compression will be used";
+      }
+
+      enum BLOCK_FLOATING_POINT {
+        description
+          "Block floating point compression and decompression will be used";
+      }
+
+      enum BLOCK_SCALING {
+        description
+          "Block scaling compression and decompresion will be used";
+      }
+
+      enum U_LAW {
+        description
+          "u-Law compression and decompresion method will be used";
+      }
+    }
+    description
+      "Available compression methods for channel information (e.g., ST6).";
+  }
+
+  typedef compression-type-def {
+    type enumeration {
+      enum STATIC {
+        description
+          "Indicates that static compression method will be used (both compression and IQ bitwidth)";
+      }
+      enum DYNAMIC {
+        description
+          "Indicates that dynamic compression method will be used";
+      }
+    }
+    description
+      "Compression type that O-DU wants to be supported";
+  }
+
+  typedef bf-compression-method-def {
+    type enumeration {
+      enum NO_COMPRESSION {
+        description
+          "No compression will be used";
+      }
+      enum BLOCK_FLOATING_POINT {
+        description
+          "Block floating point compression and decompression will be used";
+      }
+
+      enum BLOCK_SCALING {
+        description
+          "Block scaling compression and decompresion will be used";
+      }
+
+      enum U_LAW {
+        description
+          "u-Law compression and decompresion method will be used";
+      }
+
+      enum BEAMSPACE {
+        description
+          "Beamspace compression and decompression will be used";
+      }
+
+      enum VOID_1 {
+        description
+          "Leftover of modulation, not to be used for beamforming weights";
+      }
+
+      enum VOID_2 {
+        description
+          "Leftover of block-floating-point-selective-re-sending, not to be used for beamforming weights";
+      }
+
+      enum VOID_3 {
+        description
+          "Leftover of modulation-compression-selective-re-sending, not to be used for beamforming weights";
+      }
+
+      enum BEAMSPACE_TYPEII {
+        description
+          "Beamspace compression typeII and decompression will be used ";
+      }
+    }
+    description
+      "Available compression methods for beamforming weights.";
+  }
+
+  typedef compression-method-def {
+    type enumeration {
+      enum NO_COMPRESSION {
+        description
+          "No compression";
+      }
+      enum BLOCK_FLOATING_POINT {
+        description
+          "Block floating point compression and decompression method";
+      }
+
+      enum BLOCK_SCALING {
+        description
+          "Block scaling compression and decompresion method";
+      }
+
+      enum U_LAW {
+        description
+          "u-Law compression and decompresion method";
+      }
+
+      enum VOID_1 {
+        description
+          "Leftover of beamspace, not to be used for IQ data.";
+      }
+
+      enum MODULATION {
+        description
+          "Modulation compression and decompression method";
+      }
+
+      enum BLOCK-FLOATING-POINT-SELECTIVE-RE-SENDING {
+        description
+          "block floating point with selective re sending
+          compression and decompression method";
+      }
+
+      enum MODULATION-COMPRESSION-SELECTIVE-RE-SENDING {
+        description
+          "modulation compression with selective re sending
+          compression and decompression method";
+      }
+      enum BFP-SRES-MASK-IN-SEC-HEADER {
+        description
+          "block floating point with selective re sending
+          compression and decompression method with selective re sending mask in the section header ";
+      }
+
+      enum MOD-SRES-MASK-IN-SEC-HEADER {
+        description
+          "modulation compression with selective re sending
+          compression and decompression method with selective re sending mask in the section header";
+      }
+    }
+    description
+      "Available compression methods for the data.";
+  }
+
+  typedef sinr-compression-method-def {
+    type enumeration {
+      enum BLOCK_FLOATING_POINT {
+        description
+          "Block floating point compression and decompression will be used";
+      }
+
+      enum NO_COMPRESSION {
+        description
+          "No compression will be used";
+      }
+    }
+    description
+      "Available compression methods for the SINR.";
+  }
+
+  grouping compression-method-grouping {
+    description
+      "Grouping for compression method.";
+
+    leaf iq-bitwidth {
+      type uint8;
+      description
+        "Bit-width to be used in compression";
+    }
+
+    leaf compression-method {
+      type compression-method-def;
+      description
+        "Compression method which can be supported by the O-RU";
+    }
+  }
+
+  grouping compression-details {
+    description "";
+
+    leaf iq-bitwidth {
+      type uint8;
+      description
+        "Bitwidth to be used in compression";
+    }
+
+    leaf compression-type {
+      type compression-type-def;
+      mandatory true;
+      description
+        "Compression type that O-DU wants to be supported";
+    }
+
+    leaf bitwidth {
+      when "../compression-type = 'STATIC'";
+      type uint8;
+      status deprecated;
+      description
+        "Bitwidth to be used in compression.
+        This has since been replaced in M-Plane version
+        2.0.0 with the iq-bitwidth schema node";
+    }
+
+    leaf compression-method {
+      type compression-method-def;
+      description
+        "Compression method which can be supported by the O-RU";
+    }
+
+    uses compresion-format-grp {
+      status deprecated;
+    }
+  }
+
+  grouping bf-compression-details {
+    description "Compression formats defined for beamforming";
+
+    leaf iq-bitwidth {
+      type uint8;
+      description
+        "Bitwidth to be used in compression";
+    }
+
+    leaf compression-type {
+      type compression-type-def;
+      mandatory true;
+      description
+        "Compression type that O-DU wants to be supported";
+    }
+
+    leaf bitwidth {
+      when "../compression-type = 'STATIC'";
+      type uint8;
+      status deprecated;
+      description
+        "Bitwidth to be used in compression.
+        This has since been replaced in M-Plane version
+        2.0.0 with the iq-bitwidth schema node";
+    }
+
+    leaf compression-method {
+      type bf-compression-method-def;
+      description
+        "Compression method which can be supported by the beamforming";
+    }
+
+    uses compresion-format-grp {
+      status deprecated;
+    }
+  }
+
+  grouping sinr-compression-details {
+    description "Compression formats defined for SINR";
+
+    leaf sinr-bitwidth {
+      type uint8;
+      description
+        "Bitwidth to be used in compression";
+    }
+
+    leaf sinr-compression-method {
+      type sinr-compression-method-def;
+      description
+        "Compression method which can be supported by the SINR.";
+    }
+
+    leaf sinr-block-size {
+      type uint8;
+      description
+        "Block size used for reporting SINR.
+        If the parameter is absent, then the SINR values are sent without zero-padding
+        i.e., the block size is equal to the number of SINR values
+
+        Please refer to CUS specification clause 7.2.10 for more details.";
+    }
+  }
+
+// *********** Deprecated ***********
+
+  grouping compression-formats {
+    status deprecated;
+    description
+      "Grouping deicated to list compression formats as choice.";
+
+    uses compresion-format-grp {
+      status deprecated;
+    }
+  }
+
+  grouping compresion-format-grp {
+    status deprecated;
+    description
+      "Grouping to for compression format choice";
+
+    choice compression-format {
+      status deprecated;
+      description
+        "Choice of compression format for particular element.
+         Note: This method is deprecated. All should be done as emumeration as details are configured
+         by udCompHdr in CU-Plane messaging.
+         NOTE: Changing the configuration from any compression format to no compression would require
+         a delete-config followed by an edit-config";
+
+      case no-compresison {
+        description "Compression for beam weights is not supported.";
+      }
+
+      case block-floating-point {
+        description "Block floating-point compression and decompression is supported.";
+
+        leaf exponent {
+          type uint8 {
+            range "4";
+          }
+          description "Exponent bit width size in number of bits used when encoding in udCompParam.";
+        }
+      }
+
+      case block-floating-point-selective-re-sending {
+        description
+          "Block floating-point with selective re sending compression and decompression is supported.";
+
+        leaf sres-exponent {
+          type uint8 {
+            range "4";
+          }
+          description "Exponent bit width size in number of bits used when encoding in udCompParam.";
+        }
+      }
+
+      case block-scaling {
+        description "Block scaling compression and decompression is supported.";
+        leaf block-scalar {
+          type uint8;
+            description
+              "Common scaler for compressed PRB";
+        }
+      }
+
+      case u-law {
+        description "u-Law compression and decompression method is supported.";
+        leaf comp-bit-width {
+          type uint8 {
+            range "0..15";
+          }
+          description "Bit with for u-law compression";
+        }
+        leaf comp-shift {
+          type uint8 {
+            range "0..15";
+          }
+          description
+            "the shift applied to the entire PRB";
+        }
+      }
+
+      case beam-space-compression {
+        description "Beamspace compression and decompression is supported. Applies to beamforming weights only.";
+        leaf-list active-beam-space-coeficient-mask {
+          type uint8;
+          description
+            "active beamspace coefficient indices associated with the compressed beamforming vector";
+        }
+        leaf block-scaler {
+          type uint8;
+          description
+            "Common scaler for compressed beamforming coefficients";
+        }
+      }
+
+      case modulation-compression {
+        description "Modulation compression and decompression is supported.";
+        leaf csf {
+          type uint8 {
+            range "0..1";
+          }
+          description "Constellation shift flag";
+        }
+
+        leaf mod-comp-scaler {
+          type uint16 {
+            range "0..32767";
+          }
+          description "Modulation compression scaler value.";
+        }
+      }
+
+      case modulation-compression-selective-re-sending {
+        description "Modulation compression with selective re sending and decompression is supported.";
+        leaf sres-csf {
+          type uint8 {
+            range "0..1";
+          }
+          description "Constellation shift flag";
+        }
+
+        leaf sres-mod-comp-scaler {
+          type uint16 {
+            range "0..32767";
+          }
+          description "Modulation compression scaler value.";
+        }
+      }
+
+    }
+  }
+
+  grouping compression-params {
+    status deprecated;
+    description
+      "Parameters to define compression";
+
+    leaf compression-type {
+      type compression-type-def;
+      mandatory true;
+      description
+        "Compression type that O-DU wants to be supported";
+    }
+
+    leaf bitwidth {
+      when "../compression-type = 'STATIC'";
+      type uint8;
+      status deprecated;
+      description
+        "Bit-width to be used in compression.
+        This has since been replaced in M-Plane version
+        2.0.0 with the iq-bitwidth schema node";
+    }
+
+    uses compression-formats {
+      status deprecated;
+    }
+  }
+
+  grouping compression-parameters {
+    status deprecated;
+    description
+      "Parameters used to define description type";
+
+    leaf iq-bitwidth {
+      type uint8;
+      description
+        "Bit-width to be used in compression";
+    }
+
+    uses compression-formats {
+      status deprecated;
+    }
+  }
+
+  grouping format-of-iq-sample {
+    status deprecated;
+    description
+      "Indicates module capabilities about IQ samples";
+
+    leaf dynamic-compression-supported {
+      type boolean;
+
+      description
+        "Informs if radio supports dynamic compression method";
+    }
+
+    leaf realtime-variable-bit-width-supported {
+      type boolean;
+
+      description
+        "Informs if O-RU supports real-time variable bit with";
+    }
+
+    list compression-method-supported {
+      status deprecated;
+      uses compression-parameters {
+        status deprecated;
+      }
+
+      description
+        "List of supported compression methods by O-RU
+         Note: if O-RU supports different compression methods per endpoint
+               then please refer do endpoints to have information what
+               exactly is supported on a particular endpoint";
+    }
+
+    leaf syminc-supported {
+      type boolean;
+
+      description
+        "Informs if symbol number increment command in a C-Plane is
+         supported or not";
+    }
+
+    leaf regularization-factor-se-supported {
+      type boolean;
+
+      description
+        "Informs if regularizationFactor in section type 5 is
+         supported(true) or not(false)";
+    }
+
+    leaf little-endian-supported {
+      type boolean;
+      default false;
+
+      description
+        "All O-RUs support bigendian byte order. This node informs if module supports the
+        the optional capability for little endian byte order for C/U plane data flows.
+
+        Note - little endian support does not invalidate bigendian support.";
+    }
+  }
+
+// *********** Deprecated End ***********
+
+}

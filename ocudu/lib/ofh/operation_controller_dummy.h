@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/ofh/ofh_controller.h"
+
+namespace ocudu {
+namespace ofh {
+
+/// Operation controller dummy implementation.
+class operation_controller_dummy : public operation_controller
+{
+public:
+  // See interface for documentation.
+  void start() override {}
+
+  // See interface for documentation.
+  void stop() override {}
+};
+
+} // namespace ofh
+} // namespace ocudu

@@ -1,0 +1,82 @@
+/*
+ * SPDX-License-Identifier: LicenseRef-CSSL-1.0
+ */
+
+/*!
+ * \brief s1ap UE context management within eNB
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#include "tree.h"
+
+#include "intertask_interface.h"
+
+#include "s1ap_common.h"
+#include "s1ap_eNB_defs.h"
+#include "s1ap_eNB_ue_context.h"
+
+int s1ap_eNB_compare_eNB_ue_s1ap_id(
+  struct s1ap_eNB_ue_context_s *p1, struct s1ap_eNB_ue_context_s *p2)
+{
+  if (p1->eNB_ue_s1ap_id > p2->eNB_ue_s1ap_id) {
+    return 1;
+  }
+
+  if (p1->eNB_ue_s1ap_id < p2->eNB_ue_s1ap_id) {
+    return -1;
+  }
+
+  return 0;
+}
+
+/* Generate the tree management functions */
+RB_GENERATE(s1ap_ue_map, s1ap_eNB_ue_context_s, entries,
+            s1ap_eNB_compare_eNB_ue_s1ap_id);
+
+struct s1ap_eNB_ue_context_s *s1ap_eNB_allocate_new_UE_context(void)
+{
+  struct s1ap_eNB_ue_context_s *new_p;
+
+  new_p = malloc(sizeof(struct s1ap_eNB_ue_context_s));
+
+  if (new_p == NULL) {
+    S1AP_ERROR("Cannot allocate new ue context\n");
+    return NULL;
+  }
+
+  memset(new_p, 0, sizeof(struct s1ap_eNB_ue_context_s));
+
+  return new_p;
+}
+
+struct s1ap_eNB_ue_context_s *s1ap_eNB_get_ue_context(
+  s1ap_eNB_instance_t *instance_p,
+  uint32_t eNB_ue_s1ap_id)
+{
+  s1ap_eNB_ue_context_t temp;
+
+  memset(&temp, 0, sizeof(struct s1ap_eNB_ue_context_s));
+
+  /* eNB ue s1ap id = 24 bits wide */
+  temp.eNB_ue_s1ap_id = eNB_ue_s1ap_id & 0x00FFFFFF;
+
+  return RB_FIND(s1ap_ue_map, &instance_p->s1ap_ue_head, &temp);
+}
+
+void s1ap_eNB_free_ue_context(struct s1ap_eNB_ue_context_s *ue_context_p)
+{
+  if (ue_context_p == NULL) {
+    S1AP_ERROR("Trying to free a NULL context\n");
+    return;
+  }
+
+  /* TODO: check that context is currently not in the tree of known
+   * contexts.
+   */
+
+  free(ue_context_p);
+}

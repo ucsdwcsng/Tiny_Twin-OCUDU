@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/byte_buffer.h"
+#include "ocudu/f1ap/f1ap_ue_id_types.h"
+#include "ocudu/ran/rb_id.h"
+#include <memory>
+
+namespace ocudu {
+
+struct f1ap_message;
+
+namespace ocucp {
+
+class cu_cp_f1c_handler;
+
+/// Mock class for the interface between DU and CU-CP.
+class mock_du
+{
+public:
+  virtual ~mock_du() = default;
+
+  /// Push F1AP UL PDU from DU to CU-CP.
+  virtual void push_ul_pdu(const f1ap_message& msg) = 0;
+
+  /// Push RRC UL DCCH message from DU to CU-CP.
+  virtual void push_rrc_ul_dcch_message(gnb_du_ue_f1ap_id_t du_ue_id, srb_id_t srb_id, byte_buffer ul_dcch_msg) = 0;
+
+  /// \brief Pop F1AP DL PDU received by this DU and sent by CU-CP.
+  ///
+  /// \param[out] msg DL PDU popped.
+  /// \return return true if a PDU was popped, false otherwise.
+  virtual bool try_pop_dl_pdu(f1ap_message& msg) = 0;
+};
+
+/// Parameters passed to mock DU.
+struct mock_du_params {
+  /// \brief CU-CP DU repository passed to mock DU.
+  ///
+  /// The mock DU will use this to forward messages to CU-CP.
+  cu_cp_f1c_handler& cu_cp;
+};
+
+/// Creates an emulator of a DU from the perspective of the CU-CP.
+std::unique_ptr<mock_du> create_mock_du(mock_du_params params);
+
+} // namespace ocucp
+} // namespace ocudu

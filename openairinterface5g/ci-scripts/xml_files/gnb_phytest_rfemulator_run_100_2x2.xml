@@ -1,0 +1,54 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>gNB-PHY-Test-100-2x2-RFemu</htmlTabRef>
+  <htmlTabName>Timing phytest 100 MHz 2x2 RFemulator</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Disable Sleep States</desc>
+    <node>caracal</node>
+    <command>sudo cpupower idle-set -D 0</command>
+  </testCase>
+
+  <testCase>
+    <class>Initialize_eNB</class>
+    <desc>Initialize gNB USRP</desc>
+    <node>caracal</node>
+    <Initialize_eNB_args>-O ci-scripts/conf_files/gnb.band79.273prb.usrpn300.phytest-dora.conf --phy-test -q -U 768 -T 273 -t 23 -D 127 -m 23 -M 273 -l 2 --device.name rf_emulator --rf_emulator.noise_level_dBFS -36 --log_config.global_log_options level,nocolor,time</Initialize_eNB_args>
+    <air_interface>NR</air_interface>
+    <cmd_prefix>numactl --cpunodebind=netdev:enp94s0f0np0 --membind=netdev:enp94s0f0np0</cmd_prefix>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>60</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>AnalyzeRTStats</class>
+    <desc>Analyze Real-Time Stats</desc>
+    <stats_cfg>datalog_rt_stats.100.2x2.yaml</stats_cfg>
+    <node>caracal</node>
+  </testCase>
+
+  <testCase>
+    <class>Terminate_eNB</class>
+    <node>caracal</node>
+    <always_exec>true</always_exec>
+    <desc>Terminate gNB</desc>
+    <analysis>
+      <services>nr-softmodem=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <always_exec>true</always_exec>
+    <desc>Enable Sleep States</desc>
+    <node>caracal</node>
+    <command>sudo cpupower idle-set -E</command>
+  </testCase>
+
+</testCaseList>

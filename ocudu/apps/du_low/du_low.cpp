@@ -1,0 +1,315 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "apps/helpers/metrics/metrics_helpers.h"
+#include "apps/services/app_execution_metrics/executor_metrics_manager.h"
+#include "apps/services/app_resource_usage/app_resource_usage.h"
+#include "apps/services/application_message_banners.h"
+#include "apps/services/application_tracer.h"
+#include "apps/services/cmdline/cmdline_command_dispatcher.h"
+#include "apps/services/metrics/metrics_manager.h"
+#include "apps/services/metrics/metrics_notifier_proxy.h"
+#include "apps/services/remote_control/remote_server.h"
+#include "apps/services/worker_manager/worker_manager.h"
+#include "apps/units/application_unit.h"
+#include "apps/units/flexible_o_du/split_6/o_du_low/split6_o_du_low_application_unit_impl.h"
+#include "du_low_appconfig.h"
+#include "du_low_appconfig_cli11_schema.h"
+#include "du_low_appconfig_translators.h"
+#include "du_low_appconfig_validators.h"
+#include "du_low_appconfig_yaml_writer.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/adt/scope_exit.h"
+#include "ocudu/support/backtrace.h"
+#include "ocudu/support/config_parsers.h"
+#include "ocudu/support/cpu_features.h"
+#include "ocudu/support/io/io_broker_factory.h"
+#include "ocudu/support/io/io_timer_source.h"
+#include "ocudu/support/signal_handling.h"
+#include "ocudu/support/signal_observer.h"
+#include "ocudu/support/sysinfo.h"
+#include "ocudu/support/versioning/build_info.h"
+#include "ocudu/support/versioning/version.h"
+#include <atomic>
+#ifdef DPDK_FOUND
+#include "ocudu/hal/dpdk/dpdk_eal_factory.h"
+#endif
+// Include ThreadSanitizer (TSAN) options if thread sanitization is enabled.
+// This include is not unused - it helps prevent false alarms from the thread sanitizer.
+#include "ocudu/support/tsan_options.h"
+
+using namespace ocudu;
+
+/// \file
+/// \brief Application of a distributed unit (DU) that runs the low part (PHY) of the split 6.
+
+static std::string config_file;
+
+/// Flag that indicates if the application is running or being shutdown.
+static std::atomic<bool> is_app_running = {true};
+/// Maximum number of configuration files allowed to be concatenated in the command line.
+static constexpr unsigned MAX_CONFIG_FILES = 10;
+
+static void populate_cli11_generic_args(CLI::App& app)
+{
+  fmt::memory_buffer buffer;
+  format_to(std::back_inserter(buffer), "OCUDU 5G DU low version {} ({})", get_version(), get_build_hash());
+  app.set_version_flag("-v,--version", ocudu::to_c_str(buffer));
+  app.set_config("-c,", config_file, "Read config from file", false)->expected(1, MAX_CONFIG_FILES);
+}
+
+/// Function to call when the application is interrupted.
+static void interrupt_signal_handler(int signal)
+{
+  is_app_running = false;
+}
+
+static signal_dispatcher cleanup_signal_dispatcher;
+
+/// Function to call when the application is going to be forcefully shutdown.
+static void cleanup_signal_handler(int signal)
+{
+  cleanup_signal_dispatcher.notify_signal(signal);
+  ocudulog::flush();
+}
+
+/// Function to call when an error is reported by the application.
+static void app_error_report_handler()
+{
+  ocudulog::flush();
+}
+
+static void initialize_log(const std::string& filename)
+{
+  ocudulog::sink* log_sink =
+      (filename == "stdout") ? ocudulog::create_stdout_sink() : ocudulog::create_file_sink(filename);
+  if (log_sink == nullptr) {
+    report_error("Could not create application main log sink.\n");
+  }
+  ocudulog::set_default_sink(*log_sink);
+  ocudulog::init();
+}
+
+static void register_app_logs(const du_low_appconfig& du_cfg, application_unit& du_low_app_unit)
+{
+  const logger_appconfig& log_cfg = du_cfg.log_cfg;
+  // Set log-level of app and all non-layer specific components to app level.
+
+  auto& logger = ocudulog::fetch_basic_logger("ALL", false);
+  logger.set_level(log_cfg.lib_level);
+  logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& app_logger = ocudulog::fetch_basic_logger("APP", false);
+  app_logger.set_level(ocudulog::basic_levels::info);
+  app_services::application_message_banners::log_build_info(app_logger);
+  app_logger.set_level(log_cfg.all_level);
+  app_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  auto& config_logger = ocudulog::fetch_basic_logger("CONFIG", false);
+  config_logger.set_level(log_cfg.config_level);
+  config_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  // Metrics log channels.
+  const app_helpers::metrics_config& metrics_cfg = du_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg;
+  app_helpers::initialize_metrics_log_channels(metrics_cfg, log_cfg.hex_max_size);
+
+  // Register units logs.
+  du_low_app_unit.on_loggers_registration();
+}
+
+int main(int argc, char** argv)
+{
+  // Set the application error handler.
+  set_error_handler(app_error_report_handler);
+
+  static constexpr std::string_view app_name = "DU low";
+  app_services::application_message_banners::announce_app_and_version(app_name);
+
+  // Set interrupt and cleanup signal handlers.
+  register_interrupt_signal_handler(interrupt_signal_handler);
+  register_cleanup_signal_handler(cleanup_signal_handler);
+
+  // Enable backtrace.
+  enable_backtrace();
+
+  // Setup and configure config parsing.
+  CLI::App app("OCUDU DU low application");
+  app.config_formatter(create_yaml_config_parser());
+  app.allow_config_extras(CLI::config_extras_mode::error);
+  // Fill the generic application arguments to parse.
+  populate_cli11_generic_args(app);
+
+  du_low_appconfig du_low_cfg;
+  // Configure CLI11 with the DU application configuration schema.
+  configure_cli11_with_du_low_appconfig_schema(app, du_low_cfg);
+
+  auto o_du_app_unit = create_flexible_o_du_low_application_unit(app_name);
+  o_du_app_unit->on_parsing_configuration_registration(app);
+
+  // Set the callback for the app calling all the autoderivation functions.
+  app.callback([&app, &du_low_cfg, &o_du_app_unit]() {
+    autoderive_du_low_parameters_after_parsing(app, du_low_cfg);
+    o_du_app_unit->on_configuration_parameters_autoderivation(app);
+  });
+
+  // Parse arguments.
+  CLI11_PARSE(app, argc, argv);
+
+  // Dry run mode, exit.
+  if (du_low_cfg.enable_dryrun) {
+    return 0;
+  }
+
+  if (du_low_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg.enable_json_metrics &&
+      !du_low_cfg.remote_control_config.enabled) {
+    fmt::println("NOTE: No JSON metrics will be generated as the remote server is disabled");
+  }
+
+  // Check the modified configuration.
+  if (!validate_du_low_appconfig(du_low_cfg) || !o_du_app_unit->on_configuration_validation()) {
+    report_error("Invalid configuration detected.\n");
+  }
+
+  // Set up logging.
+  initialize_log(du_low_cfg.log_cfg.filename);
+  auto log_flusher = make_scope_exit([]() { ocudulog::flush(); });
+  register_app_logs(du_low_cfg, *o_du_app_unit);
+
+  // Check the metrics and metrics consumers.
+  ocudulog::basic_logger& app_logger = ocudulog::fetch_basic_logger("APP");
+  bool metrics_enabled = o_du_app_unit->are_metrics_enabled() || du_low_cfg.metrics_cfg.rusage_config.enable_app_usage;
+
+  if (!metrics_enabled && du_low_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg.enabled()) {
+    app_logger.warning("Logger or JSON metrics output enabled but no metrics will be reported as no layer was enabled");
+    fmt::println("Logger or JSON metrics output enabled but no metrics will be reported as no layer was enabled");
+  }
+
+  // Log input configuration.
+  ocudulog::basic_logger& config_logger = ocudulog::fetch_basic_logger("CONFIG");
+  if (config_logger.debug.enabled()) {
+    YAML::Node node;
+    fill_du_low_appconfig_in_yaml_schema(node, du_low_cfg);
+    o_du_app_unit->dump_config(node);
+    config_logger.debug("DU-low input configuration (all values): \n{}", YAML::Dump(node));
+  } else {
+    config_logger.info("DU-low input configuration (only non-default values): \n{}", app.config_to_str(false, false));
+  }
+
+  app_services::application_tracer app_tracer;
+  if (not du_low_cfg.trace_cfg.filename.empty()) {
+    app_tracer.enable_tracer(du_low_cfg.trace_cfg.filename,
+                             du_low_cfg.trace_cfg.max_tracing_events_per_file,
+                             du_low_cfg.trace_cfg.nof_tracing_events_before_severe,
+                             app_logger);
+  }
+
+  // Log CPU architecture.
+  cpu_architecture_info::get().print_cpu_info(app_logger);
+
+  // Check and log included CPU features and check support by current CPU
+  if (cpu_supports_included_features()) {
+    app_logger.debug("Required CPU features: {}", get_cpu_feature_info());
+  } else {
+    // Quit here until we complete selection of the best matching implementation for the current CPU at runtime.
+    app_logger.error("The CPU does not support the required CPU features that were configured during compile time: {}",
+                     get_cpu_feature_info());
+    report_error("The CPU does not support the required CPU features that were configured during compile time: {}\n",
+                 get_cpu_feature_info());
+  }
+
+  // Check some common causes of performance issues and print a warning if required.
+  check_cpu_governor(app_logger);
+  check_drm_kms_polling(app_logger);
+
+#ifdef DPDK_FOUND
+  std::unique_ptr<dpdk::dpdk_eal> eal;
+  if (du_low_cfg.hal_config) {
+    // Prepend the application name in argv[0] as it is expected by EAL.
+    eal = dpdk::create_dpdk_eal(std::string(argv[0]) + " " + du_low_cfg.hal_config->eal_args,
+                                ocudulog::fetch_basic_logger("EAL", false));
+  }
+#endif
+
+  // Create manager of timers for DU, which will be driven by the PHY slot ticks.
+  timer_manager app_timers{256};
+
+  app_services::metrics_notifier_proxy_impl metrics_notifier_forwarder;
+
+  // Instantiate executor metrics service.
+  app_services::executor_metrics_service_and_metrics exec_metrics_service = build_executor_metrics_service(
+      metrics_notifier_forwarder, app_timers, du_low_cfg.metrics_cfg.executors_metrics_cfg, nullptr);
+  std::vector<app_services::metrics_config> app_metrics = std::move(exec_metrics_service.metrics);
+
+  // Instantiate worker manager.
+  worker_manager_config worker_manager_cfg;
+  fill_du_low_worker_manager_config(worker_manager_cfg, du_low_cfg);
+  o_du_app_unit->fill_worker_manager_config(worker_manager_cfg);
+  worker_manager_cfg.app_timers                    = &app_timers;
+  worker_manager_cfg.exec_metrics_channel_registry = exec_metrics_service.channel_registry;
+
+  worker_manager workers{worker_manager_cfg};
+
+  // Set layer-specific pcap options.
+  const auto& main_pool_cpu_mask = du_low_cfg.expert_execution_cfg.affinities.main_pool_cpu_cfg.mask;
+
+  // Create IO broker.
+  io_broker_config           io_broker_cfg(os_thread_realtime_priority::min() + 5, main_pool_cpu_mask);
+  std::unique_ptr<io_broker> epoll_broker = create_io_broker(io_broker_type::epoll, io_broker_cfg);
+
+  // Create time source that ticks the timers.
+  std::optional<io_timer_source> time_source(
+      std::in_place_t{}, app_timers, *epoll_broker, workers.get_timer_source_executor(), std::chrono::milliseconds{1});
+
+  // Register the commands.
+  app_services::cmdline_command_dispatcher command_parser(*epoll_broker, workers.get_cmd_line_executor(), {});
+
+  // Create app-level resource usage service and metrics.
+  auto app_resource_usage_service = app_services::build_app_resource_usage_service(
+      metrics_notifier_forwarder, du_low_cfg.metrics_cfg.rusage_config, ocudulog::fetch_basic_logger("APP"), nullptr);
+
+  for (auto& metric : app_resource_usage_service.metrics) {
+    app_metrics.push_back(std::move(metric));
+  }
+
+  auto du = o_du_app_unit->create_flexible_o_du_low(
+      workers, metrics_notifier_forwarder, nullptr, app_timers, ocudulog::fetch_basic_logger("APP"));
+
+  for (auto& metric : du.metrics) {
+    app_metrics.push_back(std::move(metric));
+  }
+
+  // Only DU has metrics now.
+  app_services::metrics_manager metrics_mngr(
+      ocudulog::fetch_basic_logger("APP"),
+      workers.get_metrics_executor(),
+      app_metrics,
+      app_timers,
+      std::chrono::milliseconds(du_low_cfg.metrics_cfg.metrics_service_cfg.app_usage_report_period));
+
+  // Connect the forwarder to the metrics manager.
+  metrics_notifier_forwarder.connect(metrics_mngr);
+
+  // :TODO: how to manage cmdline and remote commands??
+
+  metrics_mngr.start();
+  du.odu_low->start();
+
+  {
+    app_services::application_message_banners app_banner(
+        app_name, du_low_cfg.log_cfg.filename, ocudulog::fetch_basic_logger("APP"), du_low_cfg.log_cfg.all_level);
+
+    auto exec_metrics_session = exec_metrics_service.service
+                                    ? exec_metrics_service.service->create_session(workers.get_metrics_executor())
+                                    : app_services::app_executor_metrics_service::create_dummy_session();
+
+    while (is_app_running) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+  }
+
+  du.odu_low->stop();
+  metrics_mngr.stop();
+
+  return 0;
+}

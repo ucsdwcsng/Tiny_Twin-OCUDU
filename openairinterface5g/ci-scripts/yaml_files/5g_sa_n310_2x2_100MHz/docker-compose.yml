@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+
+services:
+    oai-gnb:
+        image: ${REGISTRY-oaisoftwarealliance/}${GNB_IMG:-oai-gnb}:${TAG:-develop}
+        network_mode: "host"
+        container_name: oai-gnb
+        cap_drop:
+            - ALL
+        cap_add:
+            - SYS_NICE
+            - IPC_LOCK
+        environment:
+            TZ: Europe/Paris
+            USE_ADDITIONAL_OPTIONS: --log_config.global_log_options level,nocolor,time
+        volumes:
+          - ../../conf_files/gnb.sa.band77.273prb.usrpn310.2x2.conf:/opt/oai-gnb/etc/gnb.conf
+        healthcheck:
+            test: /bin/bash -c "/opt/oai-gnb/bin/check-prach-io.sh"
+            start_period: 15s
+            start_interval: 500ms
+            interval: 5s
+            timeout: 5s
+            retries: 5

@@ -1,0 +1,161 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "scheduler.h"
+#include "helpers.h"
+#include "json_generators/generator_helpers.h"
+#include "ocudu/scheduler/scheduler_metrics.h"
+
+using namespace ocudu;
+using namespace app_helpers;
+using namespace json_generators;
+
+static const char* event_to_string(scheduler_cell_event::event_type ev)
+{
+  switch (ev) {
+    case scheduler_cell_event::event_type::ue_add:
+      return "ue_create";
+    case scheduler_cell_event::event_type::ue_reconf:
+      return "ue_reconf";
+    case scheduler_cell_event::event_type::ue_rem:
+      return "ue_rem";
+    default:
+      break;
+  }
+  return "invalid";
+}
+
+namespace ocudu {
+
+void to_json(nlohmann::json& json, const scheduler_cell_event& metrics)
+{
+  json["slot"]       = metrics.slot;
+  json["rnti"]       = metrics.rnti;
+  json["event_type"] = event_to_string(metrics.type);
+}
+
+void to_json(nlohmann::json& json, const scheduler_ue_metrics& metrics)
+{
+  json["ue"]   = metrics.ue_index;
+  json["pci"]  = metrics.pci;
+  json["rnti"] = metrics.rnti;
+  json["cqi"]  = (metrics.cqi_stats.get_nof_observations() > 0)
+                     ? static_cast<uint8_t>(std::round(metrics.cqi_stats.get_mean()))
+                     : -1;
+
+  json["dl_ri"] = metrics.dl_ri_stats.get_nof_observations() > 0 ? metrics.dl_ri_stats.get_mean() : 1;
+  json["ul_ri"] = metrics.ul_ri_stats.get_nof_observations() > 0 ? metrics.ul_ri_stats.get_mean() : 1;
+
+  json["dl_mcs"]     = metrics.dl_mcs.value();
+  json["dl_brate"]   = metrics.dl_brate_kbps * 1e3;
+  json["dl_nof_ok"]  = metrics.dl_nof_ok;
+  json["dl_nof_nok"] = metrics.dl_nof_nok;
+  json["dl_bs"]      = metrics.dl_bs;
+  if (!std::isnan(metrics.pusch_snr_db) && !iszero(metrics.pusch_snr_db)) {
+    json["pusch_snr_db"] = std::clamp(metrics.pusch_snr_db, -99.9f, 99.9f);
+  }
+  if (!std::isnan(metrics.pusch_rsrp_db) && !iszero(metrics.pusch_rsrp_db)) {
+    json["pusch_rsrp_db"] = std::clamp(metrics.pusch_rsrp_db, -99.9f, 0.0f);
+  }
+  if (!std::isnan(metrics.pucch_snr_db) && !iszero(metrics.pucch_snr_db)) {
+    json["pucch_snr_db"] = std::clamp(metrics.pucch_snr_db, -99.9f, 99.9f);
+  }
+
+  json["ta_ns"] =
+      (metrics.ta_stats.get_nof_observations() > 0) ? std::optional{metrics.ta_stats.get_mean() * 1e9} : 0.0f;
+  json["pusch_ta_ns"] = (metrics.pusch_ta_stats.get_nof_observations() > 0)
+                            ? std::optional{metrics.pusch_ta_stats.get_mean() * 1e9}
+                            : 0.0f;
+  json["pucch_ta_ns"] = (metrics.pucch_ta_stats.get_nof_observations() > 0)
+                            ? std::optional{metrics.pucch_ta_stats.get_mean() * 1e9}
+                            : 0.0f;
+  json["srs_ta_ns"] =
+      (metrics.srs_ta_stats.get_nof_observations() > 0) ? std::optional{metrics.srs_ta_stats.get_mean() * 1e9} : 0.0f;
+  json["ul_mcs"]                       = metrics.ul_mcs.value();
+  json["ul_brate"]                     = metrics.ul_brate_kbps * 1e3;
+  json["ul_nof_ok"]                    = metrics.ul_nof_ok;
+  json["ul_nof_nok"]                   = metrics.ul_nof_nok;
+  json["last_phr"]                     = metrics.last_phr.has_value() ? metrics.last_phr : 0;
+  json["max_pusch_distance"]           = metrics.max_pusch_distance_ms.has_value() ? metrics.max_pusch_distance_ms : 0;
+  json["max_pdsch_distance"]           = metrics.max_pdsch_distance_ms.has_value() ? metrics.max_pdsch_distance_ms : 0;
+  json["bsr"]                          = metrics.bsr;
+  json["nof_pucch_f0f1_invalid_harqs"] = metrics.nof_pucch_f0f1_invalid_harqs;
+  json["nof_pucch_f2f3f4_invalid_harqs"] = metrics.nof_pucch_f2f3f4_invalid_harqs;
+  json["nof_pucch_f2f3f4_invalid_csis"]  = metrics.nof_pucch_f2f3f4_invalid_csis;
+  json["nof_pusch_invalid_harqs"]        = metrics.nof_pusch_invalid_harqs;
+  json["nof_pusch_invalid_csis"]         = metrics.nof_pusch_invalid_csis;
+  json["avg_ce_delay"]                   = metrics.avg_ce_delay_ms.has_value() ? metrics.avg_ce_delay_ms : 0.0f;
+  json["max_ce_delay"]                   = metrics.max_ce_delay_ms.has_value() ? metrics.max_ce_delay_ms : 0.0f;
+  json["avg_crc_delay"]                  = metrics.avg_crc_delay_ms.has_value() ? metrics.avg_crc_delay_ms : 0.0f;
+  json["max_crc_delay"]                  = metrics.max_crc_delay_ms.has_value() ? metrics.max_crc_delay_ms : 0.0f;
+  json["avg_pusch_harq_delay"] = metrics.avg_pusch_harq_delay_ms.has_value() ? metrics.avg_pusch_harq_delay_ms : 0.0f;
+  json["max_pusch_harq_delay"] = metrics.max_pusch_harq_delay_ms.has_value() ? metrics.max_pusch_harq_delay_ms : 0.0f;
+  json["avg_pucch_harq_delay"] = metrics.avg_pucch_harq_delay_ms.has_value() ? metrics.avg_pucch_harq_delay_ms : 0.0f;
+  json["max_pucch_harq_delay"] = metrics.max_pucch_harq_delay_ms.has_value() ? metrics.max_pucch_harq_delay_ms : 0.0f;
+  json["avg_sr_to_pusch_delay"] =
+      metrics.avg_sr_to_pusch_delay_ms.has_value() ? metrics.avg_sr_to_pusch_delay_ms : 0.0f;
+  json["max_sr_to_pusch_delay"] =
+      metrics.max_sr_to_pusch_delay_ms.has_value() ? metrics.max_sr_to_pusch_delay_ms : 0.0f;
+  json["max_dl_lcid0_flush_delay"] =
+      metrics.max_dl_lcid0_flush_delay_ms.has_value() ? metrics.max_dl_lcid0_flush_delay_ms : 0.0f;
+  json["max_dl_lcid1_flush_delay"] =
+      metrics.max_dl_lcid1_flush_delay_ms.has_value() ? metrics.max_dl_lcid1_flush_delay_ms : 0.0f;
+}
+
+void to_json(nlohmann::json& json, const scheduler_cell_metrics& metrics)
+{
+  // Cell metrics.
+  auto& cell_json                         = json["cell_metrics"];
+  cell_json["pci"]                        = metrics.pci;
+  cell_json["error_indication_count"]     = metrics.nof_error_indications;
+  cell_json["average_latency"]            = metrics.average_decision_latency.count();
+  cell_json["max_latency"]                = metrics.max_decision_latency.count();
+  cell_json["failed_dl_pdcch"]            = metrics.failed_dl_pdcch;
+  cell_json["failed_ul_pdcch"]            = metrics.failed_ul_pdcch;
+  cell_json["failed_common_dl_pdcch"]     = metrics.failed_common_dl_pdcch;
+  cell_json["failed_common_ul_pdcch"]     = metrics.failed_common_ul_pdcch;
+  cell_json["nof_failed_uci_allocs"]      = metrics.nof_failed_uci_allocs;
+  cell_json["failed_fallback_uci_allocs"] = metrics.failed_fallback_uci_allocs;
+  cell_json["latency_histogram"]          = metrics.latency_histogram;
+  cell_json["msg3_nof_ok"]                = metrics.nof_msg3_ok;
+  cell_json["msg3_nof_nok"]               = metrics.nof_msg3_nok;
+  cell_json["nof_conres_timer_expired"]   = metrics.nof_conres_timer_expired;
+  cell_json["nof_conres_ce_never_acked"]  = metrics.nof_conres_ce_never_acked;
+  cell_json["total_prach_preambles"]      = metrics.total_prach_preambles;
+  cell_json["two_step_prachs_detected"]   = metrics.two_step_prachs_detected;
+  cell_json["avg_prach_delay"] = metrics.avg_prach_delay_slots.has_value() ? metrics.avg_prach_delay_slots : 0.0f;
+  cell_json["late_dl_harqs"]   = metrics.nof_failed_pdsch_allocs_late_harqs;
+  cell_json["late_ul_harqs"]   = metrics.nof_failed_pusch_allocs_late_harqs;
+  cell_json["pucch_tot_rb_usage_avg"] = metrics.pucch_tot_rb_usage_avg;
+  if (metrics.pusch_prbs_used_per_tdd_slot_idx.size()) {
+    cell_json["pusch_prbs_used_per_tdd_slot_idx"] = metrics.pusch_prbs_used_per_tdd_slot_idx;
+  }
+  if (metrics.pdsch_prbs_used_per_tdd_slot_idx.size()) {
+    cell_json["pdsch_prbs_used_per_tdd_slot_idx"] = metrics.pdsch_prbs_used_per_tdd_slot_idx;
+  }
+
+  if (metrics.report_ue_metrics and not metrics.ue_metrics.empty()) {
+    json["ue_list"] = metrics.ue_metrics;
+  }
+  if (!metrics.events.empty()) {
+    json["event_list"] = metrics.events;
+  }
+}
+
+} // namespace ocudu
+
+nlohmann::json ocudu::app_helpers::json_generators::generate(const scheduler_metrics_report& metrics)
+{
+  nlohmann::json json;
+
+  json["timestamp"] = get_time_stamp();
+  json["cells"]     = metrics.cells;
+
+  return json;
+}
+
+std::string ocudu::app_helpers::json_generators::generate_string(const scheduler_metrics_report& metrics, int indent)
+{
+  return generate(metrics).dump(indent);
+}

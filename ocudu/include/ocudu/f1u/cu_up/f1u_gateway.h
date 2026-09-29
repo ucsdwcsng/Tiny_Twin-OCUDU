@@ -1,0 +1,79 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/f1u/cu_up/f1u_bearer.h"
+#include "ocudu/f1u/cu_up/f1u_config.h"
+#include "ocudu/f1u/cu_up/f1u_tx_pdu_notifier.h"
+#include "ocudu/ran/qos/five_qi.h"
+#include "ocudu/ran/rb_id.h"
+#include "ocudu/ran/s_nssai.h"
+#include "ocudu/ran/up_transport_layer_info.h"
+#include "ocudu/support/executors/task_executor.h"
+
+namespace ocudu {
+
+/// This class provides a notifier for the RX bearer
+/// inside the CU-UP F1-U gateway. This provides an adapter
+/// to the NR-U bearer to pass SDUs into.
+class f1u_cu_up_gateway_bearer_rx_notifier
+{
+public:
+  virtual ~f1u_cu_up_gateway_bearer_rx_notifier() = default;
+
+  virtual void on_new_pdu(nru_ul_message msg) = 0;
+};
+
+/// This class provides the interface for an F1-U GW bearer
+class f1u_cu_up_gateway_bearer : public ocuup::f1u_tx_pdu_notifier
+{
+public:
+  virtual void                  stop()                   = 0;
+  virtual expected<std::string> get_bind_address() const = 0;
+};
+
+/// This class will be used to provide the interfaces to
+/// the CU-UP to create and manage F1-U bearers.
+class f1u_cu_up_gateway : public ocuup::f1u_bearer_disconnector
+{
+public:
+  f1u_cu_up_gateway()                                    = default;
+  ~f1u_cu_up_gateway() override                          = default;
+  f1u_cu_up_gateway(const f1u_cu_up_gateway&)            = default;
+  f1u_cu_up_gateway& operator=(const f1u_cu_up_gateway&) = default;
+  f1u_cu_up_gateway(f1u_cu_up_gateway&&)                 = default;
+  f1u_cu_up_gateway& operator=(f1u_cu_up_gateway&&)      = default;
+
+  virtual std::unique_ptr<f1u_cu_up_gateway_bearer> create_cu_bearer(uint32_t                              ue_index,
+                                                                     s_nssai_t                             s_nssai,
+                                                                     drb_id_t                              drb_id,
+                                                                     five_qi_t                             five_qi,
+                                                                     const ocuup::f1u_config&              config,
+                                                                     const gtpu_teid_t&                    ul_teid,
+                                                                     f1u_cu_up_gateway_bearer_rx_notifier& rx_notifier,
+                                                                     task_executor&                        ul_exec) = 0;
+
+  virtual void attach_dl_teid(const up_transport_layer_info& ul_up_tnl_info,
+                              const up_transport_layer_info& dl_up_tnl_info) = 0;
+
+  virtual void stop() = 0;
+};
+
+/// This class will be used to provide the interfaces to
+/// the CU-UP to create and manage F1-U bearers.
+class f1u_cu_up_udp_gateway : public f1u_cu_up_gateway
+{
+public:
+  f1u_cu_up_udp_gateway()                                        = default;
+  ~f1u_cu_up_udp_gateway() override                              = default;
+  f1u_cu_up_udp_gateway(const f1u_cu_up_udp_gateway&)            = default;
+  f1u_cu_up_udp_gateway& operator=(const f1u_cu_up_udp_gateway&) = default;
+  f1u_cu_up_udp_gateway(f1u_cu_up_udp_gateway&&)                 = default;
+  f1u_cu_up_udp_gateway& operator=(f1u_cu_up_udp_gateway&&)      = default;
+
+  virtual std::optional<uint16_t> get_bind_port() const = 0;
+};
+
+} // namespace ocudu

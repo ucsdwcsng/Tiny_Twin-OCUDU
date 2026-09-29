@@ -1,0 +1,355 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ldpc_rate_matcher_impl.h"
+#include "ldpc_luts_impl.h"
+#include "ocudu/adt/interval.h"
+#include "ocudu/ocuduvec/bit.h"
+#include "ocudu/ocuduvec/compare.h"
+#include "ocudu/ocuduvec/copy.h"
+#include "ocudu/support/ocudu_assert.h"
+
+using namespace ocudu;
+using namespace ocudu::ldpc;
+
+static constexpr std::array<double, 4> shift_factor_bg1 = {0, 17, 33, 56};
+static constexpr std::array<double, 4> shift_factor_bg2 = {0, 13, 25, 43};
+
+void ldpc_rate_matcher_impl::init(const codeblock_metadata& cfg, unsigned block_length, unsigned rm_length)
+{
+  ocudu_assert((cfg.tb_common.rv >= 0) && (cfg.tb_common.rv <= 3), "RV should an integer between 0 and 3.");
+  rv               = cfg.tb_common.rv;
+  modulation_order = get_bits_per_symbol(cfg.tb_common.mod);
+  base_graph       = cfg.tb_common.base_graph;
+  nof_filler_bits  = cfg.cb_specific.nof_filler_bits;
+
+  if (cfg.tb_common.Nref > 0) {
+    buffer_length = std::min(cfg.tb_common.Nref, block_length);
+  } else {
+    buffer_length = block_length;
+  }
+
+  // The output size cannot be larger than the maximum rate-matched codeblock length.
+  ocudu_assert(rm_length <= MAX_CODEBLOCK_RM_SIZE,
+               "The length of the rate-matched codeblock is {} but it shouldn't be more than {}.",
+               rm_length,
+               MAX_CODEBLOCK_RM_SIZE);
+
+  // The output size must be a multiple of the modulation order.
+  ocudu_assert(rm_length % modulation_order == 0, "The output length should be a multiple of the modulation order.");
+
+  // Compute shift_k0 according to TS38.212 Table 5.4.2.1-2.
+  span<const double> shift_factor;
+  unsigned           BG_N_short = 0;
+  unsigned           BG_K       = 0;
+  if ((block_length % BG1_N_SHORT) == 0) {
+    // input is a BG1 codeblock
+    shift_factor = shift_factor_bg1;
+    BG_N_short   = BG1_N_SHORT;
+    BG_K         = BG1_N_FULL - BG1_M;
+  } else if ((block_length % BG2_N_SHORT) == 0) {
+    // input is a BG2 codeblock
+    shift_factor = shift_factor_bg2;
+    BG_N_short   = BG2_N_SHORT;
+    BG_K         = BG2_N_FULL - BG2_M;
+  } else {
+    ocudu_assert(false, "LDPC rate matching: invalid input length.");
+  }
+  uint16_t lifting_size = block_length / BG_N_short;
+  ocudu_assert(get_lifting_index(static_cast<lifting_size_t>(lifting_size)) != VOID_LIFTSIZE,
+               "LDPC rate matching: invalid input length.");
+
+  // Recall that 2 * lifting_size systematic bits are shortened out of the codeblock.
+  nof_systematic_bits = (BG_K - 2) * lifting_size;
+  ocudu_assert(cfg.cb_specific.nof_filler_bits < nof_systematic_bits,
+               "LDPC rate matching: invalid number of filler bits.");
+  nof_filler_bits = cfg.cb_specific.nof_filler_bits;
+
+  ocudu_assert(get_lifting_index(static_cast<lifting_size_t>(lifting_size)) != VOID_LIFTSIZE,
+               "LDPC rate matching: invalid input length.");
+  double tmp = (shift_factor[rv] * buffer_length) / block_length;
+  shift_k0   = static_cast<uint16_t>(std::floor(tmp)) * lifting_size;
+}
+
+void ldpc_rate_matcher_impl::rate_match(bit_buffer&                output,
+                                        const ldpc_encoder_buffer& input,
+                                        const codeblock_metadata&  cfg)
+{
+  init(cfg, input.get_codeblock_length(), output.size());
+
+  span<uint8_t> aux = span<uint8_t>(auxiliary_buffer).first(output.size());
+  select_bits(aux, input);
+  interleave_bits(output, aux);
+}
+
+void ldpc_rate_matcher_impl::select_bits(span<uint8_t> out, const ldpc_encoder_buffer& in) const
+{
+  unsigned output_length = out.size();
+  unsigned out_index     = 0;
+  unsigned in_index      = shift_k0;
+
+  // Equivalent code:
+  // unsigned in_index = shift_k0 % buffer_length;
+  // for (auto& this_out : out) {
+  //   while (in[in_index] == FILLER_BIT) {
+  //     in_index = (in_index + 1) % buffer_length;
+  //   }
+  //   this_out = in[in_index];
+  //   in_index = (in_index + 1) % buffer_length;
+  // }
+
+  // Calculate the filler bits range.
+  interval<unsigned> filler_bits_range(nof_systematic_bits - nof_filler_bits, nof_systematic_bits);
+
+  // as long as the ouput index does not reach the output length...
+  while (out_index < output_length) {
+    // If the index is within the filler bits range, advance it.
+    if (filler_bits_range.contains(in_index)) {
+      in_index = filler_bits_range.stop();
+    }
+
+    // Select input chunk interval. Stop the chunk at the first filler bit.
+    interval<unsigned> input_chunk_range(in_index, buffer_length);
+    if (!filler_bits_range.empty() && input_chunk_range.contains(filler_bits_range.start())) {
+      input_chunk_range = {in_index, filler_bits_range.start()};
+    }
+
+    // Trim the count to the remainder bits.
+    unsigned count = std::min(input_chunk_range.length(), output_length - out_index);
+
+    // Append the consecutive number of bits.
+    in.write_codeblock(out.subspan(out_index, count), in_index);
+    out_index += count;
+
+    // Advance in_index the amount of written bits.
+    in_index = (in_index + count) % buffer_length;
+  }
+}
+
+template <unsigned Qm>
+static void interleave_bits_Qm(bit_buffer& out, span<const uint8_t> in)
+{
+  static_assert(Qm <= 16, "Generic interleave_bits_Qm supports up to Qm=16.");
+
+  unsigned E = out.size();
+  unsigned K = E / Qm;
+
+  if (Qm <= 8) {
+    // 8-bit word version for Qm <= 8.
+    for (unsigned out_index = 0, i = 0; i != K; ++i) {
+      uint8_t word = in[i];
+
+      for (unsigned j = 1; j != Qm; ++j) {
+        // Extract bit to pack.
+        uint8_t bit = in[K * j + i];
+
+        // Append bit to the word.
+        word = (word << 1) | bit;
+      }
+
+      // Insert word in the packed buffer.
+      out.insert(word, out_index, Qm);
+
+      // Increment the output index.
+      out_index += Qm;
+    }
+  } else {
+    // 16-bit word version for 8 < Qm <= 16.
+    for (unsigned out_index = 0, i = 0; i != K; ++i) {
+      uint16_t word = in[i];
+
+      for (unsigned j = 1; j != Qm; ++j) {
+        // Extract bit to pack.
+        uint8_t bit = in[K * j + i];
+
+        // Append bit to the word.
+        word = (word << 1) | bit;
+      }
+
+      // Insert word in the packed buffer, split into two parts due to 8-bit insert limit.
+      // First 8 bits (high bits of word).
+      out.insert(static_cast<uint8_t>(word >> (Qm - 8)), out_index, 8);
+      // Remaining (Qm - 8) bits (low bits of word).
+      out.insert(static_cast<uint8_t>(word & ((1U << (Qm - 8)) - 1)), out_index + 8, Qm - 8);
+
+      // Increment the output index.
+      out_index += Qm;
+    }
+  }
+}
+
+template <>
+void interleave_bits_Qm<1>(bit_buffer& out, span<const uint8_t> in)
+{
+  ocuduvec::bit_pack(out, in);
+}
+
+template <>
+void interleave_bits_Qm<6>(bit_buffer& out, span<const uint8_t> in)
+{
+  static constexpr unsigned Qm = 6;
+  unsigned                  E  = out.size();
+  unsigned                  K  = E / Qm;
+
+  const uint8_t* in_ptr  = in.data();
+  uint8_t*       out_ptr = out.get_buffer().data();
+
+  // Unrolled processing in batches of four symbols.
+  for (unsigned i = 0, i_end = (K / 4) * 4; i != i_end; ++i) {
+    // First symbol.
+    uint8_t byte = in_ptr[0 * K + i] << 7;
+    byte |= in_ptr[1 * K + i] << 6;
+    byte |= in_ptr[2 * K + i] << 5;
+    byte |= in_ptr[3 * K + i] << 4;
+    byte |= in_ptr[4 * K + i] << 3;
+    byte |= in_ptr[5 * K + i] << 2;
+
+    // Second symbol.
+    ++i;
+    byte |= in_ptr[0 * K + i] << 1;
+    byte |= in_ptr[1 * K + i] << 0;
+    *(out_ptr++) = byte;
+
+    byte = in_ptr[2 * K + i] << 7;
+    byte |= in_ptr[3 * K + i] << 6;
+    byte |= in_ptr[4 * K + i] << 5;
+    byte |= in_ptr[5 * K + i] << 4;
+
+    // Third symbol.
+    ++i;
+    byte |= in_ptr[0 * K + i] << 3;
+    byte |= in_ptr[1 * K + i] << 2;
+    byte |= in_ptr[2 * K + i] << 1;
+    byte |= in_ptr[3 * K + i] << 0;
+    *(out_ptr++) = byte;
+
+    byte = in_ptr[4 * K + i] << 7;
+    byte |= in_ptr[5 * K + i] << 6;
+
+    // Fourth symbol.
+    ++i;
+    byte |= in_ptr[0 * K + i] << 5;
+    byte |= in_ptr[1 * K + i] << 4;
+    byte |= in_ptr[2 * K + i] << 3;
+    byte |= in_ptr[3 * K + i] << 2;
+    byte |= in_ptr[4 * K + i] << 1;
+    byte |= in_ptr[5 * K + i] << 0;
+    *(out_ptr++) = byte;
+  }
+
+  // Remainder symbols.
+  for (unsigned i = (K / 4) * 4; i != K; ++i) {
+    uint8_t word = in[i];
+
+    for (unsigned j = 1; j != Qm; ++j) {
+      // Extract bit to pack.
+      uint8_t bit = in[K * j + i];
+
+      // Append bit to the word.
+      word = (word << 1) | bit;
+    }
+
+    // Insert word in the packed buffer.
+    out.insert(word, i * Qm, Qm);
+  }
+}
+
+template <>
+void interleave_bits_Qm<8>(bit_buffer& out, span<const uint8_t> in)
+{
+  unsigned      E         = out.size();
+  unsigned      K         = E / 8;
+  span<uint8_t> out_bytes = out.get_buffer().first(K);
+
+  uint8_t* out_ptr = out.get_buffer().begin();
+
+  // Copy LSB for each byte.
+  ocuduvec::copy(out_bytes, in.first(K));
+
+  // Append a bit in the LSB for each byte.
+  for (unsigned q = 1; q != 8; ++q) {
+    // Select input pointer for the bit to append.
+    const uint8_t* in_q = in.subspan(K * q, K).begin();
+    // Vectorized
+    for (unsigned k = 0; k != K; ++k) {
+      out_ptr[k] = (out_ptr[k] << 1) | in_q[k];
+    }
+  }
+}
+
+template <>
+void interleave_bits_Qm<10>(bit_buffer& out, span<const uint8_t> in)
+{
+  static constexpr unsigned Qm = 10;
+  const unsigned            E  = out.size();
+  const unsigned            K  = E / Qm;
+
+  const uint8_t* in_ptr  = in.data();
+  uint8_t*       out_ptr = out.get_buffer().data();
+
+  // Sequentially pack each 10-bit symbol and emit bytes as soon as they are complete.
+  // The phase repeats every four symbols: 4 * 10 bits = 5 bytes.
+  unsigned phase = 0;
+  uint8_t  carry = 0;
+
+  for (unsigned i = 0; i != K; ++i) {
+    uint16_t sym = static_cast<uint16_t>(
+        (in_ptr[0 * K + i] << 9) | (in_ptr[1 * K + i] << 8) | (in_ptr[2 * K + i] << 7) | (in_ptr[3 * K + i] << 6) |
+        (in_ptr[4 * K + i] << 5) | (in_ptr[5 * K + i] << 4) | (in_ptr[6 * K + i] << 3) | (in_ptr[7 * K + i] << 2) |
+        (in_ptr[8 * K + i] << 1) | (in_ptr[9 * K + i] << 0));
+
+    switch (phase) {
+      case 0:
+        *(out_ptr++) = static_cast<uint8_t>(sym >> 2);
+        carry        = static_cast<uint8_t>(sym << 6);
+        phase        = 1;
+        break;
+      case 1:
+        *(out_ptr++) = static_cast<uint8_t>(carry | (sym >> 4));
+        carry        = static_cast<uint8_t>(sym << 4);
+        phase        = 2;
+        break;
+      case 2:
+        *(out_ptr++) = static_cast<uint8_t>(carry | (sym >> 6));
+        carry        = static_cast<uint8_t>(sym << 2);
+        phase        = 3;
+        break;
+      default:
+        *(out_ptr++) = static_cast<uint8_t>(carry | (sym >> 8));
+        *(out_ptr++) = static_cast<uint8_t>(sym);
+        phase        = 0;
+        break;
+    }
+  }
+
+  // Tail for 1-3 remainder symbols: flush the partially-filled trailing byte.
+  if (phase != 0) {
+    *out_ptr = carry;
+  }
+}
+
+void ldpc_rate_matcher_impl::interleave_bits(bit_buffer& out, span<const uint8_t> in) const
+{
+  switch (modulation_order) {
+    case 1:
+      interleave_bits_Qm<1>(out, in);
+      break;
+    case 2:
+      interleave_bits_Qm<2>(out, in);
+      break;
+    case 4:
+      interleave_bits_Qm<4>(out, in);
+      break;
+    case 6:
+      interleave_bits_Qm<6>(out, in);
+      break;
+    case 8:
+      interleave_bits_Qm<8>(out, in);
+      break;
+    case 10:
+    default:
+      interleave_bits_Qm<10>(out, in);
+      break;
+  }
+}

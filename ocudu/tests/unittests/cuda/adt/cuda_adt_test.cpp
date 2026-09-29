@@ -1,0 +1,183 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 DeepSig Inc
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "ocudu/cuda/adt/cuda_copy.h"
+#include "ocudu/cuda/adt/cuda_event.h"
+#include "ocudu/cuda/adt/cuda_stream.h"
+#include "ocudu/cuda/adt/device_vector.h"
+#include <cuda_runtime.h>
+#include <gtest/gtest.h>
+#include <numeric>
+#include <vector>
+
+using namespace ocudu;
+using namespace ocudu::cuda;
+
+namespace {
+
+/// Returns true if a CUDA device is available to run the test.
+bool has_cuda_device()
+{
+  int nof_devices = 0;
+  return (cudaGetDeviceCount(&nof_devices) == cudaSuccess) && (nof_devices > 0);
+}
+
+class cuda_adt_test : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    if (!has_cuda_device()) {
+      GTEST_SKIP() << "No CUDA device available.";
+    }
+  }
+};
+
+} // namespace
+
+TEST_F(cuda_adt_test, stream_is_created_and_synchronizes)
+{
+  cuda_expected<cuda_stream> stream = cuda_stream::create();
+  ASSERT_TRUE(stream.has_value()) << stream.error();
+  ASSERT_TRUE(stream.value().is_valid());
+  ASSERT_NE(stream.value().native(), nullptr);
+
+  cuda_result result = stream.value().synchronize();
+  ASSERT_TRUE(result.has_value()) << result.error();
+  ASSERT_TRUE(stream.value().is_completed());
+}
+
+TEST_F(cuda_adt_test, high_priority_stream_is_created)
+{
+  // The priority is an optimization: a device that does not support it must still produce a stream.
+  cuda_expected<cuda_stream> stream = cuda_stream::create(cuda_stream_priority::high);
+  ASSERT_TRUE(stream.has_value()) << stream.error();
+  ASSERT_TRUE(stream.value().is_valid());
+}
+
+TEST_F(cuda_adt_test, moved_from_stream_releases_ownership)
+{
+  cuda_expected<cuda_stream> stream = cuda_stream::create();
+  ASSERT_TRUE(stream.has_value()) << stream.error();
+
+  void*       native = stream.value().native();
+  cuda_stream moved  = std::move(stream.value());
+
+  ASSERT_TRUE(moved.is_valid());
+  ASSERT_EQ(moved.native(), native);
+  ASSERT_FALSE(stream.value().is_valid());
+  // The moved-from object must not destroy the stream now owned by the destination.
+  ASSERT_EQ(stream.value().native(), nullptr);
+}
+
+TEST_F(cuda_adt_test, event_records_and_synchronizes)
+{
+  cuda_expected<cuda_stream> stream = cuda_stream::create();
+  ASSERT_TRUE(stream.has_value()) << stream.error();
+  cuda_expected<cuda_event> event = cuda_event::create();
+  ASSERT_TRUE(event.has_value()) << event.error();
+
+  cuda_result recorded = event.value().record(stream.value());
+  ASSERT_TRUE(recorded.has_value()) << recorded.error();
+
+  cuda_result synchronized = event.value().synchronize();
+  ASSERT_TRUE(synchronized.has_value()) << synchronized.error();
+  ASSERT_TRUE(event.value().is_completed());
+}
+
+TEST_F(cuda_adt_test, event_on_an_invalid_stream_reports_an_error)
+{
+  cuda_expected<cuda_event> event = cuda_event::create();
+  ASSERT_TRUE(event.has_value()) << event.error();
+
+  cuda_stream invalid;
+  cuda_result recorded = event.value().record(invalid);
+  ASSERT_FALSE(recorded.has_value());
+}
+
+TEST_F(cuda_adt_test, device_vector_allocates_the_requested_size)
+{
+  cuda_expected<device_vector<float>> block = device_vector<float>::create(1024);
+  ASSERT_TRUE(block.has_value()) << block.error();
+  ASSERT_EQ(block.value().size(), 1024);
+  ASSERT_EQ(block.value().size_bytes(), 1024 * sizeof(float));
+  ASSERT_NE(block.value().data(), nullptr);
+  ASSERT_FALSE(block.value().empty());
+}
+
+TEST_F(cuda_adt_test, empty_device_vector_is_valid)
+{
+  cuda_expected<device_vector<float>> block = device_vector<float>::create(0);
+  ASSERT_TRUE(block.has_value()) << block.error();
+  ASSERT_TRUE(block.value().empty());
+  ASSERT_EQ(block.value().data(), nullptr);
+}
+
+TEST_F(cuda_adt_test, moved_from_device_vector_releases_ownership)
+{
+  cuda_expected<device_vector<int>> block = device_vector<int>::create(256);
+  ASSERT_TRUE(block.has_value()) << block.error();
+
+  int*               data  = block.value().data();
+  device_vector<int> moved = std::move(block.value());
+
+  ASSERT_EQ(moved.data(), data);
+  ASSERT_EQ(moved.size(), 256);
+  // Releasing the same allocation twice would be a double free.
+  ASSERT_EQ(block.value().data(), nullptr);
+  ASSERT_EQ(block.value().size(), 0);
+}
+
+TEST_F(cuda_adt_test, data_survives_a_round_trip_through_device_memory)
+{
+  std::vector<int> source(512);
+  std::iota(source.begin(), source.end(), 0);
+
+  cuda_expected<device_vector<int>> block = device_vector<int>::create(source.size());
+  ASSERT_TRUE(block.has_value()) << block.error();
+
+  cuda_result written = copy_to_device(block.value(), span<const int>(source));
+  ASSERT_TRUE(written.has_value()) << written.error();
+
+  std::vector<int> destination(source.size(), -1);
+  cuda_result      read = copy_to_host(span<int>(destination), block.value());
+  ASSERT_TRUE(read.has_value()) << read.error();
+
+  ASSERT_EQ(source, destination);
+}
+
+TEST_F(cuda_adt_test, asynchronous_round_trip_completes_after_synchronization)
+{
+  cuda_expected<cuda_stream> stream = cuda_stream::create();
+  ASSERT_TRUE(stream.has_value()) << stream.error();
+
+  std::vector<int> source(512);
+  std::iota(source.begin(), source.end(), 1000);
+
+  cuda_expected<device_vector<int>> block = device_vector<int>::create(source.size());
+  ASSERT_TRUE(block.has_value()) << block.error();
+
+  cuda_result written = copy_to_device_async(block.value(), span<const int>(source), stream.value());
+  ASSERT_TRUE(written.has_value()) << written.error();
+
+  std::vector<int> destination(source.size(), -1);
+  cuda_result      read = copy_to_host_async(span<int>(destination), block.value(), stream.value());
+  ASSERT_TRUE(read.has_value()) << read.error();
+
+  cuda_result synchronized = stream.value().synchronize();
+  ASSERT_TRUE(synchronized.has_value()) << synchronized.error();
+
+  ASSERT_EQ(source, destination);
+}
+
+TEST_F(cuda_adt_test, copy_larger_than_the_destination_reports_an_error)
+{
+  std::vector<int> source(64, 7);
+
+  cuda_expected<device_vector<int>> block = device_vector<int>::create(32);
+  ASSERT_TRUE(block.has_value()) << block.error();
+
+  cuda_result written = copy_to_device(block.value(), span<const int>(source));
+  ASSERT_FALSE(written.has_value());
+}

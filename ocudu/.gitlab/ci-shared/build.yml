@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+include:
+  - local: .gitlab/ci/builders/version.yml
+
+.build_and_unit_template:
+  image: ${OCUDU_REGISTRY_URI}/builder-${OS}:${DOCKER_BUILDER_VERSION}
+  variables:
+    OS: "ubuntu-24.04"
+    COMPILER: "gcc"
+    UHD_VERSION: ""
+    DPDK_VERSION: ""
+    BUILD_ARGS: ""
+    CMAKE_BUILD_TYPE: "" # Empty for cmake default
+    ASSERT_LEVEL: "" # Empty for cmake default
+    ENABLE_EXPORT: "" # Empty for cmake default
+    ENABLE_BACKWARD: "" # Empty for cmake default
+    ENABLE_FFTW: "" # Empty for cmake default
+    ENABLE_MKL: "False" # Empty for cmake default
+    ENABLE_ARMPL: "False" # Empty for cmake default
+    ENABLE_UHD: "" # Empty for cmake default
+    ENABLE_DPDK: "" # Empty for cmake default
+    ENABLE_ZEROMQ: "" # Empty for cmake default
+    ENABLE_ASAN: "" # Empty for cmake default
+    ENABLE_TSAN: "" # Empty for cmake default
+    ENABLE_GCOV: "" # Empty for cmake default
+    ENABLE_UBSAN: "" # Empty for cmake default
+    ENABLE_UBSAN_MIN: "" # Empty for cmake default
+    ENABLE_RTSAN: "" # Empty for cmake default
+    ENABLE_SCHEDTRACE: "" # Empty for cmake default
+    ENABLE_WERROR: "" # Empty for cmake default
+    ENABLE_SPLIT_DWARF: "" # Empty for cmake default
+    TEST_GDB_PRINTERS: "" # Empty for cmake default
+    FORCE_DEBUG_INFO: "" # Empty for cmake default
+    MARCH: "" # Empty for cmake default
+    MTUNE: "" # Empty for cmake default
+    MCPU: ""  # Empty for cmake default
+    LINKER: "lld"
+    OCUDU_TARGET: "all"
+    CMAKE_GENERATOR: "Ninja"
+    # CACHE
+    CCACHE_MAXSIZE: 3G
+    # TEST
+    TEST_MODE: "default"
+    GTEST_DISCOVERY_TIMEOUT: 15
+    # CI
+    OCUDU_DIR: ${CI_PROJECT_DIR}
+    OCUDU_BUILD_DIR: build
+    TRANSFER_METER_FREQUENCY: 5s
+    ARTIFACT_COMPRESSION_LEVEL: slowest
+    CACHE_COMPRESSION_LEVEL: slowest
+    CACHE_REQUEST_TIMEOUT: 5 # minutes - 10 by default
+    # K8
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "50G"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "50G"
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  before_script:
+    - |
+      for var in \
+        CMAKE_BUILD_TYPE LINKER \
+        ASSERT_LEVEL ENABLE_EXPORT ENABLE_BACKWARD \
+        ENABLE_FFTW ENABLE_MKL ENABLE_ARMPL \
+        ENABLE_UHD ENABLE_DPDK ENABLE_ZEROMQ \
+        ENABLE_ASAN ENABLE_TSAN ENABLE_GCOV \
+        ENABLE_UBSAN ENABLE_UBSAN_MIN ENABLE_RTSAN \
+        ENABLE_SCHEDTRACE \
+        ENABLE_WERROR ENABLE_SPLIT_DWARF TEST_GDB_PRINTERS \
+        FORCE_DEBUG_INFO MARCH MTUNE MCPU \
+      ; do
+        if [ -n "${!var}" ]; then
+          BUILD_ARGS="-D${var}=${!var} ${BUILD_ARGS}"
+        fi
+      done
+      if [[ $TEST_MODE = "none" ]]; then
+        BUILD_ARGS="${BUILD_ARGS} -DBUILD_TESTING=False"
+      fi
+
+      BUILD_CMD="${BUILD_ARGS}"
+      export LD_LIBRARY_PATH=/opt/rohc/lib:${LD_LIBRARY_PATH}
+      if [ -n "${DPDK_VERSION}" ]; then
+        BUILD_CMD="-d ${DPDK_VERSION} ${BUILD_CMD}"
+        export LD_LIBRARY_PATH=/opt/dpdk/${DPDK_VERSION}/lib/x86_64-linux-gnu/:/opt/dpdk/${DPDK_VERSION}/lib/aarch64-linux-gnu/:${LD_LIBRARY_PATH}
+      fi
+      if [ -n "${UHD_VERSION}" ]; then
+        BUILD_CMD="-u ${UHD_VERSION} ${BUILD_CMD}"
+        export LD_LIBRARY_PATH=/opt/uhd/${UHD_VERSION}/lib:${LD_LIBRARY_PATH}
+      fi
+      if [ -n "${ENABLE_ARMPL}" ]; then
+        if ARMPL_DIR=$(ls -d /opt/arm/armpl_* 2>/dev/null); then
+            export LD_LIBRARY_PATH=${ARMPL_DIR}/lib:${LD_LIBRARY_PATH}
+        fi
+      fi
+      if [ -n "${COMPILER}" ]; then
+        BUILD_CMD="-c ${COMPILER} ${BUILD_CMD}"
+      fi
+    - |
+      case $TEST_MODE in
+        valgrind)
+          G_DEBUG=gc-friendly G_SLICE=always-malloc
+          # Default timeout per test is 1500 (25 min)
+          export CTEST_TIMEOUT=3600
+          export CTEST_TEST_TIMEOUT=${CTEST_TIMEOUT}
+          CTEST_ARGS="-T memcheck -LE 'NO_MEMCHECK|sctp' --timeout ${CTEST_TIMEOUT}"
+          ;;
+        default|coverage)
+          CTEST_ARGS="-LE sctp"
+          ;;
+        full)
+          CTEST_ARGS=""
+          ;;
+        *)
+          CTEST_ARGS="-L $TEST_MODE"
+          ;;
+      esac
+      export CTEST_ARGS
+    - |
+      echo "OS=${OS}"
+      echo "OCUDU_TARGET=${OCUDU_TARGET}"
+      echo "COMPILER=${COMPILER}"
+      echo "UHD_VERSION=${UHD_VERSION}"
+      echo "DPDK_VERSION=${DPDK_VERSION}"
+      echo "BUILD_ARGS=${BUILD_ARGS}"
+      echo "TEST_MODE=${TEST_MODE}"
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - |
+      build_ocudu() {
+        clean_arg=""
+        if [ -z "${OCUDU_BUILD_DONE}" ]; then
+          clean_arg="-r"
+          OCUDU_BUILD_DONE=1
+        fi
+        set -x
+        builder.sh -b "${OCUDU_BUILD_DIR}" -m "-j${CPU_JOBS} ${OCUDU_TARGET}" ${clean_arg} ${BUILD_CMD} ${OCUDU_DIR}
+        { set +x; } 2>/dev/null
+      }
+    - |
+      launch_tests_ocudu() {
+        cd ${OCUDU_DIR}/${OCUDU_BUILD_DIR}
+        echo "Using LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+        set -x
+        ctest -j${CPU_JOBS} --schedule-random --output-on-failure \
+          --test-output-size-passed 1048576 --test-output-size-failed 1048576 \
+          --output-junit xunit.xml --output-log ctest_output.log $CTEST_ARGS
+        local ctest_ret=$?
+        { set +x; } 2>/dev/null
+        if [ -f xunit.xml ]; then
+          OCUDU_COMMIT="${OCUDU_COMMIT:-${CI_COMMIT_SHA}}" python3 /usr/local/bin/add_junit_properties.py xunit.xml
+        fi
+        grep -l "ERROR SUMMARY: 0 errors" Testing/Temporary/MemoryChecker.*.log | xargs rm || true
+        return ${ctest_ret}
+      }

@@ -1,0 +1,163 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/gtpu/gtpu_gateway.h"
+#include "ocudu/gateways/udp_network_gateway_factory.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/support/io/io_broker.h"
+
+using namespace ocudu;
+
+namespace {
+
+/// Implementation of a NG-U TNL PDU session that uses a UDP connection.
+class udp_ngu_tnl_session final : public gtpu_tnl_pdu_session
+{
+  // private ctor.
+  udp_ngu_tnl_session(network_gateway_data_notifier_with_src_addr& data_notifier_) :
+    data_notifier(data_notifier_), logger(ocudulog::fetch_basic_logger("GTPU"))
+  {
+  }
+
+public:
+  udp_ngu_tnl_session(udp_ngu_tnl_session&& other) noexcept                 = default;
+  udp_ngu_tnl_session(const udp_ngu_tnl_session& other) noexcept            = delete;
+  udp_ngu_tnl_session& operator=(const udp_ngu_tnl_session& other) noexcept = delete;
+  udp_ngu_tnl_session& operator=(udp_ngu_tnl_session&& other) noexcept      = delete;
+
+  static std::unique_ptr<udp_ngu_tnl_session> create(const udp_network_gateway_config&            cfg,
+                                                     network_gateway_data_notifier_with_src_addr& data_notifier,
+                                                     io_broker&                                   io_brk,
+                                                     task_executor&                               io_tx_executor,
+                                                     task_executor&                               io_rx_executor)
+  {
+    std::unique_ptr<udp_ngu_tnl_session> conn(new udp_ngu_tnl_session(data_notifier));
+
+    // Create a new UDP network gateway instance.
+    conn->udp_gw =
+        create_udp_network_gateway(udp_network_gateway_creation_message{cfg, *conn, io_tx_executor, io_rx_executor});
+
+    // Bind/open the gateway, start handling of incoming traffic from UPF, e.g. echo
+    if (not conn->udp_gw->create_and_bind()) {
+      conn->logger.error("Failed to create and bind NG-U gateway");
+      return nullptr;
+    }
+
+    if (not conn->udp_gw->subscribe_to(io_brk)) {
+      conn->logger.error("Failed to register NG-U (GTP-U) network gateway at IO broker. socket_fd={}",
+                         conn->udp_gw->get_socket_fd());
+      return nullptr;
+    }
+
+    return conn;
+  }
+
+  void handle_pdu(byte_buffer pdu, const sockaddr_storage& dest_addr) override
+  {
+    // Forward PDU to UDP interface.
+    udp_gw->handle_pdu(std::move(pdu), dest_addr);
+  }
+
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  {
+    // Forward PDU to data notifier.
+    data_notifier.on_new_pdu(std::move(pdu), src_addr);
+  }
+
+  bool get_bind_address(std::string& ip_address) const override { return udp_gw->get_bind_address(ip_address); }
+
+  std::optional<uint16_t> get_bind_port() const override { return udp_gw->get_bind_port(); }
+
+  void stop() override
+  {
+    if (udp_gw != nullptr) {
+      udp_gw->stop();
+    }
+  }
+
+private:
+  network_gateway_data_notifier_with_src_addr& data_notifier;
+  ocudulog::basic_logger&                      logger = ocudulog::fetch_basic_logger("CU-UP");
+
+  std::unique_ptr<udp_network_gateway> udp_gw;
+};
+
+/// Implementation of the NG-U gateway for the case a UDP connection is used to a remote UPF.
+class udp_ngu_gateway final : public gtpu_gateway
+{
+public:
+  udp_ngu_gateway(const udp_network_gateway_config& cfg_,
+                  io_broker&                        io_brk_,
+                  task_executor&                    io_tx_executor_,
+                  task_executor&                    io_rx_executor_) :
+    cfg(cfg_), io_brk(io_brk_), io_tx_executor(io_tx_executor_), io_rx_executor(io_rx_executor_)
+  {
+  }
+
+  std::unique_ptr<gtpu_tnl_pdu_session> create(network_gateway_data_notifier_with_src_addr& data_notifier) override
+  {
+    return udp_ngu_tnl_session::create(cfg, data_notifier, io_brk, io_tx_executor, io_rx_executor);
+  }
+
+private:
+  const udp_network_gateway_config cfg;
+  io_broker&                       io_brk;
+  task_executor&                   io_tx_executor;
+  task_executor&                   io_rx_executor;
+};
+
+} // namespace
+
+std::unique_ptr<gtpu_gateway> ocudu::create_udp_gtpu_gateway(const udp_network_gateway_config& config,
+                                                             io_broker&                        io_brk,
+                                                             task_executor&                    io_tx_executor,
+                                                             task_executor&                    io_rx_executor)
+{
+  return std::make_unique<udp_ngu_gateway>(config, io_brk, io_tx_executor, io_rx_executor);
+}
+
+/* ---- No Core version ---- */
+
+namespace {
+
+/// Implementation of an NG-U TNL PDU session when a local UPF stub is used.
+class no_core_ngu_tnl_pdu_session final : public gtpu_tnl_pdu_session
+{
+public:
+  void handle_pdu(byte_buffer pdu, const sockaddr_storage& dest_addr) override
+  {
+    // Do nothing.
+  }
+
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  {
+    // Do nothing.
+  }
+
+  std::optional<uint16_t> get_bind_port() const override { return std::nullopt; }
+
+  bool get_bind_address(std::string& ip_address) const override { return false; }
+
+  void stop() override
+  {
+    // Do nothing.
+  }
+};
+
+/// Implementation of the NG-U gateway for the case a local UPF stub is used.
+class no_core_ngu_gateway : public gtpu_gateway
+{
+public:
+  std::unique_ptr<gtpu_tnl_pdu_session> create(network_gateway_data_notifier_with_src_addr& data_notifier) override
+  {
+    return std::make_unique<no_core_ngu_tnl_pdu_session>();
+  }
+};
+
+} // namespace
+
+std::unique_ptr<gtpu_gateway> ocudu::create_no_core_gtpu_gateway()
+{
+  return std::make_unique<no_core_ngu_gateway>();
+}

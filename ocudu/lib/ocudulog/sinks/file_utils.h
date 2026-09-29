@@ -1,0 +1,132 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/ocudulog/detail/support/error_string.h"
+#include "ocudu/ocudulog/detail/support/memory_buffer.h"
+#include "fmt/format.h"
+
+namespace ocudulog {
+
+namespace file_utils {
+
+/// Helper function that formats errnos nicely.
+inline std::string format_error(const std::string& error, int error_code)
+{
+  fmt::memory_buffer result;
+  fmt::format_system_error(result, error_code, error.c_str());
+
+  return fmt::to_string(result);
+}
+
+/// Splits the specified path into a filename and its extension (if present).
+inline std::pair<std::string, std::string> split_filename_extension(const std::string& filename)
+{
+  // Search for the last dot.
+  auto dot_pos = filename.find_last_of('.');
+
+  // Check for the following corner cases (returns {filename, ""}):
+  //   a) No dot found: my_file
+  //   b) Dot found at the beginning: .my_file
+  //   c) Dot found at the end: my_file.
+  if (dot_pos == std::string::npos || dot_pos == 0 || dot_pos == filename.size() - 1) {
+    return {filename, ""};
+  }
+
+  // Handle directories that contain dots, search for the last separator
+  // character.
+  auto separator_pos = filename.find_last_of('/');
+
+  // Check for the following corner cases (returns {filename, ""}):
+  //   a) /my_folder.1/my_file
+  //   b) /my_folder.1/.my_file
+  if (separator_pos != std::string::npos && separator_pos >= dot_pos - 1) {
+    return {filename, ""};
+  }
+
+  return {filename.substr(0, dot_pos), filename.substr(dot_pos)};
+}
+
+/// Builds a file name formatting the input base name and file index.
+inline std::string build_filename_with_index(const std::string& basename, size_t index)
+{
+  if (index == 0) {
+    return basename;
+  }
+
+  auto result = split_filename_extension(basename);
+  return fmt::format("{}.{}{}", result.first, index, result.second);
+}
+
+/// This class provides basic file operations and disables itself when it
+/// encounters an error.
+class file
+{
+  std::string path;
+  std::FILE*  handle = nullptr;
+
+public:
+  ~file() { close(); }
+
+  explicit operator bool() const { return handle; }
+
+  /// Returns the handle of the underlying file.
+  std::FILE* get_handle() const { return handle; }
+
+  /// Returns the path of the file.
+  const std::string& get_path() const { return path; }
+
+  /// Creates a new file in the specified path by previously closing any opened
+  /// file.
+  detail::error_string create(const std::string& new_path)
+  {
+    close();
+
+    if ((handle = std::fopen(new_path.c_str(), "wb"))) {
+      path = new_path;
+      return {};
+    }
+
+    return format_error(fmt::format("Unable to create log file \"{}\"", new_path), errno);
+  }
+
+  /// Writes the provided memory buffer into an open file, otherwise does
+  /// nothing.
+  detail::error_string write(detail::memory_buffer buffer)
+  {
+    if (handle && std::fwrite(buffer.data(), sizeof(char), buffer.size(), handle) != buffer.size()) {
+      auto err_str = format_error(fmt::format("Unable to write log file \"{}\"", path), errno);
+      close();
+      return err_str;
+    }
+
+    return {};
+  }
+
+  /// Flushes the contents of an open file, otherwise does nothing.
+  detail::error_string flush()
+  {
+    if (handle && ::fflush(handle) == EOF) {
+      auto err_str = format_error(fmt::format("Error encountered while flushing log file \"{}\"", path), errno);
+      close();
+      return err_str;
+    }
+
+    return {};
+  }
+
+  /// Closes an open file, otherwise does nothing.
+  void close()
+  {
+    if (handle) {
+      ::fclose(handle);
+      handle = nullptr;
+      path.clear();
+    }
+  }
+};
+
+} // namespace file_utils
+
+} // namespace ocudulog

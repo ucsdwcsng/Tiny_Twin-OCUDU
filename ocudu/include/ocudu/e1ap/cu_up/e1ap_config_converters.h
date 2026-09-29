@@ -1,0 +1,94 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/e1ap/common/e1ap_types.h"
+
+namespace ocudu {
+
+inline pdcp_config make_pdcp_drb_config(const e1ap_pdcp_config& e1ap_cfg, const security_indication_t& security_ind)
+{
+  pdcp_config cfg = {};
+
+  //////////////////////////////
+  // Fill TX/RX common config //
+  //////////////////////////////
+  // RB type
+  cfg.rb_type = pdcp_rb_type::drb;
+
+  // RLC mode
+  cfg.rlc_mode = e1ap_cfg.rlc_mod;
+
+  // ROHC
+  if (e1ap_cfg.rohc_config.has_value()) {
+    const auto& rohc_cfg_in  = *e1ap_cfg.rohc_config;
+    rohc_config rohc_cfg_out = {};
+    switch (rohc_cfg_in.rohc_type) {
+      case e1ap_rohc_type::rohc:
+        rohc_cfg_out.rohc_type = rohc_type_t::rohc;
+        break;
+      case ocudu::e1ap_rohc_type::uplink_only_rohc:
+        rohc_cfg_out.rohc_type = rohc_type_t::uplink_only_rohc;
+        break;
+    }
+    rohc_cfg_out.max_cid = rohc_cfg_in.rohc_params.max_cid;
+    rohc_cfg_out.profiles.set_profile_bitmap(rohc_cfg_in.rohc_params.rohc_profiles);
+    rohc_cfg_out.continue_rohc =
+        rohc_cfg_in.rohc_params.continue_rohc.has_value() && *rohc_cfg_in.rohc_params.continue_rohc;
+    cfg.header_compression = rohc_cfg_out;
+  } else {
+    cfg.header_compression = std::nullopt;
+  }
+
+  // Integrity protection required
+  cfg.integrity_protection_required =
+      security_ind.integrity_protection_ind != integrity_protection_indication_t::not_needed;
+
+  // Ciphering required
+  cfg.ciphering_required =
+      security_ind.confidentiality_protection_ind != confidentiality_protection_indication_t::not_needed;
+
+  // SN size
+  cfg.tx.sn_size = e1ap_cfg.pdcp_sn_size_dl; // TODO check UL or DL from the UE or gNB perspective.
+  cfg.rx.sn_size = e1ap_cfg.pdcp_sn_size_ul;
+
+  // Direction
+  cfg.tx.direction = pdcp_security_direction::downlink;
+  cfg.rx.direction = pdcp_security_direction::uplink;
+
+  // TX config
+  // Discard timer
+  cfg.tx.discard_timer = e1ap_cfg.discard_timer;
+
+  // Status report required
+  // FIXME update ASN1 to include status report required, as included in 38.463, v16.3
+  cfg.tx.status_report_required = false;
+
+  // RX configuration
+  // Out-of-order delivery
+  if (e1ap_cfg.out_of_order_delivery.has_value()) {
+    cfg.rx.out_of_order_delivery = true;
+  }
+
+  // t-Reordering
+  if (e1ap_cfg.t_reordering_timer.has_value()) {
+    cfg.rx.t_reordering = e1ap_cfg.t_reordering_timer.value();
+  } else {
+    cfg.rx.t_reordering = pdcp_t_reordering::infinity;
+  }
+
+  return cfg;
+}
+
+inline sdap_ran_config make_sdap_drb_config(const sdap_config_t& e1ap_cfg)
+{
+  sdap_config cfg = {};
+  cfg.default_drb = e1ap_cfg.default_drb;
+  cfg.header_ul   = e1ap_cfg.sdap_hdr_ul;
+  cfg.header_dl   = e1ap_cfg.sdap_hdr_dl;
+  return cfg;
+}
+
+} // namespace ocudu

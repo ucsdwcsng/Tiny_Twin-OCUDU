@@ -1,0 +1,730 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+spec:
+  inputs:
+    promote-image-tag:
+      description: "Optional Docker tag prefix to build and promote. Leave empty to use the normal date-based tag."
+      default: ""
+      regex: "^$|^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+---
+include:
+  - local: .gitlab/ci-shared/gitlab_settings/.gitlab-ci.yml
+  - local: .gitlab/ci-shared/workflow.yml
+  - local: .gitlab/ci-shared/static.yml
+  - local: .gitlab/ci/doxygen/version.yml
+  - local: .gitlab/ci/build.yml
+  - local: .gitlab/ci/compose.yml
+
+stages:
+  - ci
+  - static
+  - build and unit tests
+  - deploy
+  - extended
+  - documentation
+
+# variables:
+#   SKIP_OCUDU_BUILDING_CONTAINERS_CI: true # set to any value to skip building ocudu containers in CI
+
+variables:
+  FUZZ_IMAGE_VERSION: "1"  # bump when tests/fuzz/Dockerfile changes
+
+################################################################################
+## CI MR
+################################################################################
+trigger builder:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR_TRAIN
+      when: never
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-builder/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/builders/**/*
+          - docker/scripts/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/builders/.gitlab-ci.yml
+    strategy: mirror
+  needs:
+    - job: trigger buildkit
+      optional: true
+      artifacts: false
+
+trigger buildkit:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR_TRAIN
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/buildkit-cli/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/buildkit-cli/.gitlab-ci.yml
+    strategy: mirror
+
+trigger rh-tool-cli:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR_TRAIN
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/rh-tool-cli/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/rh-tool-cli/.gitlab-ci.yml
+    strategy: mirror
+
+trigger ui:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/ui/**/*
+          - docker/grafana/**/*
+          - docker/telegraf/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/ui/.gitlab-ci.yml
+    strategy: mirror
+  needs:
+    - job: trigger buildkit
+      optional: true
+      artifacts: false
+
+trigger deploy:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/deploy/**/*
+          - docker/scripts/**/*
+          - docker/Dockerfile
+    - if: $ON_WEB
+    - if: $ON_API
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+      variables:
+        CI_PIPELINE_SCHEDULE_DESCRIPTION: Nightly
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Alternative OSs/
+      variables:
+        CI_PIPELINE_SCHEDULE_DESCRIPTION: Alternative OSs
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      variables:
+        ON_MAIN: "true"
+  variables:
+    PROMOTE_IMAGE_TAG: "$[[ inputs.promote-image-tag ]]"
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/deploy/.gitlab-ci.yml
+    strategy: mirror
+  needs:
+    - job: trigger buildkit
+      optional: true
+      artifacts: false
+    - job: trigger rh-tool-cli
+      optional: true
+      artifacts: false
+
+trigger doxygen:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR_TRAIN
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/doxygen/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/doxygen/.gitlab-ci.yml
+    strategy: mirror
+  needs:
+    - job: trigger buildkit
+      optional: true
+      artifacts: false
+
+trigger static:
+  stage: ci
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI
+      when: never
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR_TRAIN
+      when: never
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-static/
+      when: never
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/static/**/*
+  variables:
+    OCUDU_RUNNER_TAG: $OCUDU_RUNNER_TAG
+  trigger:
+    include: .gitlab/ci/static/.gitlab-ci.yml
+    strategy: mirror
+  needs:
+    - job: trigger buildkit
+      optional: true
+      artifacts: false
+
+warning about unapplied changes:
+  stage: ci
+  image: alpine:3.16.0
+  rules:
+    - if: $SKIP_OCUDU_BUILDING_CONTAINERS_CI && $ON_MR
+      changes: &warning_container_changes
+        paths:
+          - .gitlab/ci/builders/**/*
+          - .gitlab/ci/buildkit-cli/**/*
+          - .gitlab/ci/doxygen/**/*
+          - .gitlab/ci/static/**/*
+          - docker/grafana/**/*
+          - docker/scripts/**/*
+          - docker/telegraf/**/*
+    - if: $ON_MR_FORK
+      changes:
+        <<: *warning_container_changes
+  allow_failure: true
+  script:
+    - echo "This MR contains changes in OCUDU containers but pushing new images is disabled. You'll keep using old containers and changes won't be applied."
+    - exit 1
+
+################################################################################
+## Static
+################################################################################
+headers:
+  extends: .headers
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+code-format:
+  extends: .code-format
+  rules:
+    - if: $ON_MR
+      changes:
+        - .clang-format
+      when: never
+    - if: $ON_MR
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+full-code-format:
+  extends: .full-code-format
+  rules:
+    - if: $ON_MR
+      changes:
+        - .clang-format
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+include-guards:
+  extends: .include-guards
+  rules:
+    - if: $ON_MR
+  parallel:
+    matrix:
+      - INPUT_PATH: "include/ocudu"
+        INPUT_IGNORE: "/bundled/"
+      - INPUT_PATH: "."
+        INPUT_IGNORE: "^\\(include\\|docs\\|external\\)/.*"
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+dependency-checks:
+  extends: .dependency-checks
+  allow_failure: true
+  rules:
+    - if: $ON_MR
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+high-resolution-clock:
+  extends: .high-resolution-clock
+  rules:
+    - if: $ON_MR
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+dco:
+  extends: .dco
+  rules:
+    - if: $ON_MR_FORK
+  needs:
+    - job: trigger static
+      optional: true
+      artifacts: false
+
+.codechecker:
+  image: ${OCUDU_REGISTRY_URI}/codechecker:${DOCKER_BUILDER_VERSION}
+  stage: static
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  needs:
+    - job: trigger builder
+      optional: true
+      artifacts: false
+  variables:
+    ANALYZER: ""
+    ANALYZER_ARGS: ""
+    ARTIFACT_EXTRA_PATH: ""
+    CHECK_PER_FILE_TIMEOUT: 1800
+  timeout: 3 hours
+  before_script:
+    - |
+      CPU_JOBS="$(/usr/local/bin/get_available_cores.sh 2>/dev/null || ${CI_PROJECT_DIR}/.gitlab/ci/builders/get_available_cores.sh)"
+      if [ -z "${CPU_JOBS}" ] || [ "${CPU_JOBS}" -lt 1 ]; then
+        CPU_JOBS=1
+      fi
+      export CPU_JOBS
+    - |
+      echo "
+      -/usr/lib
+      -*CMakeTmp
+      -*CompilerIdCXX
+      -*tests/unittests
+      -*tests/integrationtests
+      -*tests/benchmarks
+      -*benchmarks
+      -*apps/examples
+      -*external
+      -*lib/asn1
+      -*lib/phy/generic_functions/fftx/lib_fftx_dftbat_srcs
+      -*lib/phy/generic_functions/fftx/lib_fftx_idftbat_srcs" >/tmp/codechecker_skip
+    - |
+      export CC=/usr/bin/clang
+      export CXX=/usr/bin/clang++
+      mkdir -p build
+      cd build || exit
+      cmake -DASSERT_LEVEL=PARANOID -DMARCH=x86-64-v3 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=False ..
+      make ocudu_versioning # needed to generate hashes.h
+    - |
+      monitor_child_process() {
+          while true; do
+              ps -eo comm=,pid=,etimes=,args= | while read -r comm pid etimes args; do
+                  if [ "$comm" = "${ANALYZER}" ] && [ "$etimes" -gt "$CHECK_PER_FILE_TIMEOUT" ]; then
+                      echo "Killing ${ANALYZER} pid ${pid} after ${etimes}s on ${args##* }"
+                      kill "$pid"
+                  fi
+              done
+              sleep 30
+          done
+      }
+      export -f monitor_child_process
+  script: &codechecker_script
+    - nohup bash -c monitor_child_process &
+    # Run the wrapper from the repo checkout so the fix applies without rebuilding the builder image; the image ships
+    # its own copy for other repos to reuse.
+    - bash "${CI_PROJECT_DIR}/.gitlab/ci/builders/codechecker/static-analyzer.sh" -i /tmp/codechecker_skip --jobs ${CPU_JOBS} --analyzers ${ANALYZER} ${ANALYZER_ARGS} ${EXTRA_ANALYZER_ARGS} $CI_PROJECT_DIR
+  after_script:
+    - mv codechecker_html codechecker-${ANALYZER}-html
+  artifacts: &codechecker_artifacts
+    reports:
+      codequality: code-quality-report.json
+    paths:
+      - codechecker-${ANALYZER}-html${ARTIFACT_EXTRA_PATH}
+    when: always
+    expire_in: 10 minutes
+
+# Mock-based regression test for the CodeChecker wrapper: fakes CodeChecker on PATH and runs the real wrapper, so it
+# needs no build and runs on fork pipelines. Only relevant when the codechecker folder changes.
+static-analyzer wrapper test:
+  extends: .static
+  rules:
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/builders/codechecker/**/*
+  script:
+    - bash .gitlab/ci/builders/codechecker/static-analyzer-test.sh
+
+clang-tidy:
+  extends: .codechecker
+  rules:
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+  retry: 2
+  variables:
+    ANALYZER: clang-tidy
+    ANALYZER_ARGS: --analyzer-config clang-tidy:take-config-from-directory=true
+    ARTIFACT_EXTRA_PATH: "/index.html"
+
+clang-tidy incremental:
+  extends: clang-tidy
+  rules:
+    - if: $ON_MR
+      allow_failure: true
+  variables:
+    CCACHE_MAXSIZE: 3G
+    CACHE_COMPRESSION_LEVEL: slowest
+    CACHE_REQUEST_TIMEOUT: 5 # minutes - 10 by default
+  script:
+    - |
+      cd $CI_PROJECT_DIR
+      git config advice.detachedHead false
+      unshallow_flag() {
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo --unshallow
+        fi
+      }
+      if [ "$CI_PROJECT_PATH" = "$CI_MERGE_REQUEST_PROJECT_PATH" ]; then
+        # job on target
+        git fetch $(unshallow_flag) origin \
+          "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/ci/mr-target" \
+          "$CI_MERGE_REQUEST_REF_PATH:refs/ci/mr-source"
+      else
+        # job on the fork
+        git fetch $(unshallow_flag) origin \
+          "+refs/heads/$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:refs/ci/mr-source"
+        git remote get-url upstream >/dev/null 2>&1 || \
+          git remote add upstream "$CI_MERGE_REQUEST_PROJECT_URL"
+        git fetch $(unshallow_flag) upstream \
+          "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/ci/mr-target"
+      fi
+
+      SOURCE_SHA=$(git rev-parse refs/ci/mr-source)
+      FORK_POINT=$(git merge-base refs/ci/mr-source refs/ci/mr-target)
+    - |
+      clean_arg="-r"
+      for rev in $FORK_POINT $SOURCE_SHA; do
+        echo "##################################################"
+        echo "#### $rev ####"
+        echo "##################################################"
+        git checkout $rev
+        CodeChecker log -o ${CI_PROJECT_DIR}/build/compile_commands.json --build "builder.sh -m -j${CPU_JOBS} -c clang ${clean_arg} -DMARCH=x86-64-v3 -DENABLE_ARMPL=False -DENABLE_MKL=False -DENABLE_FFTW=True -DASSERT_LEVEL=PARANOID -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=False $CI_PROJECT_DIR"
+        clean_arg=""
+      done
+    - |
+      # The incremental database only holds what the MR head rebuilt, so an MR touching no C/C++ leaves it empty. That
+      # is a valid outcome here, unlike an empty database on a full run, which means the analysis covered nothing.
+      # Keyed on the diff rather than on emptiness itself, so a logger that silently records nothing still fails.
+      if git diff --name-only "$FORK_POINT" "$SOURCE_SHA" | grep -qE '\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$'; then
+        EXTRA_ANALYZER_ARGS=""
+      else
+        echo "MR changes no C/C++ sources: an empty incremental analysis is expected."
+        EXTRA_ANALYZER_ARGS="--allow-no-actions"
+      fi
+    - *codechecker_script
+  cache:
+    - key: codechecker-clang-tidy
+      paths: [ccache]
+      policy: pull-push
+      when: always
+
+cppcheck:
+  extends: .codechecker
+  rules:
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+  retry: 2
+  variables:
+    ANALYZER: cppcheck
+    ANALYZER_ARGS: --cppcheck-max-template-recursion 5
+  artifacts:
+    <<: *codechecker_artifacts
+    expire_in: 7 days
+
+clangsa:
+  extends: .codechecker
+  rules:
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly/
+      when: manual
+      allow_failure: true
+  variables:
+    ANALYZER: clangsa
+    ANALYZER_ARGS: --ctu
+  timeout: 8 hours
+
+################################################################################
+## Build + Unit Tests + Integration tests
+################################################################################
+
+# In .gitlab/ci/build.yml
+
+################################################################################
+# Doc generation
+################################################################################
+unit coverage:
+  stage: documentation
+  image:
+    name: mcr.microsoft.com/dotnet/sdk:8.0-alpine
+    entrypoint: ["/bin/sh", "-c"]
+  rules:
+    - if: $ON_MR
+      variables:
+        coverage_report: summary
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+      variables:
+        coverage_report: summary
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Smoke/
+      variables:
+        coverage_report: summary
+    - if: $ON_PROTECTED_BRANCH
+      variables:
+        coverage_report: full
+  before_script:
+    - export PATH="$PATH:/root/.dotnet/tools"
+    - dotnet tool install -g dotnet-reportgenerator-globaltool --version 5.5.0
+    - PACKAGE_URL=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coverage/${CI_COMMIT_BRANCH}${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}/coverage_history.tar.gz
+    # Download coverage history from the registry
+    - |
+      download_from_registry() {
+        apk add curl
+
+        cd ${CI_PROJECT_DIR}
+        http_code=$(curl -w "%{http_code}" --header "JOB-TOKEN: $CI_JOB_TOKEN" "${PACKAGE_URL}" -o output.tar.gz)
+        if [[ $http_code == "200" ]]; then
+          tar -xf output.tar.gz
+        fi
+      }
+    # Publish coverage history folder to the registry
+    - |
+      publish_to_registry() {
+        cd ${CI_PROJECT_DIR}
+        tar -czf coverage_history.tar.gz coverage_history
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file coverage_history.tar.gz "${PACKAGE_URL}"
+      }
+  script:
+    - |
+      if [[ $coverage_report = "full" ]]; then
+        download_from_registry
+        HTML_TYPE=Html
+        HISTORY=-historydir:coverage_history
+      else
+        HTML_TYPE=HtmlSummary
+        HISTORY=
+      fi
+    - |
+      reportgenerator -reports:*coverage*.xml -targetdir:coverage_html ${HISTORY} \
+        -title:${CI_PROJECT_NAME} -tag:${CI_COMMIT_SHA} \
+        -reporttypes:"${HTML_TYPE};TextSummary"
+    - cat coverage_html/Summary.txt
+    - coverage_value=$(cat coverage_html/Summary.txt | sed -n 's/^\s*Line coverage:\s*\(.*\)\%/\1/p')
+    - |
+      if [[ $coverage_report = "full" ]]; then
+        publish_to_registry
+        cd ${CI_PROJECT_DIR}
+        tar -czf coverage_html.tar.gz coverage_html
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file coverage_html.tar.gz ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coverage_html/latest/coverage_html.tar.gz
+      fi
+  coverage: /^\s*Line coverage:\s*\d+.\d+\%/
+  artifacts:
+    paths:
+      - coverage_html
+    expire_in: 7 days
+  retry: 2
+  needs:
+    - job: intermediate commits cached
+      optional: true
+      artifacts: true
+    - job: intermediate commits clean
+      optional: true
+      artifacts: true
+    - job: smoke coverage
+      optional: true
+      artifacts: true
+
+doxygen:
+  stage: documentation
+  image: ${OCUDU_REGISTRY_URI}/doxygen:${DOXYGEN_VERSION}-${PLANTUML_VERSION}
+  rules:
+    - if: $ON_MR
+      changes:
+        paths:
+          - docs/**/*
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Smoke/
+    - if: $ON_PROTECTED_BRANCH
+  script:
+    - |
+      rm -Rf build_doxygen
+      mkdir build_doxygen
+      cd build_doxygen || exit
+      cmake -DENABLE_UHD=False -DDOXYGEN_HAVE_DOT=False -DBUILD_TESTING=False ..
+      make -j $(nproc) doxygen
+    - |
+      if [[ $CI_COMMIT_BRANCH == "main" ]]; then
+        cd ${CI_PROJECT_DIR}
+        tar -czf doxygen.tar.gz build_doxygen/docs/doxygen/html
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file doxygen.tar.gz ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/doxygen/latest/doxygen.tar.gz
+      fi
+  artifacts:
+    paths:
+      - build_doxygen/docs/doxygen/html
+    expire_in: 7 days
+  needs:
+    - job: trigger doxygen
+      optional: true
+      artifacts: false
+
+pages:
+  stage: documentation
+  image: alpine:3.19
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - mkdir -p public
+    - echo "/ocudu https://docs.ocudu.org 301" > public/_redirects
+    - echo "/ocudu/* https://docs.ocudu.org/:splat 301" >> public/_redirects
+    - echo "/ https://docs.ocudu.org 301" >> public/_redirects
+    - echo "/* https://docs.ocudu.org/:splat 301" >> public/_redirects
+  artifacts:
+    paths:
+      - public
+
+################################################################################
+# post
+################################################################################
+promotion:
+  stage: .post
+  rules:
+    - if: $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Nightly/ && $GITLAB_TOKEN
+  image: alpine:3
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - apk add --no-cache git
+    - git clone https://gitlab_token:${GITLAB_TOKEN}@${CI_SERVER_SHELL_SSH_HOST}/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}.git /${CI_PROJECT_NAME}
+    - cd /${CI_PROJECT_NAME}
+    - git fetch origin main
+    - git checkout -t origin/main
+    - git rebase ${CI_COMMIT_SHA}
+    - git push
+  dependencies: []
+
+################################################################################
+# fuzz
+################################################################################
+
+# Build and push the fuzz build-environment image.
+# The image contains only system dependencies (AFL++, clang, cmake, libs);
+# fuzz targets are compiled at job time so this image only needs rebuilding
+# when the Dockerfile itself changes.
+build-fuzz-image:
+  extends: .docker-builder
+  stage: deploy
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      changes:
+        - tests/fuzz/Dockerfile
+    - when: manual
+      allow_failure: true
+  variables:
+    NAME: fuzz-deps
+    CONTEXT: ${CI_PROJECT_DIR}
+    DOCKERFILE: ${CI_PROJECT_DIR}/tests/fuzz
+    VERSION: $FUZZ_IMAGE_VERSION
+    MODE: publish
+  dependencies: []
+
+# Run all fuzz targets for FUZZ_TIMEOUT_EACH seconds each.
+# The findings/ directory is cached between runs so AFL++ resumes from its
+# accumulated queue rather than restarting from the seed corpus each week.
+fuzz:
+  stage: .post
+  image: $CI_REGISTRY_IMAGE/fuzz-deps:$FUZZ_IMAGE_VERSION
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION =~ /Weekly fuzz/'
+  variables:
+    FUZZ_OUTPUT_DIR: $CI_PROJECT_DIR/findings
+    FUZZ_CORPUS_DIR: $CI_PROJECT_DIR/seed_corpus
+    FUZZ_TIMEOUT_EACH: "7200"
+  cache:
+    key: fuzz-corpus-$CI_DEFAULT_BRANCH
+    paths:
+      - findings/
+  script:
+    - |
+      cmake -S . -B build_fuzz -GNinja \
+        -DCMAKE_C_COMPILER=afl-clang-fast \
+        -DCMAKE_CXX_COMPILER=afl-clang-fast++ \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DENABLE_FUZZTESTS=ON \
+        -DENABLE_ASAN=ON \
+        -DBUILD_TESTING=OFF \
+        -DENABLE_UHD=OFF \
+        -DENABLE_ZEROMQ=OFF \
+        -DENABLE_FFTW=OFF \
+        -DENABLE_MKL=OFF \
+        -DENABLE_FFTZ=OFF \
+        -DENABLE_ARMPL=OFF \
+        -DENABLE_DPDK=OFF \
+        -DENABLE_LIBNUMA=OFF \
+        -DENABLE_BACKWARD=OFF \
+        -DENABLE_WERROR=OFF
+    - |
+      ninja -C build_fuzz \
+        ofh_uplane_decoder_fuzzer \
+        ofh_ecpri_decoder_fuzzer \
+        ofh_vlan_frame_decoder_fuzzer \
+        ngap_pdu_decoder_fuzzer \
+        ngap_cu_cp_fuzzer
+    - |
+      mkdir -p seed_corpus/ngap_cu_cp
+      cp -r tests/fuzz/ofh/corpus/* seed_corpus/
+      cp -r tests/fuzz/ngap/corpus/* seed_corpus/
+      cp tests/fuzz/ngap/corpus/ngap/* seed_corpus/ngap_cu_cp/
+    - |
+      export PATH="$CI_PROJECT_DIR/build_fuzz/tests/fuzz/ofh:$CI_PROJECT_DIR/build_fuzz/tests/fuzz/ngap:$PATH"
+      tests/fuzz/run_fuzzers.sh
+  artifacts:
+    when: always
+    paths:
+      - findings/
+    expire_in: 4 weeks
+  dependencies: []

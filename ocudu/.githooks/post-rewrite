@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+"$REPO_ROOT/.githooks/ensure-mr-refspec.sh"
+"$REPO_ROOT/.githooks/fixup-rebased-mrs.sh"

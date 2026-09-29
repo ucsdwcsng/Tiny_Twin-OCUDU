@@ -1,0 +1,62 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+<testCaseList>
+  <htmlTabRef>gNB-PHY-Test-100-4x4-FHI72</htmlTabRef>
+  <htmlTabName>Timing phytest 100 MHz 4x4 FHI7.2</htmlTabName>
+  <htmlTabIcon>tasks</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>bulbul</node>
+    <images>oai-gnb-fhi72</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>bulbul</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Initialize gNB FHI7.2</desc>
+    <node>bulbul</node>
+    <yaml_path>ci-scripts/yaml_files/phytest_fhi72</yaml_path>
+    <services>oai-gnb</services>
+  </testCase>
+
+  <testCase>
+    <class>IdleSleep</class>
+    <desc>Sleep</desc>
+    <idle_sleep_time_in_sec>60</idle_sleep_time_in_sec>
+  </testCase>
+
+  <testCase>
+    <class>AnalyzeRTStats_Object</class>
+    <desc>Analyze Real-Time Stats</desc>
+    <stats_cfg>datalog_rt_stats.100.4x4.fhi72.yaml</stats_cfg>
+    <service>oai-gnb</service>
+    <stats_file>/opt/oai-gnb/nrL1_stats.log /opt/oai-gnb/nrMAC_stats.log</stats_file>
+    <node>bulbul</node>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <node>bulbul</node>
+    <always_exec>true</always_exec>
+    <desc>Terminate gNB</desc>
+    <yaml_path>ci-scripts/yaml_files/phytest_fhi72</yaml_path>
+    <analysis>
+      <services>oai-gnb=EndsWithBye</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>bulbul</node>
+    <images>oai-gnb-fhi72</images>
+  </testCase>
+
+</testCaseList>

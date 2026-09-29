@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+include:
+  - local: .gitlab/ci-shared/docker.yml
+  - local: .gitlab/ci-shared/version_check.yml
+  - local: .gitlab/ci/static/version.yml
+
+stages:
+  - ci
+  - publish
+
+static version increased:
+  stage: ci
+  extends: .version increased
+  rules:
+    - if: $ON_MR
+  variables:
+    FILE_PATH: .gitlab/ci/static/version.yml
+    VARIABLE_NAME: DOCKER_STATIC_VERSION
+
+build-and-publish:
+  stage: publish
+  extends: .docker-builder
+  rules:
+    - if: $ON_MR
+  variables: &image_variables
+    NAME: static
+    CONTEXT: .gitlab/ci/static
+    VERSION: ${DOCKER_STATIC_VERSION}
+    MULTI_ARCH_BUILD: "true"
+    MODE: publish
+    GRYPE_SKIP: "false"
+  parallel:
+    matrix:
+      - PLATFORM: ["arm64", "amd64"]
+
+docker manifest:
+  extends: .docker manifest
+  variables:
+    <<: *image_variables
+  needs:
+    - job: build-and-publish
+      optional: false

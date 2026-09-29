@@ -1,0 +1,125 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/f1ap/cu_cp/cu_cp_f1c_handler.h"
+#include "ocudu/f1ap/f1ap_message.h"
+#include "ocudu/f1ap/gateways/f1c_connection_client.h"
+#include "ocudu/f1u/du/f1u_gateway.h"
+
+namespace ocudu {
+
+/// \brief F1AP message notifier that stores the last received PDU.
+class test_f1ap_message_notifier : public f1ap_message_notifier
+{
+public:
+  test_f1ap_message_notifier(bool                                   cu_to_du_dir_,
+                             std::vector<f1ap_message>*             last_pdus_,
+                             std::unique_ptr<f1ap_message_notifier> decorated = nullptr) :
+    cu_to_du_dir(cu_to_du_dir_), last_pdus(last_pdus_), notifier(std::move(decorated))
+  {
+  }
+
+  void on_new_message(const f1ap_message& msg) override
+  {
+    if (cu_to_du_dir) {
+      logger.info("F1-C Forwarding CU-CP > DU: {}", msg.pdu.type().to_string());
+    } else {
+      logger.info("F1-C Forwarding DU > CU-CP: {}", msg.pdu.type().to_string());
+    }
+    if (last_pdus != nullptr) {
+      last_pdus->push_back(msg);
+    }
+    if (notifier != nullptr) {
+      notifier->on_new_message(msg);
+    }
+  }
+
+private:
+  ocudulog::basic_logger&                logger = ocudulog::fetch_basic_logger("TEST");
+  bool                                   cu_to_du_dir;
+  std::vector<f1ap_message>*             last_pdus;
+  std::unique_ptr<f1ap_message_notifier> notifier;
+};
+
+/// \brief Test helper class that creates an F1-C gateway for co-located setups (CU-CP and DU in the same process), and
+/// stores the messages received by the CU-CP and DU for testing purposes.
+class f1c_test_local_gateway : public odu::f1c_connection_client
+{
+public:
+  f1c_test_local_gateway() = default;
+  explicit f1c_test_local_gateway(ocucp::cu_cp_f1c_handler& cu_cp_du_mng_) : cu_cp_du_mng(&cu_cp_du_mng_) {}
+
+  void attach_cu_cp_du_repo(ocucp::cu_cp_f1c_handler& cu_cp_du_mng_) { cu_cp_du_mng = &cu_cp_du_mng_; }
+
+  std::unique_ptr<f1ap_message_notifier>
+  handle_du_connection_request(std::unique_ptr<f1ap_message_notifier> du_rx_pdu_notifier) override
+  {
+    connections.emplace_back(std::make_unique<du_connection_test_context>());
+    auto& conn = connections.back();
+
+    auto decorated_du_rx_pdu_notifier =
+        std::make_unique<test_f1ap_message_notifier>(true, &conn->last_du_rx_pdus, std::move(du_rx_pdu_notifier));
+
+    auto cu_rx_pdu_notifier = cu_cp_du_mng->handle_new_du_connection(std::move(decorated_du_rx_pdu_notifier));
+
+    return std::make_unique<test_f1ap_message_notifier>(
+        false, &conn->last_cu_cp_rx_pdus, std::move(cu_rx_pdu_notifier));
+  }
+
+  span<const f1ap_message> get_last_cu_cp_rx_pdus(std::size_t connection_index) const
+  {
+    return connections.at(connection_index)->last_cu_cp_rx_pdus;
+  }
+  span<const f1ap_message> get_last_cu_cp_tx_pdus(std::size_t connection_index) const
+  {
+    return connections.at(connection_index)->last_du_rx_pdus;
+  }
+
+  void clear_messages()
+  {
+    for (unsigned i = 0; i != connections.size(); ++i) {
+      connections.at(i)->last_cu_cp_rx_pdus.clear();
+      connections.at(i)->last_du_rx_pdus.clear();
+    }
+  }
+
+private:
+  struct du_connection_test_context {
+    /// Last messages sent by the DU and received by the CU-CP.
+    std::vector<f1ap_message> last_cu_cp_rx_pdus;
+
+    /// Last messages sent by the CU-CP and received by the DU.
+    std::vector<f1ap_message> last_du_rx_pdus;
+  };
+
+  ocucp::cu_cp_f1c_handler* cu_cp_du_mng = nullptr;
+
+  std::vector<std::unique_ptr<du_connection_test_context>> connections;
+};
+
+class f1u_test_local_gateway : public odu::f1u_du_gateway
+{
+  std::unique_ptr<odu::f1u_du_gateway_bearer> create_du_bearer(uint32_t                                ue_index,
+                                                               drb_id_t                                drb_id,
+                                                               s_nssai_t                               s_nssai,
+                                                               five_qi_t                               five_qi,
+                                                               odu::f1u_config                         config,
+                                                               const gtpu_teid_t&                      dl_teid,
+                                                               gtpu_teid_pool&                         dl_teid_pool,
+                                                               const up_transport_layer_info&          ul_up_tnl_info,
+                                                               odu::f1u_du_gateway_bearer_rx_notifier& du_rx,
+                                                               timer_factory                           timers,
+                                                               task_executor& ue_executor) override
+  {
+    return nullptr;
+  }
+
+  void remove_du_bearer(const up_transport_layer_info& dl_up_tnl_info) override {}
+
+  expected<std::string> get_du_bind_address(gnb_du_id_t du_index) const override { return std::string("127.0.0.1"); }
+};
+
+} // namespace ocudu

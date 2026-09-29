@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ocudulog/logger.h"
+#include "ocudu/phy/support/time_alignment_estimator/time_alignment_estimator_factories.h"
+#include "ocudu/phy/upper/sequence_generators/sequence_generator_factories.h"
+#include "ocudu/phy/upper/signal_processors/srs/srs_estimator.h"
+#include "ocudu/phy/upper/signal_processors/srs/srs_estimator_configuration_validator.h"
+#include <memory>
+
+namespace ocudu {
+
+/// Sounding Reference Signal propagation channel estimator factory.
+class srs_estimator_factory
+{
+public:
+  /// Default destructor.
+  virtual ~srs_estimator_factory() = default;
+
+  /// Creates a Sounding Reference Signal based propagation channel estimator.
+  virtual std::unique_ptr<srs_estimator> create() = 0;
+
+  /// Creates a Sounding Reference Signal based propagation channel estimator with logging.
+  virtual std::unique_ptr<srs_estimator> create(ocudulog::basic_logger& logger);
+
+  /// Creates a Sounding Reference Signal channel estimator configuration validator.
+  virtual std::unique_ptr<srs_estimator_configuration_validator> create_validator() = 0;
+};
+
+/// Create a generic SRS propagation channel estimator factory.
+std::shared_ptr<srs_estimator_factory>
+create_srs_estimator_generic_factory(std::shared_ptr<low_papr_sequence_generator_factory> sequence_generator_factory,
+                                     std::shared_ptr<time_alignment_estimator_factory>    ta_estimator_factory,
+                                     unsigned                                             max_nof_prb);
+
+/// Creates a Sounding Reference Signal propagation channel estimator pool.
+std::shared_ptr<srs_estimator_factory> create_srs_estimator_pool(std::shared_ptr<srs_estimator_factory> base_factory,
+                                                                 unsigned max_nof_threads);
+
+} // namespace ocudu

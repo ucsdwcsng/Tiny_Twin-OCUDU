@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+mkdir -p /var/log/oai-log
+echo "Running ldconfig after package removal" 2&>1
+# Only run ldconfig if this is not an apt purge
+if [ -n "$1" ]; then
+  if [ "$1" != "purge" ]; then
+    echo "Updating linker cache..."
+    echo "Running ldconfig after package installation/upgrade" 2>&1
+    if command -v ldconfig >> /var/log/oai-log/oai.log 2>&1; then
+        ldconfig
+    else
+        echo "Warning: ldconfig not found"
+    fi
+  fi
+else
+  # Likely running under RPM/dnf: just update linker cache
+  echo "Updating linker cache..."
+  echo "Running ldconfig after package installation/upgrade" 2>&1
+  if command -v ldconfig >> /var/log/oai-log/oai.log 2>&1; then
+      ldconfig
+  else
+      echo "Warning: ldconfig not found"
+  fi
+fi
+exit 0

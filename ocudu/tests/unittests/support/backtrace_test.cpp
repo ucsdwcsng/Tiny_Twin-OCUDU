@@ -1,0 +1,33 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#include "ocudu/support/backtrace.h"
+#include <string>
+
+/// \file
+/// \brief Test binary to test backtrace printing.
+///
+/// The app provokes a segmentation fault. If backtrace printing using backward-cpp has been compiled in you
+/// should be getting a nice call stack trace when launching the app.
+
+void function2(bool do_segfault)
+{
+  if (do_segfault) {
+    int* foo = nullptr;
+    *foo     = 1;
+  }
+}
+
+int function1(std::string param)
+{
+  function2(param == "segfault");
+  return 0;
+}
+
+int main(int argc, char** argv)
+{
+  // Enable backtrace.
+  ocudu::enable_backtrace();
+
+  return function1("segfault");
+}

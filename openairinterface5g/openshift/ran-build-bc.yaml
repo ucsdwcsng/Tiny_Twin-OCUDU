@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+
+### Resource consumption 2.5Gi, 17CPU (SMT ENABLED)
+kind: BuildConfig
+apiVersion: build.openshift.io/v1
+metadata:
+  name: "ran-build"
+  namespace: "oaicicd-ran"
+spec:
+    runPolicy: "Serial"
+    nodeSelector:
+        node-role.kubernetes.io/ran-build: ""
+    source:
+        type: "Binary"
+    strategy:
+        dockerStrategy:
+            dockerfilePath: "docker/Dockerfile.build.rhel9"
+    output:
+        to:
+            kind: "ImageStreamTag"
+            name: "ran-build:latest"

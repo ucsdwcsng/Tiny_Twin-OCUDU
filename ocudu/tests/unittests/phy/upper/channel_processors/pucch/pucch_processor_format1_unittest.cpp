@@ -1,0 +1,278 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "../../../support/resource_grid_test_doubles.h"
+#include "../../signal_processors/pucch/dmrs_pucch_estimator_test_doubles.h"
+#include "../uci/uci_decoder_test_doubles.h"
+#include "pucch_detector_test_doubles.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/phy/upper/channel_processors/pucch/pucch_processor.h"
+#include "ocudu/ran/pucch/pucch_constants.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+
+static constexpr unsigned nof_repetitions = 100;
+static constexpr unsigned nof_mux_ues     = 5;
+
+namespace ocudu {
+
+std::ostream& operator<<(std::ostream& out, span<const uint8_t> data)
+{
+  return out << fmt::format("[{}]", data);
+}
+
+} // namespace ocudu
+
+namespace {
+
+class PucchProcessorFormat1Fixture : public ::testing::TestWithParam<unsigned>
+{
+protected:
+  /// PUCCH Processor factory.
+  static std::shared_ptr<pucch_processor_factory> processor_factory;
+  /// Channel estimator spy factory.
+  static std::shared_ptr<dmrs_pucch_estimator_factory_spy> dmrs_factory_spy;
+  /// PUCCH detector spy factory.
+  static std::shared_ptr<pucch_detector_factory_spy> detector_factory_spy;
+
+  static void SetUpTestSuite()
+  {
+    if (!processor_factory) {
+      // Create spy factories.
+      dmrs_factory_spy     = std::make_shared<dmrs_pucch_estimator_factory_spy>();
+      detector_factory_spy = std::make_shared<pucch_detector_factory_spy>();
+
+      // Create factories required by the PUCCH demodulator factory.
+      std::shared_ptr<channel_equalizer_factory> equalizer_factory = create_channel_equalizer_generic_factory();
+      ASSERT_NE(equalizer_factory, nullptr) << "Cannot create equalizer factory.";
+
+      std::shared_ptr<demodulation_mapper_factory> demod_factory = create_demodulation_mapper_factory();
+      ASSERT_NE(demod_factory, nullptr) << "Cannot create channel demodulation factory.";
+
+      std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
+      ASSERT_NE(prg_factory, nullptr) << "Cannot create pseudo random generator factory.";
+
+      std::shared_ptr<dft_processor_factory> dft_factory = create_dft_processor_factory_fftw_slow();
+      ASSERT_NE(dft_factory, nullptr) << "Cannot create DFT processor factory";
+
+      std::shared_ptr<transform_precoder_factory> precoding_factory =
+          create_dft_transform_precoder_factory(dft_factory, pucch_constants::f3::MAX_NOF_RBS + 1);
+      ASSERT_NE(precoding_factory, nullptr) << "Cannot create transform precoder factory";
+
+      // Create PUCCH demodulator factory.
+      std::shared_ptr<pucch_demodulator_factory> pucch_demod_factory =
+          create_pucch_demodulator_factory_sw(equalizer_factory, demod_factory, prg_factory, precoding_factory);
+      ASSERT_NE(pucch_demod_factory, nullptr) << "Cannot create PUCCH demodulator factory.";
+
+      std::shared_ptr<uci_decoder_factory_spy> decoder_factory = std::make_shared<uci_decoder_factory_spy>();
+      ASSERT_NE(decoder_factory, nullptr) << "Cannot create UCI decoder factory.";
+
+      // Prepare Channel dimensions.
+      channel_estimate::channel_estimate_dimensions channel_estimate_dimensions;
+      channel_estimate_dimensions.nof_tx_layers = 1;
+      channel_estimate_dimensions.nof_rx_ports  = 1;
+      channel_estimate_dimensions.nof_symbols   = MAX_NSYMB_PER_SLOT;
+      channel_estimate_dimensions.nof_prb       = MAX_NOF_PRBS;
+
+      // Create PUCCH processor factory.
+      processor_factory = create_pucch_processor_factory_sw(
+          dmrs_factory_spy, detector_factory_spy, pucch_demod_factory, decoder_factory, channel_estimate_dimensions);
+      ASSERT_NE(processor_factory, nullptr) << "Cannot create PUCCH processor factory.";
+    }
+  }
+
+  void SetUp() override
+  {
+    // Assert PUCCH Processor factory.
+    ASSERT_NE(processor_factory, nullptr) << "Cannot create PUCCH processor factory.";
+
+    // Create PUCCH processor.
+    processor = processor_factory->create();
+    ASSERT_NE(processor, nullptr) << "Cannot create PUCCH processor.";
+
+    // Create PUCCH validator.
+    validator = processor_factory->create_validator();
+    ASSERT_NE(validator, nullptr) << "Cannot create PUCCH processor validator.";
+
+    // Select spies.
+    dmrs_spy = dmrs_factory_spy->get_entries().back();
+    ASSERT_NE(dmrs_spy, nullptr);
+
+    detector_spy = detector_factory_spy->get_entries().back();
+    ASSERT_NE(detector_spy, nullptr);
+
+    detector_spy->clear();
+  }
+
+  pucch_processor::format1_batch_configuration GetConfig()
+  {
+    std::mt19937                           rgen = std::mt19937(GetParam());
+    pucch_processor::format1_configuration config;
+
+    std::uniform_int_distribution<unsigned> num_dist(0, static_cast<unsigned>(subcarrier_spacing::kHz240));
+    std::uniform_int_distribution<unsigned> slot_dist(0, 160 * 1024 - 1);
+    std::uniform_int_distribution<unsigned> bwp_size_dist(1, MAX_NOF_PRBS);
+    std::uniform_int_distribution<unsigned> bool_dist(0, 1);
+    std::uniform_int_distribution<unsigned> starting_prb_dist(0, 274);
+    std::uniform_int_distribution<unsigned> n_id_dist(0, 1023);
+    std::uniform_int_distribution<uint16_t> nof_harq_ack_dist(0, 2);
+    std::uniform_int_distribution<uint8_t>  ports_dist(0, 255);
+    std::uniform_int_distribution<unsigned> initial_cyclic_shift_dist(0, 11);
+    std::uniform_int_distribution<unsigned> time_domain_occ_dist(0, 6);
+
+    config.cp           = (bool_dist(rgen) == 0) ? cyclic_prefix::NORMAL : cyclic_prefix::EXTENDED;
+    unsigned numerology = (config.cp == cyclic_prefix::EXTENDED) ? 2 : num_dist(rgen);
+    unsigned slot       = slot_dist(rgen) % slot_point(numerology, 0).nof_slots_per_hyper_system_frame();
+    config.slot         = slot_point(numerology, slot);
+    config.bwp_size_rb  = bwp_size_dist(rgen);
+    config.starting_prb = std::min(starting_prb_dist(rgen), config.bwp_size_rb - 1);
+    if (bool_dist(rgen)) {
+      config.second_hop_prb.emplace((config.starting_prb + config.bwp_size_rb / 2) % config.bwp_size_rb);
+    } else {
+      config.second_hop_prb = {};
+    }
+    config.n_id                 = n_id_dist(rgen);
+    config.nof_harq_ack         = nof_harq_ack_dist(rgen);
+    config.ports                = {ports_dist(rgen)};
+    config.initial_cyclic_shift = initial_cyclic_shift_dist(rgen);
+    config.time_domain_occ      = time_domain_occ_dist(rgen);
+
+    std::uniform_int_distribution<unsigned> nof_symbols_dist(4, get_nsymb_per_slot(config.cp));
+    config.nof_symbols = nof_symbols_dist(rgen);
+
+    std::uniform_int_distribution<unsigned> bwp_start_dist(0, MAX_NOF_PRBS - config.bwp_size_rb);
+    config.bwp_start_rb = bwp_start_dist(rgen);
+
+    std::uniform_int_distribution<unsigned> start_symbol_index_dist(0,
+                                                                    get_nsymb_per_slot(config.cp) - config.nof_symbols);
+    config.start_symbol_index = start_symbol_index_dist(rgen);
+
+    pucch_processor::format1_batch_configuration batch_config(config);
+
+    // Start from "i_ue = 1" since the first UE was configured with "config".
+    for (unsigned i_ue = 1; i_ue != nof_mux_ues; ++i_ue) {
+      unsigned ics  = initial_cyclic_shift_dist(rgen);
+      unsigned occi = time_domain_occ_dist(rgen);
+      while (batch_config.entries.contains(ics, occi)) {
+        ics  = initial_cyclic_shift_dist(rgen);
+        occi = time_domain_occ_dist(rgen);
+      }
+      batch_config.entries.insert(ics, occi, {.context = {}, .nof_harq_ack = nof_harq_ack_dist(rgen)});
+    }
+
+    return batch_config;
+  }
+
+  std::unique_ptr<pucch_processor>     processor;
+  std::unique_ptr<pucch_pdu_validator> validator;
+  dmrs_pucch_estimator_spy*            dmrs_spy;
+  pucch_detector_spy*                  detector_spy;
+};
+
+std::shared_ptr<pucch_processor_factory>          PucchProcessorFormat1Fixture::processor_factory    = nullptr;
+std::shared_ptr<dmrs_pucch_estimator_factory_spy> PucchProcessorFormat1Fixture::dmrs_factory_spy     = nullptr;
+std::shared_ptr<pucch_detector_factory_spy>       PucchProcessorFormat1Fixture::detector_factory_spy = nullptr;
+
+pucch_processor::format1_configuration
+create_full_config(const pucch_processor::format1_common_configuration&                    common,
+                   const pucch_processor::format1_batch_configuration::ue_dedicated_entry& ue,
+                   unsigned                                                                ics,
+                   unsigned                                                                occi)
+{
+  return {
+      .context              = ue.context,
+      .slot                 = common.slot,
+      .bwp_size_rb          = common.bwp_size_rb,
+      .bwp_start_rb         = common.bwp_start_rb,
+      .cp                   = common.cp,
+      .starting_prb         = common.starting_prb,
+      .second_hop_prb       = common.second_hop_prb,
+      .n_id                 = common.n_id,
+      .nof_harq_ack         = ue.nof_harq_ack,
+      .ports                = common.ports,
+      .initial_cyclic_shift = ics,
+      .start_symbol_index   = common.start_symbol_index,
+      .time_domain_occ      = occi,
+  };
+}
+
+TEST_P(PucchProcessorFormat1Fixture, UnitTest)
+{
+  // Generate random configuration with valid values.
+  pucch_processor::format1_batch_configuration batch_config = GetConfig();
+
+  for (const auto& this_entry : batch_config.entries) {
+    pucch_processor::format1_configuration config = create_full_config(
+        batch_config.common_config, this_entry.value, this_entry.initial_cyclic_shift, this_entry.time_domain_occ);
+    // Make sure configuration is valid.
+    ASSERT_TRUE(validator->is_valid(config));
+  }
+
+  // Prepare resource grid.
+  resource_grid_reader_spy grid;
+
+  // Process.
+  const auto& results = processor->process(grid, batch_config);
+
+  ASSERT_EQ(detector_spy->get_entries_format1().size(), 1);
+  const auto& detector_entry = detector_spy->get_entries_format1().back();
+
+  // Verify PUCCH detector.
+  ASSERT_EQ(detector_entry.config.slot, batch_config.common_config.slot);
+  ASSERT_EQ(detector_entry.config.cp, batch_config.common_config.cp);
+  ASSERT_EQ(detector_entry.config.starting_prb,
+            batch_config.common_config.starting_prb + batch_config.common_config.bwp_start_rb);
+  if (batch_config.common_config.second_hop_prb.has_value()) {
+    ASSERT_TRUE(detector_entry.config.second_hop_prb.has_value());
+    ASSERT_EQ(detector_entry.config.second_hop_prb.value(),
+              batch_config.common_config.second_hop_prb.value() + batch_config.common_config.bwp_start_rb);
+  } else {
+    ASSERT_FALSE(detector_entry.config.second_hop_prb.has_value());
+  }
+  ASSERT_EQ(detector_entry.config.start_symbol_index, batch_config.common_config.start_symbol_index);
+  ASSERT_EQ(detector_entry.config.nof_symbols, batch_config.common_config.nof_symbols);
+  ASSERT_EQ(detector_entry.config.group_hopping, pucch_group_hopping::NEITHER);
+  ASSERT_EQ(detector_entry.config.ports, batch_config.common_config.ports);
+  ASSERT_EQ(detector_entry.config.beta_pucch, 1.0F);
+  ASSERT_EQ(detector_entry.config.n_id, batch_config.common_config.n_id);
+
+  for (const auto& item : detector_entry.mux_nof_harq_ack) {
+    unsigned ics  = item.initial_cyclic_shift;
+    unsigned occi = item.time_domain_occ;
+
+    ASSERT_TRUE(batch_config.entries.contains(ics, occi));
+
+    const auto& config = batch_config.entries.get(ics, occi);
+    ASSERT_EQ(item.value, config.nof_harq_ack);
+
+    // Validate UCI message.
+    ASSERT_TRUE(results.contains(ics, occi));
+    const auto& rx_result  = results.get(ics, occi);
+    const auto& rx_message = rx_result.message;
+
+    // Extract results.
+    const pucch_detector::pucch_detection_result_csi& detector_result_csi = detector_entry.mux_results.get(ics, occi);
+    const pucch_detector::pucch_detection_result&     detector_result     = detector_result_csi.detection_result;
+
+    ASSERT_EQ(rx_message.get_status(), detector_result.uci_message.get_status());
+    ASSERT_EQ(rx_message.get_full_payload().size(), config.nof_harq_ack);
+    ASSERT_EQ(rx_message.get_harq_ack_bits().size(), config.nof_harq_ack);
+    ASSERT_EQ(rx_message.get_harq_ack_bits(), detector_result.uci_message.get_harq_ack_bits());
+    ASSERT_EQ(rx_message.get_csi_part1_bits().size(), 0);
+    ASSERT_EQ(rx_message.get_csi_part2_bits().size(), 0);
+
+    // Validate CSI.
+    ASSERT_TRUE(rx_result.csi.get_epre_dB().has_value());
+    ASSERT_TRUE(rx_result.csi.get_rsrp_dB().has_value());
+    ASSERT_TRUE(rx_result.csi.get_sinr_dB().has_value());
+    ASSERT_FALSE(rx_result.csi.get_total_evm().has_value());
+    ASSERT_FALSE(rx_result.csi.get_cfo_Hz().has_value());
+    ASSERT_FALSE(rx_result.csi.get_time_alignment().has_value());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(PucchProcessorFormat1, PucchProcessorFormat1Fixture, ::testing::Range(0U, nof_repetitions));
+
+} // namespace

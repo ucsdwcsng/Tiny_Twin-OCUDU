@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation. Licensed under the MIT license.
+#
+# EdgeRIC-on-Janus DL MCS codeletset: one codelet on the mac_sched_dl_mcs_ctrl
+# control hook that BOTH reports per-UE state (out_dl_mcs) and applies the xApp's
+# per-UE MCS override (mcs_in control-input channel).
+
+codeletset_id: edgeric_mcs
+
+codelet_descriptor:
+  - codelet_name: dl_mcs
+    codelet_path: ${JBPF_CODELETS}/edgeric/dl_mcs.o
+    hook_name: mac_sched_dl_mcs_ctrl
+    priority: 1
+    out_io_channel:
+      - name: out_dl_mcs
+        forward_destination: DestinationNone
+        serde:
+          file_path: ${JBPF_CODELETS}/edgeric/dl_mcs_report:dl_mcs_report_serializer.so
+          protobuf:
+            package_path: ${JBPF_CODELETS}/edgeric/dl_mcs_report.pb
+            msg_name: dl_mcs_report
+    in_io_channel:
+      - name: mcs_in

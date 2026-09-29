@@ -1,0 +1,113 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/du_types.h"
+#include "ocudu/ran/plmn_identity.h"
+#include "ocudu/ran/resource_block.h"
+#include "ocudu/ran/s_nssai.h"
+#include <optional>
+
+namespace ocudu {
+
+/// Identifier of a RRM Policy Member.
+struct rrm_policy_member {
+  plmn_identity plmn_id = plmn_identity::test_value();
+  /// Single Network Slice Selection Assistance Information (S-NSSAI).
+  s_nssai_t s_nssai;
+
+  bool operator==(const rrm_policy_member& other) const
+  {
+    return plmn_id == other.plmn_id and s_nssai == other.s_nssai;
+  }
+};
+
+/// Resource configuration of a RRM Policy Ratio Group.
+struct rrm_policy_ratio_group {
+  /// The resource type of interest for an RRM Policy.
+  /// \remark See 3GPP TS 28.541, Section 4.4.1 Attribute properties.
+  enum class resource_type_t { prb, prb_ul, prb_dl };
+  resource_type_t resource_type = resource_type_t::prb;
+  /// List of RRM policy members (PLMN + S-NSSAI combinations).
+  std::vector<rrm_policy_member> policy_members_list;
+  /// The percentage of dedicated PRBs to be allocated to this group.
+  std::optional<unsigned> dedicated_ratio;
+  /// The percentage of prioritized + dedicated PRBs to be allocated to this group.
+  std::optional<unsigned> minimum_ratio;
+  /// The percentage of dedicated + prioritized + shared PRBs to be allocated to this group.
+  std::optional<unsigned> maximum_ratio;
+};
+
+/// Number of dedicated, prioritized and shared PRBs associated with a given RAN slice.
+struct rrm_policy_ratio_rb_limits {
+  rrm_policy_ratio_rb_limits() = default;
+  rrm_policy_ratio_rb_limits(unsigned min_rbs_, unsigned max_rbs_) : rrm_policy_ratio_rb_limits(0, min_rbs_, max_rbs_)
+  {
+  }
+  rrm_policy_ratio_rb_limits(unsigned ded_rbs_, unsigned min_rbs_, unsigned max_rbs_) :
+    ded_rbs(ded_rbs_), min_rbs(min_rbs_), max_rbs(max_rbs_)
+  {
+    ocudu_assert(ded_rbs_ <= min_rbs_, "Invalid RB limits: dedicated {} > minimum {}", ded_rbs_, min_rbs_);
+    ocudu_assert(min_rbs_ <= max_rbs_, "Invalid RB limits: minimum {} > maximum {}", min_rbs_, max_rbs_);
+  }
+
+  /// Sum of dedicated and prioritized RBs.
+  unsigned min() const { return min_rbs; }
+
+  /// Sum of dedicated, prioritized and shared RBs.
+  unsigned max() const { return max_rbs; }
+
+  /// Dedicated PRBs.
+  unsigned dedicated() const { return ded_rbs; }
+
+  /// Prioritized PRBs.
+  unsigned prioritized() const { return min_rbs - ded_rbs; }
+
+  /// Shared PRBs.
+  unsigned shared() const { return max_rbs - min_rbs; }
+
+private:
+  unsigned ded_rbs = 0;
+  unsigned min_rbs = 0;
+  unsigned max_rbs = MAX_NOF_PRBS;
+};
+
+constexpr unsigned MAX_SLICE_RECONF_POLICIES = 16;
+
+/// Request to reconfigure slicing policies for a given DU cell.
+struct du_cell_slice_reconfig_request {
+  du_cell_index_t cell_index;
+  struct rrm_policy_config {
+    rrm_policy_member rrc_member;
+    /// RB limits for the RRM policy member.
+    rrm_policy_ratio_rb_limits rbs;
+  };
+  static_vector<rrm_policy_config, MAX_SLICE_RECONF_POLICIES> rrm_policies;
+};
+
+} // namespace ocudu
+
+namespace fmt {
+
+template <>
+struct formatter<ocudu::rrm_policy_member> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::rrm_policy_member& member, FormatContext& ctx) const
+  {
+    return format_to(ctx.out(),
+                     "{{PLMN={}, SST={}, SD={}}}",
+                     member.plmn_id.to_string(),
+                     member.s_nssai.sst.value(),
+                     member.s_nssai.sd.value());
+  }
+};
+
+} // namespace fmt

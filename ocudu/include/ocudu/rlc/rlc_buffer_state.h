@@ -1,0 +1,48 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "fmt/base.h"
+#include <chrono>
+#include <optional>
+
+namespace ocudu {
+
+/// Structure used to represent RLC buffer state.
+/// The buffer state is transmitted towards lower layers (i.e. the MAC and the scheduler).
+/// It includes the amount of data pending for transmission (queued SDUs, headers, and for RLC AM, ReTx and status PDUs)
+/// and the time of arrival of the oldest PDU among those queues.
+struct rlc_buffer_state {
+  /// Amount of bytes pending for transmission.
+  unsigned pending_bytes = 0;
+  /// Head of line (HOL) time of arrival (TOA) holds the TOA of the oldest SDU or ReTx that is queued for transmission.
+  std::optional<std::chrono::time_point<std::chrono::steady_clock>> hol_toa;
+};
+} // namespace ocudu
+
+namespace fmt {
+
+// associated formatter
+template <>
+struct formatter<ocudu::rlc_buffer_state> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::rlc_buffer_state& bs, FormatContext& ctx) const
+  {
+    if (bs.hol_toa) {
+      return format_to(ctx.out(),
+                       "pending_bytes={} hol_toa={}",
+                       bs.pending_bytes,
+                       std::chrono::duration_cast<std::chrono::microseconds>(bs.hol_toa->time_since_epoch()));
+    }
+    return format_to(ctx.out(), "pending_bytes={} hol_toa=none", bs.pending_bytes);
+  }
+};
+} // namespace fmt

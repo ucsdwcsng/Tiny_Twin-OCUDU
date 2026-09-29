@@ -1,0 +1,204 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "lib/scheduler/cell/cell_harq_manager.h"
+#include "lib/scheduler/logging/scheduler_metrics_ue_configurator.h"
+#include "lib/scheduler/pdcch_scheduling/pdcch_resource_allocator.h"
+#include "lib/scheduler/uci_scheduling/uci_allocator.h"
+#include "ocudu/scheduler/scheduler_metrics.h"
+#include "ocudu/support/error_handling.h"
+#include <set>
+
+namespace ocudu {
+
+class dummy_pdcch_resource_allocator : public pdcch_resource_allocator
+{
+public:
+  rnti_t                          last_dl_pdcch_rnti;
+  pdcch_dl_information            next_ue_pdcch_alloc;
+  pdcch_ul_information            next_ue_ul_pdcch_alloc;
+  std::function<bool(slot_point)> fail_pdcch_alloc_cond;
+
+  void slot_indication(slot_point sl_tx)
+  {
+    // do nothing.
+  }
+
+  pdcch_dl_information* alloc_dl_pdcch_common(cell_slot_resource_allocator& slot_alloc,
+                                              rnti_t                        rnti,
+                                              search_space_id               ss_id,
+                                              aggregation_level             aggr_lvl) override
+  {
+    report_fatal_error_if_not(
+        (fmt::underlying(ss_id)) ==
+            (fmt::underlying(slot_alloc.cfg.params.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id)),
+        "fmt::underlying(ss_id) != "
+        "fmt::underlying(slot_alloc.cfg.params.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id)");
+    if (fail_pdcch_alloc_cond and fail_pdcch_alloc_cond(slot_alloc.slot)) {
+      return nullptr;
+    }
+    slot_alloc.result.dl.dl_pdcchs.emplace_back();
+    slot_alloc.result.dl.dl_pdcchs.back().ctx.rnti    = rnti;
+    slot_alloc.result.dl.dl_pdcchs.back().ctx.bwp_cfg = &slot_alloc.cfg.params.dl_cfg_common.init_dl_bwp.generic_params;
+    slot_alloc.result.dl.dl_pdcchs.back().ctx.coreset_cfg =
+        &*slot_alloc.cfg.params.dl_cfg_common.init_dl_bwp.pdcch_common.coreset0;
+    slot_alloc.result.dl.dl_pdcchs.back().ctx.cces          = {static_cast<uint8_t>(get_ncce(slot_alloc.slot)),
+                                                               ocudu::aggregation_level::n4};
+    slot_alloc.result.dl.dl_pdcchs.back().ctx.context.ss_id = ss_id;
+    return &slot_alloc.result.dl.dl_pdcchs.back();
+  }
+
+  pdcch_dl_information* alloc_dl_pdcch_ue(cell_slot_resource_allocator& slot_alloc,
+                                          rnti_t                        rnti,
+                                          const ue_cell_configuration&  user,
+                                          search_space_id               ss_id,
+                                          aggregation_level             aggr_lvl) override
+  {
+    last_dl_pdcch_rnti = rnti;
+    return &next_ue_pdcch_alloc;
+  }
+
+  pdcch_ul_information* alloc_ul_pdcch_ue(cell_slot_resource_allocator& slot_alloc,
+                                          rnti_t                        rnti,
+                                          const ue_cell_configuration&  user,
+                                          search_space_id               ss_id,
+                                          aggregation_level             aggr_lvl) override
+  {
+    ocudu_terminate("UE-dedicated PDCCHs not supported");
+    return nullptr;
+  }
+
+  pdcch_ul_information* alloc_ul_pdcch_common(cell_slot_resource_allocator& slot_alloc,
+                                              rnti_t                        rnti,
+                                              search_space_id               ss_id,
+                                              aggregation_level             aggr_lvl) override
+  {
+    return &next_ue_ul_pdcch_alloc;
+  }
+
+  bool cancel_last_pdcch(cell_slot_resource_allocator& slot_alloc) override
+  {
+    ocudu_terminate("Cancellations not supported");
+    return false;
+  }
+
+private:
+  unsigned get_ncce(slot_point pdcch_sl)
+  {
+    if (not last_sl.valid() or pdcch_sl != last_sl) {
+      next_ncce = to_nof_cces(ocudu::aggregation_level::n4);
+      last_sl   = pdcch_sl;
+      return 0;
+    }
+    unsigned ret = next_ncce;
+    next_ncce += to_nof_cces(ocudu::aggregation_level::n4);
+    return ret;
+  }
+
+  unsigned   next_ncce = 0;
+  slot_point last_sl;
+};
+
+class dummy_uci_allocator : public uci_allocator
+{
+public:
+  std::optional<uci_allocation> next_uci_allocation;
+
+  void slot_indication(slot_point sl_tx) override { next_uci_allocation.reset(); }
+
+  std::optional<uci_allocation>
+  alloc_harq_ack(cell_resource_allocator& res_alloc,
+                 const ue_cell&           ue_cc,
+                 unsigned                 k0,
+                 span<const uint8_t>      k1_list,
+                 pucch_repetition_factor  max_rep_factor = pucch_repetition_factor::n1) override
+  {
+    return next_uci_allocation;
+  }
+
+  void multiplex_uci_on_pusch(ul_sched_info&                pusch_grant,
+                              cell_slot_resource_allocator& slot_alloc,
+                              const ue_cell_configuration&  ue_cell_cfg,
+                              bool                          aperiodic_csi_request,
+                              bool                          configured_grant = false) override
+  {
+  }
+
+  bool alloc_sr_opportunity(cell_slot_resource_allocator& slot_alloc, const ue_cell_configuration& ue_cell_cfg) override
+  {
+    return true;
+  }
+
+  bool alloc_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
+                             const ue_cell_configuration&  ue_cell_cfg) override
+  {
+    return true;
+  }
+
+  uint8_t get_scheduled_pdsch_counter_in_ue_uci(slot_point uci_slot, rnti_t crnti) override { return 0; }
+
+  bool has_harq_ack_on_common_pucch_res(rnti_t crnti, slot_point sl_tx) override { return false; }
+
+  bool has_pucch_repetition(rnti_t crnti, slot_point sl_tx) override { return false; }
+};
+
+class sched_cfg_dummy_notifier : public sched_configuration_notifier
+{
+public:
+  std::optional<du_cell_index_t> last_rem_cell;
+  std::optional<du_ue_index_t>   last_ue_index_cfg;
+  std::optional<du_ue_index_t>   last_ue_index_deleted;
+
+  void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) override
+  {
+    last_ue_index_cfg = ue_index;
+    completed_deletions.erase(ue_index);
+    completed_creations.insert(ue_index);
+  }
+  void on_ue_deletion_completed(du_ue_index_t ue_index) override
+  {
+    last_ue_index_deleted = ue_index;
+    completed_creations.erase(ue_index);
+    completed_deletions.insert(ue_index);
+  }
+
+  // Per-UE completion state that, unlike the "last_*" fields, does not lose events when several UEs complete
+  // concurrently.
+  bool ue_creation_completed(du_ue_index_t ue_index) const { return completed_creations.count(ue_index) > 0; }
+  bool ue_deletion_completed(du_ue_index_t ue_index) const { return completed_deletions.count(ue_index) > 0; }
+
+private:
+  std::set<du_ue_index_t> completed_creations;
+  std::set<du_ue_index_t> completed_deletions;
+};
+
+class scheduler_ue_metrics_dummy_notifier : public scheduler_metrics_notifier
+{
+public:
+  std::optional<scheduler_cell_metrics> last_reported_metrics;
+
+  void report_metrics(const scheduler_cell_metrics& ue_metrics) override { last_reported_metrics = ue_metrics; }
+};
+
+class scheduler_harq_timeout_dummy_notifier : public harq_timeout_notifier
+{
+public:
+  du_ue_index_t last_ue_idx = INVALID_DU_UE_INDEX;
+
+  void on_feedback_timeout(du_ue_index_t ue_idx, bool is_dl, bool ack) override { last_ue_idx = ue_idx; }
+  void on_retx_timeout(du_ue_index_t ue_idx, bool is_dl) override { last_ue_idx = ue_idx; }
+  void on_feedback_disabled_harq_timeout(du_ue_index_t ue_idx, bool is_dl, units::bytes tbs) override {}
+};
+
+class scheduler_ue_metrics_dummy_configurator : public sched_metrics_ue_configurator
+{
+public:
+  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci) override {}
+  void handle_ue_reconfiguration(du_ue_index_t ue_index) override {}
+  void handle_ue_deletion(du_ue_index_t ue_index) override {}
+};
+
+} // namespace ocudu

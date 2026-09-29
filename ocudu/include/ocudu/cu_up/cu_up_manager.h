@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/e1ap/cu_up/e1ap_cu_up_bearer_context_update.h"
+#include "ocudu/support/async/async_task.h"
+
+namespace ocudu::ocuup {
+
+/// Interface for the E1AP to notify the CU-UP manger
+/// of events and messages that require handling.
+class cu_up_manager_e1ap_interface
+{
+public:
+  virtual ~cu_up_manager_e1ap_interface() = default;
+
+  /// \brief Create a new UE context and handle bearer setup request.
+  /// \param[in] msg The original bearer setup request.
+  /// \return Returns message containing the index of the created UE and all response/failure message.
+  virtual e1ap_bearer_context_setup_response
+  handle_bearer_context_setup_request(const e1ap_bearer_context_setup_request& msg) = 0;
+
+  /// \brief Create a new UE context and handle bearer modification request.
+  /// \param[in] msg The original bearer modification request.
+  /// \return Returns message containing the index of the created UE and all response/failure message.
+  virtual async_task<e1ap_bearer_context_modification_response>
+  handle_bearer_context_modification_request(const e1ap_bearer_context_modification_request& msg) = 0;
+
+  /// \brief Handle bearer release command and remove the associated UE context.
+  /// \param[in] msg The original bearer release command.
+  virtual async_task<void> handle_bearer_context_release_command(const e1ap_bearer_context_release_command& msg) = 0;
+
+  /// \brief Handle E1 reset message. It will release bearer contexts as indicated by the reset message.
+  /// \param[in] msg The reset message.
+  virtual async_task<void> handle_e1_reset(const e1ap_reset& msg) = 0;
+
+  virtual void handle_e1ap_connection_drop(cu_up_e1_index_t e1_index) = 0;
+
+  virtual void schedule_cu_up_async_task(async_task<void> task) = 0;
+
+  virtual void schedule_ue_async_task(cu_up_ue_index_t ue_index, async_task<void> task) = 0;
+};
+
+/// Interface for the PDCP to notify the CU-UP manger
+/// of events that require handling. This includes running out
+/// of PDCP COUNTs, protocol errors and the need for resuming
+/// an inactive bearer context.
+class cu_up_manager_pdcp_interface
+{
+public:
+  virtual ~cu_up_manager_pdcp_interface() = default;
+
+  virtual void handle_pdcp_protocol_failure(cu_up_ue_index_t ue_index) = 0;
+
+  virtual void handle_pdcp_integrity_failure(cu_up_ue_index_t ue_index) = 0;
+
+  virtual void handle_pdcp_max_count_reached(cu_up_ue_index_t ue_index) = 0;
+
+  virtual void handle_pdcp_resume_required(cu_up_ue_index_t ue_index) = 0;
+};
+
+class cu_up_manager : public cu_up_manager_e1ap_interface, public cu_up_manager_pdcp_interface
+{
+public:
+  ~cu_up_manager() override = default;
+
+  virtual async_task<void> stop()             = 0;
+  virtual async_task<void> enable_test_mode() = 0;
+  virtual size_t           get_nof_ues()      = 0;
+};
+
+} // namespace ocudu::ocuup

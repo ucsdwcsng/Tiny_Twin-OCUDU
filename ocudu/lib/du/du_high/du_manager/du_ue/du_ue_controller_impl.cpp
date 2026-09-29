@@ -1,0 +1,400 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "du_ue_controller_impl.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/du/du_high/du_manager/du_manager_params.h"
+#include "ocudu/mac/mac_ue_configurator.h"
+#include "ocudu/support/async/async_no_op_task.h"
+#include "ocudu/support/async/execute_on_blocking.h"
+
+using namespace ocudu;
+using namespace odu;
+
+static const char* get_rlf_cause_str(rlf_cause cause)
+{
+  switch (cause) {
+    case rlf_cause::max_harq_nacks_reached:
+      return "MAC max consecutive HARQ NACKs/DTX reached";
+    case rlf_cause::max_crc_kos_reached:
+      return "MAC max consecutive CRC KOs reached";
+    case rlf_cause::max_csi_dtx_reached:
+      return "MAC max consecutive undecoded CSIs reached";
+    case rlf_cause::max_rlc_retxs_reached:
+      return "RLC max ReTxs reached";
+    case rlf_cause::rlc_protocol_failure:
+      return "RLC protocol failure";
+    default:
+      break;
+  }
+  return "unknown";
+}
+
+static rlf_cause to_rlf_cause(mac_rlf_cause cause)
+{
+  switch (cause) {
+    case mac_rlf_cause::max_consecutive_harq_kos:
+      return rlf_cause::max_harq_nacks_reached;
+    case mac_rlf_cause::max_consecutive_crc_kos:
+      return rlf_cause::max_crc_kos_reached;
+    case mac_rlf_cause::max_consecutive_csi_dtx:
+      return rlf_cause::max_csi_dtx_reached;
+  }
+  return rlf_cause::max_harq_nacks_reached;
+}
+
+namespace {
+
+/// Adapter between MAC and DU manager RLF detection handler.
+class mac_rlf_du_adapter final : public mac_ue_radio_link_notifier
+{
+public:
+  mac_rlf_du_adapter(du_ue_index_t ue_index_, du_ue_manager_repository& ue_db_) : ue_index(ue_index_), ue_db(ue_db_) {}
+
+  void on_rlf_detected(mac_rlf_cause cause) override
+  {
+    // Note: The UE might have already been deleted by the time this method is called, so we need to check if it still
+    // exists.
+    du_ue* u = ue_db.find_ue(ue_index);
+    if (u == nullptr) {
+      return;
+    }
+    u->handle_rlf_detection(to_rlf_cause(cause), std::nullopt);
+  }
+
+  void on_crnti_ce_received() override
+  {
+    du_ue* u = ue_db.find_ue(ue_index);
+    if (u == nullptr) {
+      return;
+    }
+    u->handle_crnti_ce_detection();
+  }
+
+private:
+  du_ue_index_t             ue_index;
+  du_ue_manager_repository& ue_db;
+};
+
+/// Adapter between RLC and DU manager RLF detection handler.
+class rlc_rlf_du_adapter : public rlc_tx_upper_layer_control_notifier
+{
+public:
+  rlc_rlf_du_adapter(du_ue_index_t ue_index_, du_ue_manager_repository& ue_db_, task_executor& ctrl_exec_) :
+    ue_index(ue_index_), ue_db(ue_db_), ctrl_exec(ctrl_exec_)
+  {
+  }
+
+  void on_protocol_failure(rb_id_t rb_id) override { dispatch_impl(rlf_cause::rlc_protocol_failure, rb_id); }
+  void on_max_retx(rb_id_t rb_id) override { dispatch_impl(rlf_cause::max_rlc_retxs_reached, rb_id); }
+
+private:
+  void dispatch_impl(rlf_cause cause, std::optional<rb_id_t> rb_id = std::nullopt)
+  {
+    bool prev_value = rlf_triggered.exchange(true, std::memory_order_relaxed);
+    if (prev_value) {
+      // RLF already dispatched. Do not bother to dispatch an RLF due RLC failure again.
+      return;
+    }
+    // Dispatch RLF handling to DU manager execution context.
+    bool dispatched = ctrl_exec.execute([ue_idx = ue_index, rb_id = rb_id, ue_db_ptr = &ue_db, cause]() {
+      // Note: The UE might have already been deleted by the time this method is called, so we need to check if it still
+      // exists.
+      du_ue* u = ue_db_ptr->find_ue(ue_idx);
+      if (u == nullptr) {
+        return;
+      }
+      u->handle_rlf_detection(cause, rb_id);
+    });
+    if (not dispatched) {
+      if (rb_id.has_value()) {
+        logger.warning("ue={} {}: Failed to dispatch RLF detection handling", ue_index, *rb_id);
+      } else {
+        logger.warning("ue={}: Failed to dispatch RLF detection handling", ue_index);
+      }
+      rlf_triggered.store(false, std::memory_order_relaxed);
+    }
+  }
+
+  du_ue_index_t             ue_index;
+  du_ue_manager_repository& ue_db;
+  task_executor&            ctrl_exec;
+  std::atomic<bool>         rlf_triggered{false};
+  ocudulog::basic_logger&   logger = ocudulog::fetch_basic_logger("DU-MNG");
+};
+
+} // namespace
+
+// -------------
+
+class du_ue_controller_impl::rlf_state_machine
+{
+public:
+  rlf_state_machine(du_ue_controller_impl& ue_ctx_, const du_manager_params& cfg_) :
+    ue_ctx(ue_ctx_), cfg(cfg_), release_timer(cfg.services.timers.create_unique_timer(cfg.services.du_mng_exec))
+  {
+  }
+
+  void handle_rlf_detection(rlf_cause cause, std::optional<rb_id_t> rb_id)
+  {
+    if (not is_handling_new_rlfs()) {
+      // Either the RLF has been triggered or the UE is already being destroyed.
+      return;
+    }
+
+    if (not cfg.f1ap.ue_mng.has_gnb_cu_ue_f1ap_id(ue_ctx.ue_index)) {
+      // Ignore RLF, because the CU-CP has not yet provided a gNB-CU-UE-F1AP-ID for this UE (we need it for UE
+      // context release request).
+      logger.warning("ue={}, rnti={}: RLF detected but ignored. Cause: The UE still has no assigned "
+                     "gnb-CU-UE-F1AP-ID",
+                     ue_ctx.ue_index,
+                     ue_ctx.rnti);
+      return;
+    }
+
+    if (release_timer.is_running()) {
+      // In case the RLF has already been triggered, check if RLF cause can be promoted in severity.
+
+      if (not is_mac_rlf_cause(cause) and is_mac_rlf_cause(*current_cause)) {
+        // RLFs due to RLC failures take priority over RLF due to MAC KOs, as they cannot be recovered from.
+        current_cause = cause;
+        stop_ue_drb_activity();
+      }
+      return;
+    }
+
+    // The release timer is not running yet. We need to store the cause and start the timer.
+    current_cause    = cause;
+    auto timeout_val = get_release_timeout();
+    if (rb_id.has_value()) {
+      logger.warning(
+          "ue={} rnti={}: RLF detected with cause \"{}\", from {}. Timer of {} msec to release UE started...",
+          ue_ctx.ue_index,
+          ue_ctx.rnti,
+          get_rlf_cause_str(cause),
+          *rb_id,
+          timeout_val.count());
+    } else {
+      logger.warning("ue={} rnti={}: RLF detected with cause \"{}\". Timer of {} msec to release UE started...",
+                     ue_ctx.ue_index,
+                     ue_ctx.rnti,
+                     get_rlf_cause_str(cause),
+                     timeout_val.count());
+    }
+
+    // Start timer.
+    release_timer.set(timeout_val, [this]() { trigger_ue_release(); });
+    release_timer.run();
+
+    // Stop traffic in case of RLC-initiated RLF.
+    if (not is_mac_rlf_cause(cause)) {
+      stop_ue_drb_activity();
+    }
+  }
+
+  void handle_crnti_ce_detection()
+  {
+    if (release_timer.is_running() and is_mac_rlf_cause(*current_cause)) {
+      // If the RLF was not due to MAC KOs, a C-RNTI CE is not enough to cancel the RLF.
+      release_timer.stop();
+      logger.info("ue={}: RLF timer reset. Cause: C-RNTI CE was received for the UE", ue_ctx.ue_index);
+    }
+  }
+
+  bool deactivate()
+  {
+    if (release_timer.is_valid()) {
+      release_timer.reset();
+      return true;
+    }
+    return false;
+  }
+
+private:
+  bool is_handling_new_rlfs() const
+  {
+    return release_timer.is_valid() and not ue_ctx.cond_mobility.is_success_access_required() and
+           current_cause != rlf_cause::rlc_protocol_failure and current_cause != rlf_cause::max_rlc_retxs_reached;
+  }
+
+  std::chrono::milliseconds get_release_timeout() const
+  {
+    // Note: Between an RLF being detected and the UE being released, the DU manager will wait for enough time to allow
+    // the UE to perform C-RNTI CE (t310) and/or RRC re-establishment (t311).
+    // Note: When the UE is initially created, it does not yet have a SRB2+DRB configured, so we do not need to account
+    // for the t311 in the RLF timer, as the UE won't try to do RRC re-establishment at that stage.
+    const auto& ue_timers = cfg.ran.cells[ue_ctx.pcell_index].si.ue_timers_and_constants;
+
+    bool has_srb2_and_drb = ue_ctx.bearers.srbs().contains(srb_id_t::srb2) and not ue_ctx.bearers.drbs().empty();
+    return has_srb2_and_drb ? ue_timers.t310 + ue_timers.t311 : ue_timers.t310;
+  }
+
+  void trigger_ue_release()
+  {
+    logger.info("ue={}: RLF timer expired with cause=\"{}\". Requesting a UE release...",
+                ue_ctx.ue_index,
+                get_rlf_cause_str(*current_cause));
+
+    // Request UE release to the CU.
+    using cause_type = f1ap_ue_context_release_request::cause_type;
+    cause_type cause = is_mac_rlf_cause(*current_cause) ? cause_type::rlf_mac : cause_type::rlf_rlc;
+    cfg.f1ap.ue_mng.handle_ue_context_release_request(f1ap_ue_context_release_request{ue_ctx.ue_index, cause});
+
+    // Stop handling of RLFs, so that no new RLFs are triggered after the UE is scheduled for release.
+    deactivate();
+  }
+
+  void stop_ue_drb_activity()
+  {
+    // We are at a point of no return for this UE. Disable DRB traffic (not RLFs because we still the RLF timer to
+    // trigger).
+    // Note: We use an async task rather than just an execute call, to ensure that this task is not dispatched after
+    // the UE has already been deleted.
+    ue_ctx.schedule_async_task(ue_ctx.handle_rb_stop_request(false));
+  }
+
+  du_ue_controller_impl&   ue_ctx;
+  const du_manager_params& cfg;
+  ocudulog::basic_logger&  logger = ocudulog::fetch_basic_logger("DU-MNG");
+
+  std::optional<rlf_cause> current_cause;
+  unique_timer             release_timer;
+};
+
+// -------------
+
+du_ue_controller_impl::du_ue_controller_impl(const du_ue_context&         context_,
+                                             du_ue_manager_repository&    ue_db_,
+                                             const du_manager_params&     cfg_,
+                                             ue_ran_resource_configurator ue_ran_res_) :
+  du_ue(context_, std::move(ue_ran_res_)),
+  ue_db(ue_db_),
+  cfg(cfg_),
+  rlf_handler(std::make_unique<rlf_state_machine>(*this, cfg)),
+  mac_rlf_notifier(std::make_unique<mac_rlf_du_adapter>(ue_index, ue_db)),
+  rlc_rlf_notifier(std::make_unique<rlc_rlf_du_adapter>(ue_index, ue_db, cfg.services.du_mng_exec))
+{
+}
+
+du_ue_controller_impl::~du_ue_controller_impl() {}
+
+void du_ue_controller_impl::disable_rlf_detection()
+{
+  if (rlf_handler->deactivate()) {
+    logger.debug("ue={}: Disabled RLF detection", ue_index);
+  }
+}
+
+async_task<void> du_ue_controller_impl::handle_activity_stop_request(bool stop_srbs)
+{
+  // Disable RLF detections.
+  disable_rlf_detection();
+
+  return handle_rb_stop_request(stop_srbs);
+}
+
+async_task<void> du_ue_controller_impl::handle_rb_stop_request(bool stop_srbs)
+{
+  // Disable RBs
+  if (stop_srbs) {
+    logger.debug("ue={}: Stopping SRB and DRB traffic...", ue_index);
+  } else {
+    logger.debug("ue={}: Stopping DRB traffic...", ue_index);
+  }
+
+  // Disconnect bearers from within the UE execution context.
+  return run_in_ue_executor([this, stop_srbs]() {
+    // > Disconnect all DRBs.
+    for (const auto& drb_pair : bearers.drbs()) {
+      du_ue_drb& drb = *drb_pair.second;
+      drb.stop();
+    }
+
+    // > Disconnect SRBs.
+    if (stop_srbs) {
+      for (du_ue_srb& srb : bearers.srbs()) {
+        srb.stop();
+      }
+    }
+
+    if (stop_srbs) {
+      logger.info("ue={}: SRB and DRB traffic stopped", ue_index);
+    } else {
+      logger.info("ue={}: DRB traffic stopped", ue_index);
+    }
+  });
+}
+
+async_task<void> du_ue_controller_impl::handle_drb_stop_request(span<const drb_id_t> drbs_to_stop)
+{
+  if (drbs_to_stop.empty()) {
+    return launch_no_op_task();
+  }
+
+  // Cannot pass span to executor, otherwise, we will have a dangling pointer.
+  std::vector<drb_id_t> drbs_to_stop_cpy(drbs_to_stop.begin(), drbs_to_stop.end());
+
+  return run_in_ue_executor([this, drbs_to_stop_cpy = std::move(drbs_to_stop_cpy)]() {
+    // > Subset of DRBs will be stopped.
+    const auto& ue_drbs = bearers.drbs();
+    for (drb_id_t drb_id : drbs_to_stop_cpy) {
+      auto it = ue_drbs.find(drb_id);
+      if (it == ue_drbs.end()) {
+        logger.warning("ue={}: Failed to stop {} activity. Cause: DRB not found", ue_index, drb_id);
+        continue;
+      }
+      it->second->stop();
+      logger.debug("ue={}: DRB {} traffic was stopped", ue_index, drb_id);
+    }
+  });
+}
+
+void du_ue_controller_impl::handle_rlf_detection(rlf_cause cause, std::optional<rb_id_t> rb_id)
+{
+  rlf_handler->handle_rlf_detection(cause, rb_id);
+}
+
+void du_ue_controller_impl::handle_crnti_ce_detection()
+{
+  rlf_handler->handle_crnti_ce_detection();
+}
+
+async_task<void> du_ue_controller_impl::run_in_ue_executor(unique_task task)
+{
+  auto log_dispatch_retry = [this](const char* exec_name) {
+    return [this, exec_name]() {
+      logger.warning("ue={}: Postpone dispatching of control task to \"{}\" executor. Cause: Task queue is full",
+                     ue_index,
+                     exec_name);
+    };
+  };
+
+  return launch_async([this, task = std::move(task), log_dispatch_retry](coro_context<async_task<void>>& ctx) {
+    CORO_BEGIN(ctx);
+
+    // Sync with UE control executor to run provided task.
+    CORO_AWAIT(defer_on_blocking(
+        cfg.services.ue_execs.ctrl_executor(ue_index), cfg.services.timers, log_dispatch_retry("ctrl_executor")));
+    task();
+
+    // Sync with remaining UE executors, as there might be still pending tasks dispatched to those.
+    // TODO: use when_all awaiter
+    CORO_AWAIT(defer_on_blocking(cfg.services.ue_execs.mac_ul_pdu_executor(ue_index),
+                                 cfg.services.timers,
+                                 log_dispatch_retry("mac_ul_pdu_executor")));
+    CORO_AWAIT(defer_on_blocking(cfg.services.ue_execs.f1u_dl_pdu_executor(ue_index),
+                                 cfg.services.timers,
+                                 log_dispatch_retry("f1u_dl_pdu_executor")));
+
+    // Sync with rlc-lower executor, as there might be some timer stop pending.
+    CORO_AWAIT(defer_on_blocking(cfg.services.cell_execs.rlc_lower_executor(pcell_index),
+                                 cfg.services.timers,
+                                 log_dispatch_retry("rlc_lower_executor")));
+
+    // Return back to DU manager executor.
+    CORO_AWAIT(defer_on_blocking(cfg.services.du_mng_exec, cfg.services.timers, log_dispatch_retry("du_mng_exec")));
+
+    CORO_RETURN();
+  });
+}

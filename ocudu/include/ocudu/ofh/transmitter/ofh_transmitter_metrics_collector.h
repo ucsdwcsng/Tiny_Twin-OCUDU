@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+namespace ocudu {
+namespace ofh {
+
+struct transmitter_metrics;
+
+/// Open Fronthaul metrics collector interface used to collect metrics from a transmitter.
+class transmitter_metrics_collector
+{
+public:
+  virtual ~transmitter_metrics_collector() = default;
+
+  /// Collect the metrics of an Open Fronthaul transmitter.
+  virtual void collect_metrics(transmitter_metrics& metric) = 0;
+};
+
+} // namespace ofh
+} // namespace ocudu

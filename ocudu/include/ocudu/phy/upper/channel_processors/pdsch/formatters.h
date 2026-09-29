@@ -1,0 +1,96 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/support/re_pattern_formatters.h"
+#include "ocudu/phy/upper/channel_processors/pdsch/pdsch_processor.h"
+#include "ocudu/ran/pdsch/pdsch_context_formatter.h"
+#include "ocudu/ran/precoding_beamforming_formatters.h"
+#include "fmt/ranges.h"
+
+namespace fmt {
+
+/// \brief Custom formatter for \c pdsch_processor::codeword_description.
+template <>
+struct formatter<ocudu::pdsch_processor::codeword_description> {
+  /// Helper used to parse formatting options and format fields.
+  ocudu::delimited_formatter helper;
+
+  /// Default constructor.
+  formatter() = default;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return helper.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::pdsch_processor::codeword_description& codeword_descr, FormatContext& ctx) const
+  {
+    helper.format_always(ctx, "mod={}", to_string(codeword_descr.modulation));
+    helper.format_always(ctx, "rv={}", codeword_descr.rv);
+    helper.format_always(
+        ctx, "bg={}", (codeword_descr.ldpc_base_graph == ocudu::ldpc_base_graph_type::BG1) ? "BG1" : "BG2");
+
+    return ctx.out();
+  }
+};
+
+/// \brief Custom formatter for \c pdsch_processor::pdu_t.
+template <>
+struct formatter<ocudu::pdsch_processor::pdu_t> {
+  /// Helper used to parse formatting options and format fields.
+  ocudu::delimited_formatter helper;
+
+  /// Default constructor.
+  formatter() = default;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return helper.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::pdsch_processor::pdu_t& pdu, FormatContext& ctx) const
+  {
+    helper.format_always(ctx, "rnti={}", pdu.rnti);
+    if (pdu.context.has_value()) {
+      helper.format_always(ctx, *pdu.context);
+    }
+    helper.format_if_verbose(ctx, "bwp=[{}, {})", pdu.bwp_start_rb, pdu.bwp_start_rb + pdu.bwp_size_rb);
+    helper.format_always(ctx, "prb={}", pdu.freq_alloc);
+    helper.format_always(ctx, "symb=[{}, {})", pdu.start_symbol_index, pdu.start_symbol_index + pdu.nof_symbols);
+    helper.format_always(ctx, fmt::join(pdu.codewords, " "));
+
+    helper.format_if_verbose(ctx, "n_id={}", pdu.n_id);
+    helper.format_if_verbose(
+        ctx, "ref_point={}", (pdu.ref_point == ocudu::pdsch_processor::pdu_t::CRB0) ? "CRB0" : "PRB0");
+    helper.format_if_verbose(ctx, "dmrs_type={}", (pdu.dmrs == ocudu::dmrs_config_type::type1) ? 1 : 2);
+    helper.format_if_verbose(ctx, "dmrs_mask={}", pdu.dmrs_symbol_mask);
+    helper.format_if_verbose(ctx, "n_scidid={}", pdu.scrambling_id);
+    helper.format_if_verbose(ctx, "n_scid={}", pdu.n_scid);
+    helper.format_if_verbose(ctx, "ncgwd={}", pdu.nof_cdm_groups_without_data);
+    helper.format_if_verbose(ctx, "tbs_lbrm={}bytes", pdu.tbs_lbrm);
+    helper.format_if_verbose(ctx, "power_dmrs={:+.1f}dB", -pdu.ratio_pdsch_dmrs_to_sss_dB);
+    helper.format_if_verbose(ctx, "power_data={:+.1f}dB", pdu.ratio_pdsch_data_to_sss_dB);
+    helper.format_if_verbose(ctx, "slot={}", pdu.slot);
+    helper.format_if_verbose(ctx, "cp={}", pdu.cp.to_string());
+
+    if (helper.is_multiline()) {
+      helper.format_if_verbose(ctx, "{:n}", pdu.precoding_and_beamforming);
+    } else {
+      helper.format_if_verbose(ctx, "{}", pdu.precoding_and_beamforming);
+    }
+
+    if (pdu.reserved.get_nof_entries() > 0) {
+      helper.format_if_verbose(ctx, "reserved={}", pdu.reserved.get_re_patterns());
+    }
+    return ctx.out();
+  }
+};
+
+} // namespace fmt

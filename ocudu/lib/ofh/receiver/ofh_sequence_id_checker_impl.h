@@ -1,0 +1,90 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/adt/bounded_bitset.h"
+#include "ocudu/adt/circular_map.h"
+#include "ocudu/ofh/ofh_constants.h"
+#include "ocudu/ofh/receiver/ofh_sequence_id_checker.h"
+
+namespace ocudu {
+namespace ofh {
+
+/// Open Fronthaul sequence identifier checker implementation.
+class sequence_id_checker_impl : public sequence_id_checker
+{
+  static constexpr int NOF_SEQUENCES_IDENTIFIERS      = 1u << 8;
+  static constexpr int HALF_NOF_SEQUENCES_IDENTIFIERS = NOF_SEQUENCES_IDENTIFIERS / 2;
+
+  bounded_bitset<MAX_SUPPORTED_EAXC_ID_VALUE>                        initialized;
+  static_circular_map<uint8_t, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> counters;
+
+public:
+  /// Default constructor.
+  sequence_id_checker_impl() : initialized(MAX_SUPPORTED_EAXC_ID_VALUE)
+  {
+    for (unsigned K = 0; K != MAX_SUPPORTED_EAXC_ID_VALUE; ++K) {
+      counters.emplace(K, 0);
+    }
+  }
+
+  // See interface for documentation.
+  int update_and_compare_seq_id(unsigned eaxc, uint8_t seq_id) override
+  {
+    ocudu_assert(eaxc < MAX_SUPPORTED_EAXC_ID_VALUE,
+                 "Invalid eAxC value '{}'. Maximum eAxC value is '{}'",
+                 eaxc,
+                 MAX_SUPPORTED_EAXC_ID_VALUE);
+
+    auto& counter = counters[eaxc];
+
+    // First packet is always valid.
+    if (!initialized.test(eaxc)) {
+      initialized.set(eaxc);
+      counter = seq_id;
+
+      return 0;
+    }
+
+    // Get the expected sequence identifier and update its value.
+    uint8_t expected_seq_id = counter + 1;
+
+    if (seq_id == expected_seq_id) {
+      ++counter;
+
+      return 0;
+    }
+
+    int nof_skipped_seq_id = get_nof_skipped_sequence_id(seq_id, expected_seq_id);
+
+    // Update the expected sequence identifier when the sequence identifier is from the future.
+    if (nof_skipped_seq_id > 0) {
+      counter = seq_id;
+    }
+
+    return nof_skipped_seq_id;
+  }
+
+private:
+  /// \brief Returns the number of skipped sequence identifiers using the given sequence identifier and expected
+  /// sequence identifier.
+  ///
+  /// A negative difference means that the sequence identifier received is from the past.
+  /// No difference means that the sequence identifier matches the expected.
+  /// A positive difference means that the sequence identifier is from the future.
+  static int get_nof_skipped_sequence_id(uint8_t seq_id, uint8_t expected_seq_id)
+  {
+    int a = static_cast<int>(seq_id) - static_cast<int>(expected_seq_id);
+    if (a >= HALF_NOF_SEQUENCES_IDENTIFIERS) {
+      return a - NOF_SEQUENCES_IDENTIFIERS;
+    }
+    if (a < -HALF_NOF_SEQUENCES_IDENTIFIERS) {
+      return a + NOF_SEQUENCES_IDENTIFIERS;
+    }
+    return a;
+  }
+};
+
+} // namespace ofh
+} // namespace ocudu

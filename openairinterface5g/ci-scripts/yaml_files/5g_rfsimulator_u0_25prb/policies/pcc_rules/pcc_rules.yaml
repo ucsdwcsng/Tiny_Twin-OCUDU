@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+gbr-rule-default-3mbps:
+  flowInfos:
+    - flowDescription: permit out ip from any to assigned
+      packetFilterUsage: true
+  precedence: 10
+  refQosData:
+    - gbr-qos-default-3mbps
+
+gbr-rule-52080:
+  flowInfos:
+    - flowDescription: permit out ip from any to assigned 52080
+      packetFilterUsage: true
+    - flowDescription: permit in ip from assigned 52080 to any
+      packetFilterUsage: true
+  precedence: 7
+  refQosData:
+    - gbr-qos-52080-20mbps
+
+gbr-rule-52081:
+  flowInfos:
+    - flowDescription: permit out ip from any to assigned 52081
+      packetFilterUsage: true
+    - flowDescription: permit in ip from assigned 52081 to any
+      packetFilterUsage: true
+  precedence: 8
+  refQosData:
+    - gbr-qos-52081-10mbps

@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/cu_up/cu_up_manager.h"
+#include "ocudu/e1ap/cu_up/e1ap_cu_up.h"
+
+namespace ocudu::ocuup {
+
+/// Adapter between E1AP and CU-UP manager
+class e1ap_cu_up_manager_adapter : public e1ap_cu_up_manager_notifier
+{
+public:
+  e1ap_cu_up_manager_adapter() : logger(ocudulog::fetch_basic_logger("CU-UP-E1")) {}
+
+  void connect_cu_up_manager(cu_up_manager_e1ap_interface& cu_up_handler_) { cu_up_handler = &cu_up_handler_; }
+
+  void disconnect() { cu_up_handler = nullptr; }
+
+  e1ap_bearer_context_setup_response
+  on_bearer_context_setup_request_received(const e1ap_bearer_context_setup_request& msg) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.warning("Could not handle context setup command, no CU-UP handler present");
+      return {}; // return failure to setup bearer context
+    }
+    return cu_up_handler->handle_bearer_context_setup_request(msg);
+  }
+
+  async_task<e1ap_bearer_context_modification_response>
+  on_bearer_context_modification_request_received(const e1ap_bearer_context_modification_request& msg) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.warning("Could not handle context modification command, no CU-UP handler present. ue={}", msg.ue_index);
+      return {}; // return failure to modify bearer context
+    }
+    return cu_up_handler->handle_bearer_context_modification_request(msg);
+  }
+
+  async_task<void> on_bearer_context_release_command_received(const e1ap_bearer_context_release_command& msg) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.warning("Could not handle context release command, no CU-UP handler present. ue={}", msg.ue_index);
+      return launch_async([](coro_context<async_task<void>>& ctx) {
+        CORO_BEGIN(ctx);
+        CORO_RETURN();
+      });
+    }
+    return cu_up_handler->handle_bearer_context_release_command(msg);
+  }
+
+  async_task<void> on_e1_reset_received(const e1ap_reset& msg) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.warning("Could not handle E1 reset, no CU-UP handler present");
+      return launch_async([](coro_context<async_task<void>>& ctx) {
+        CORO_BEGIN(ctx);
+        CORO_RETURN();
+      });
+    }
+    return cu_up_handler->handle_e1_reset(msg);
+  }
+
+  void on_schedule_cu_up_async_task(async_task<void> task) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.error("Could not schedule CU-UP task, no CU-UP handler present");
+      return;
+    }
+    cu_up_handler->schedule_cu_up_async_task(std::move(task));
+  }
+
+  void on_schedule_ue_async_task(cu_up_ue_index_t ue_index, async_task<void> task) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.error("Could not schedule UE task, no CU-UP handler present. ue={}", ue_index);
+      return;
+    }
+    cu_up_handler->schedule_ue_async_task(ue_index, std::move(task));
+  }
+
+  void on_connection_loss(cu_up_e1_index_t e1_index) override
+  {
+    if (cu_up_handler == nullptr) {
+      logger.error("Connection loss detected, but no CU-UP handler present.");
+      return;
+    }
+    cu_up_handler->handle_e1ap_connection_drop(e1_index);
+  }
+
+private:
+  cu_up_manager_e1ap_interface* cu_up_handler = nullptr;
+  ocudulog::basic_logger&       logger;
+};
+
+} // namespace ocudu::ocuup

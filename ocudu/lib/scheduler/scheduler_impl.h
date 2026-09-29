@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "cell_scheduler.h"
+#include "config/sched_config_manager.h"
+#include "ue_scheduling/ue_scheduler.h"
+#include "ocudu/scheduler/config/scheduler_expert_config.h"
+#include "ocudu/scheduler/mac_scheduler.h"
+
+namespace ocudu {
+
+class scheduler_impl final : public mac_scheduler
+{
+public:
+  explicit scheduler_impl(const scheduler_config& sched_cfg);
+
+  bool handle_cell_configuration_request(const sched_cell_configuration_request_message& msg) override;
+  void handle_cell_removal_request(du_cell_index_t cell_index) override;
+
+  // Cell activity.
+  void handle_cell_activation_request(du_cell_index_t cell_index) override;
+  void handle_cell_deactivation_request(du_cell_index_t cell_index) override;
+
+  void handle_slice_reconfiguration_request(const du_cell_slice_reconfig_request& req) override;
+  void handle_ntn_ul_ta_update(const sched_cell_ntn_ul_ta_update& req) override;
+
+  // Sys Info handling.
+  void handle_si_update_request(const si_scheduling_update_request& req) override;
+  void handle_pws_si_update_request(const pws_si_scheduling_update_request& req) override;
+
+  // scheduler_slot_handler interface methods.
+  const sched_result& slot_indication(slot_point_extended sl_tx, du_cell_index_t cell_index) noexcept override;
+  void handle_error_indication(slot_point sl_tx, du_cell_index_t cell_index, error_outcome event) override;
+
+  // DU manager events.
+  void handle_ue_creation_request(const sched_ue_creation_request_message& ue_request) override;
+  void handle_ue_reconfiguration_request(const sched_ue_reconfiguration_message& ue_request) override;
+  void handle_ue_removal_request(du_ue_index_t ue_index) override;
+  void handle_ue_config_applied(du_ue_index_t ue_index) override;
+  void handle_ue_deactivation_request(du_ue_index_t ue_index) override;
+
+  // F1 events.
+  void handle_paging_information(const sched_paging_information& pi) override;
+
+  // RLC events.
+  void handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& bs) override;
+
+  // MAC events.
+  void handle_dl_mac_ce_indication(const dl_mac_ce_indication& mac_ce) override;
+  void handle_ul_bsr_indication(const ul_bsr_indication_message& bsr) override;
+  void handle_ul_phr_indication(const ul_phr_indication_message& phr_ind) override;
+  void handle_ul_ta_report_indication(const ul_ta_report_indication_message& ta_report_ind) override;
+  void handle_crnti_ce_received(du_ue_index_t ue_index) override;
+
+  // PHY events.
+  void handle_rach_indication(const rach_indication_message& msg) override;
+  void handle_crc_indication(const ul_crc_indication& crc) override;
+  void handle_uci_indication(const uci_indication& uci) override;
+  void handle_srs_indication(const srs_indication& srs) override;
+
+  // Positioning events.
+  void handle_positioning_measurement_request(const positioning_measurement_request& req) override;
+  void handle_positioning_measurement_stop(const positioning_measurement_stop_request& req) override;
+
+private:
+  const scheduler_expert_config expert_params;
+
+  ocudulog::basic_logger& logger;
+
+  // Manager of configurations forwarded to the scheduler.
+  sched_config_manager cfg_mng;
+
+  /// Container of DU Cell Group-specific resources.
+  slotted_id_table<du_cell_group_index_t, std::unique_ptr<ue_scheduler>, MAX_DU_CELL_GROUPS> groups;
+
+  /// Container of DU Cell-specific resources.
+  slotted_id_table<du_cell_index_t, std::unique_ptr<cell_scheduler>, MAX_NOF_DU_CELLS> cells;
+};
+
+} // namespace ocudu

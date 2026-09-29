@@ -1,0 +1,302 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/cu_cp/cu_cp.h"
+#include "ocudu/cu_up/cu_up.h"
+#include "ocudu/cu_up/cu_up_types.h"
+#include "ocudu/e1ap/common/e1ap_common.h"
+#include "ocudu/e1ap/common/e1ap_message.h"
+#include "ocudu/e1ap/cu_cp/e1ap_cu_cp.h"
+#include "ocudu/e1ap/cu_up/e1ap_cu_up.h"
+#include "ocudu/e1ap/cu_up/e1ap_cu_up_bearer_context_update.h"
+#include "ocudu/gateways/network_gateway.h"
+#include "ocudu/ran/cu_cp_types.h"
+#include "ocudu/support/async/fifo_async_task_scheduler.h"
+
+namespace ocudu {
+
+/// \brief Generate a random gnb_cu_cp_ue_e1ap_id
+gnb_cu_cp_ue_e1ap_id_t generate_random_gnb_cu_cp_ue_e1ap_id();
+
+/// \brief Generate a random gnb_cu_up_ue_e1ap_id
+gnb_cu_up_ue_e1ap_id_t generate_random_gnb_cu_up_ue_e1ap_id();
+
+class dummy_e1ap_cu_up_processor_notifier : public ocucp::e1ap_cu_up_processor_notifier
+{
+public:
+  dummy_e1ap_cu_up_processor_notifier() : logger(ocudulog::fetch_basic_logger("TEST")) {}
+
+  void on_cu_up_e1_setup_request_received(const cu_up_e1_setup_request& msg) override
+  {
+    logger.info("Received E1SetupRequest");
+    last_cu_up_e1_setup_request = msg;
+  }
+
+  bool schedule_async_task(async_task<void> task) override { return task_sched.schedule(std::move(task)); }
+
+  void set_ue_index(uint16_t ue_index_) { ue_index = ue_index_; }
+
+  cu_up_e1_setup_request last_cu_up_e1_setup_request;
+
+private:
+  ocudulog::basic_logger&   logger;
+  uint16_t                  ue_index = to_underlying(cu_cp_ue_index_t::min);
+  fifo_async_task_scheduler task_sched{16};
+};
+
+class dummy_e1ap_cu_up_notifier : public ocuup::e1ap_cu_up_manager_notifier
+{
+public:
+  dummy_e1ap_cu_up_notifier() : logger(ocudulog::fetch_basic_logger("TEST")), task_loop(1024) {}
+
+  ocuup::e1ap_bearer_context_setup_response
+  on_bearer_context_setup_request_received(const ocuup::e1ap_bearer_context_setup_request& msg) override
+  {
+    logger.info("Received BearerContextSetupRequest");
+    last_bearer_context_setup_request.security_info.security_algorithm = msg.security_info.security_algorithm;
+    last_bearer_context_setup_request.security_info.up_security_key.encryption_key =
+        msg.security_info.up_security_key.encryption_key.copy();
+    last_bearer_context_setup_request.security_info.up_security_key.integrity_protection_key =
+        msg.security_info.up_security_key.integrity_protection_key.copy();
+    last_bearer_context_setup_request.ue_dl_aggregate_maximum_bit_rate = msg.ue_dl_aggregate_maximum_bit_rate;
+    last_bearer_context_setup_request.serving_plmn                     = msg.serving_plmn;
+    last_bearer_context_setup_request.activity_notif_level             = msg.activity_notif_level;
+    last_bearer_context_setup_request.pdu_session_res_to_setup_list    = msg.pdu_session_res_to_setup_list;
+
+    ocuup::e1ap_bearer_context_setup_response response = {};
+    response.ue_index                                  = ue_index;
+    response.success                                   = true;
+    for (const auto& request_setup_item : msg.pdu_session_res_to_setup_list) {
+      e1ap_pdu_session_resource_setup_modification_item response_setup_item;
+      response_setup_item.pdu_session_id               = request_setup_item.pdu_session_id;
+      response_setup_item.ng_dl_up_tnl_info.gtp_teid   = int_to_gtpu_teid(1);
+      response_setup_item.ng_dl_up_tnl_info.tp_address = transport_layer_address::create_from_string("127.0.0.1");
+
+      for (const auto& request_drb_item : request_setup_item.drb_to_setup_list_ng_ran) {
+        e1ap_drb_setup_item_ng_ran response_drb_item;
+        response_drb_item.drb_id = request_drb_item.drb_id;
+
+        response_setup_item.drb_setup_list_ng_ran.emplace(request_drb_item.drb_id, response_drb_item);
+      }
+
+      response.pdu_session_resource_setup_list.emplace(request_setup_item.pdu_session_id, response_setup_item);
+    }
+
+    return response;
+  }
+
+  async_task<ocuup::e1ap_bearer_context_modification_response>
+  on_bearer_context_modification_request_received(const ocuup::e1ap_bearer_context_modification_request& msg) override
+  {
+    logger.info("Received BearerContextModificationRequest");
+
+    // copy message
+    if (last_bearer_context_modification_request.security_info.has_value()) {
+      e1ap_security_info security_info             = {};
+      security_info.security_algorithm             = msg.security_info.value().security_algorithm;
+      security_info.up_security_key.encryption_key = msg.security_info.value().up_security_key.encryption_key.copy();
+      security_info.up_security_key.integrity_protection_key =
+          msg.security_info.value().up_security_key.integrity_protection_key.copy();
+      last_bearer_context_modification_request.security_info = security_info;
+    }
+    if (msg.ue_dl_aggr_max_bit_rate.has_value()) {
+      last_bearer_context_modification_request.ue_dl_aggr_max_bit_rate = msg.ue_dl_aggr_max_bit_rate.value();
+    }
+    if (msg.ue_dl_max_integrity_protected_data_rate.has_value()) {
+      last_bearer_context_modification_request.ue_dl_max_integrity_protected_data_rate =
+          msg.ue_dl_max_integrity_protected_data_rate.value();
+    }
+    if (msg.bearer_context_status_change.has_value()) {
+      last_bearer_context_modification_request.bearer_context_status_change = msg.bearer_context_status_change.value();
+    }
+    if (msg.new_ul_tnl_info_required.has_value()) {
+      last_bearer_context_modification_request.new_ul_tnl_info_required = msg.new_ul_tnl_info_required.value();
+    }
+    if (msg.ue_inactivity_timer.has_value()) {
+      last_bearer_context_modification_request.ue_inactivity_timer = msg.ue_inactivity_timer.value();
+    }
+    if (msg.data_discard_required.has_value()) {
+      last_bearer_context_modification_request.data_discard_required = msg.data_discard_required.value();
+    }
+    if (msg.ng_ran_bearer_context_mod_request.has_value()) {
+      last_bearer_context_modification_request.ng_ran_bearer_context_mod_request =
+          msg.ng_ran_bearer_context_mod_request.value();
+    }
+    if (msg.ran_ue_id.has_value()) {
+      last_bearer_context_modification_request.ran_ue_id = msg.ran_ue_id.value();
+    }
+    if (msg.gnb_du_id.has_value()) {
+      last_bearer_context_modification_request.gnb_du_id = msg.gnb_du_id.value();
+    }
+    if (msg.activity_notif_level.has_value()) {
+      last_bearer_context_modification_request.activity_notif_level = msg.activity_notif_level.value();
+    }
+
+    ocuup::e1ap_bearer_context_modification_response response = {};
+    response.ue_index                                         = ue_index;
+    response.success                                          = true;
+
+    return launch_async([response](coro_context<async_task<ocuup::e1ap_bearer_context_modification_response>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_RETURN(response);
+    });
+  }
+
+  async_task<void>
+  on_bearer_context_release_command_received(const ocuup::e1ap_bearer_context_release_command& msg) override
+  {
+    logger.info("Received BearerContextReleaseCommand");
+    last_bearer_context_release_command = msg;
+    return launch_async([](coro_context<async_task<void>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_RETURN();
+    });
+  }
+
+  async_task<void> on_e1_reset_received(const ocuup::e1ap_reset& msg) override
+  {
+    logger.info("Received E1Reset");
+    return launch_async([](coro_context<async_task<void>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_RETURN();
+    });
+  }
+
+  void on_schedule_ue_async_task(cu_up_ue_index_t ue_index_, async_task<void> task) override
+  {
+    task_loop.schedule(std::move(task)); // schedule ue task in dummy task loop
+  }
+
+  void on_schedule_cu_up_async_task(async_task<void> task) override
+  {
+    task_loop.schedule(std::move(task)); // schedule ue task in dummy task loop
+  }
+
+  void on_connection_loss(cu_up_e1_index_t e1_index) override {}
+
+  void set_ue_index(uint16_t ue_index_) { ue_index = int_to_ue_index(ue_index_); }
+
+  ocuup::e1ap_bearer_context_release_command      last_bearer_context_release_command;
+  ocuup::e1ap_bearer_context_modification_request last_bearer_context_modification_request;
+  ocuup::e1ap_bearer_context_setup_request        last_bearer_context_setup_request;
+
+private:
+  ocudulog::basic_logger& logger;
+  cu_up_ue_index_t        ue_index = MIN_CU_UP_UE_INDEX;
+
+  fifo_async_task_scheduler task_loop;
+};
+
+/// Reusable class implementing the notifier interface.
+class e1ap_null_notifier : public e1ap_message_notifier
+{
+public:
+  e1ap_message last_e1ap_msg;
+
+  void on_new_message(const e1ap_message& msg) override
+  {
+    ocudulog::basic_logger& test_logger = ocudulog::fetch_basic_logger("TEST");
+    test_logger.info("Received PDU");
+    last_e1ap_msg = msg;
+  }
+};
+
+/// Reusable notifier class that a) stores the received PDU for test inspection and b)
+/// calls the registered PDU handler (if any). The handler can be added upon construction
+/// or later via the attach_handler() method.
+class dummy_e1ap_pdu_notifier : public e1ap_message_notifier
+{
+public:
+  dummy_e1ap_pdu_notifier() : logger(ocudulog::fetch_basic_logger("TEST")) {}
+
+  void attach_handler(e1ap_message_handler* handler_) { handler = handler_; }
+  void on_new_message(const e1ap_message& msg) override
+  {
+    logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
+    last_e1ap_msg = msg; // store msg
+
+    if (handler != nullptr) {
+      logger.info("Forwarding PDU");
+      handler->handle_message(msg);
+    }
+  }
+  e1ap_message last_e1ap_msg;
+
+private:
+  ocudulog::basic_logger& logger;
+  e1ap_message_handler*   handler = nullptr;
+};
+
+/// Reusable notifier class that a) stores the received PDU for test inspection and b)
+/// calls the registered PDU handler (if any). The handler can be added upon construction
+/// or later via the attach_handler() method.
+class dummy_cu_cp_e1ap_pdu_notifier : public e1ap_message_notifier
+{
+public:
+  dummy_cu_cp_e1ap_pdu_notifier(ocucp::cu_cp* cu_cp_, e1ap_message_handler* handler_) :
+    logger(ocudulog::fetch_basic_logger("TEST")), cu_cp(cu_cp_), handler(handler_)
+  {
+  }
+
+  void attach_handler(ocucp::cu_cp* cu_cp_, e1ap_message_handler* handler_)
+  {
+    cu_cp   = cu_cp_;
+    handler = handler_;
+  }
+
+  void on_new_message(const e1ap_message& msg) override
+  {
+    logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
+    last_e1ap_msg = msg; // store msg
+
+    if (handler != nullptr) {
+      logger.info("Forwarding PDU");
+      handler->handle_message(msg);
+    }
+  }
+  e1ap_message last_e1ap_msg;
+
+private:
+  ocudulog::basic_logger& logger;
+  ocucp::cu_cp*           cu_cp   = nullptr;
+  e1ap_message_handler*   handler = nullptr;
+};
+
+/// Dummy handler just printing the received PDU.
+class dummy_e1ap_message_handler : public e1ap_message_handler
+{
+public:
+  dummy_e1ap_message_handler() : logger(ocudulog::fetch_basic_logger("TEST")) {}
+  void handle_message(const e1ap_message& msg) override
+  {
+    last_msg = msg;
+    logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
+  }
+
+  e1ap_message last_msg;
+
+private:
+  ocudulog::basic_logger& logger;
+};
+
+/// Dummy notifier just printing the received msg.
+class dummy_e1ap_message_notifier : public e1ap_message_notifier
+{
+public:
+  dummy_e1ap_message_notifier() : logger(ocudulog::fetch_basic_logger("TEST")) {}
+  void on_new_message(const e1ap_message& msg) override
+  {
+    last_msg = msg;
+    logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
+  }
+
+  e1ap_message last_msg;
+
+private:
+  ocudulog::basic_logger& logger;
+};
+
+} // namespace ocudu

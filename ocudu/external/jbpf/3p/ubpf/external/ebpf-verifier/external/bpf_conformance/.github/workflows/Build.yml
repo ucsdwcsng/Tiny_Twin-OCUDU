@@ -1,0 +1,187 @@
+# Copyright (c) Microsoft Corporation
+# SPDX-License-Identifier: MIT
+
+name: CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      configuration:
+        required: true
+        type: string
+      enable_sanitizers:
+        required: false
+        type: boolean
+      enable_coverage:
+        required: false
+        type: boolean
+      publish_docker:
+        required: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: alan-jowett/bpf_conformance
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+
+    runs-on: ${{inputs.platform}}
+    env:
+      BUILD_TYPE: ${{inputs.configuration}}
+
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@c95a14d0e5bab51a9f56296a4eb0e416910cd350 # v2.10.3
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        submodules: 'recursive'
+
+    - name: Install prerequisites - Ubuntu
+      if: ${{ startsWith(inputs.platform, 'ubuntu-') }}
+      run: |
+        sudo apt-get install -y libboost-dev \
+         libboost-filesystem-dev \
+         libboost-program-options-dev \
+         libelf-dev \
+         lcov
+
+    - name: Install prerequisites - macos-latest
+      if: inputs.platform == 'macos-latest'
+      run: |
+        brew install \
+          cmake \
+          ninja \
+          ccache \
+          boost
+
+    - name: Build/install libbpf From Source
+      if: ${{ startsWith(inputs.platform, 'ubuntu-') }}
+      run: ./.github/scripts/build-libbpf.sh
+      shell: bash
+
+    - name: Cache nuget packages
+      if: ${{ startsWith(inputs.platform, 'windows-') }}
+      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+      env:
+        cache-name: cache-nuget-modules
+      with:
+        path: build\packages
+        key: ${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}-${{inputs.platform}}
+
+    - name: Configure CMake (Windows)
+      if: ${{ startsWith(inputs.platform, 'windows-') }}
+      run: |
+        cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Configure CMake (non-Windows)
+      if: ${{ !startsWith(inputs.platform, 'windows-') }}
+      run: |
+        if [ "${{inputs.enable_sanitizers}}" = "true" ]; then
+          export SANITIZER_FLAGS="-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all"
+        fi
+        if [ "${{inputs.enable_coverage}}" = "true" ]; then
+          export COVERAGE_FLAGS="-DCMAKE_CXX_FLAGS=\"--coverage\" -DCMAKE_C_FLAGS=\"--coverage\""
+        fi
+        cmake \
+          -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DCMAKE_CXX_FLAGS="${SANITIZER_FLAGS}" \
+          -DCMAKE_C_FLAGS="${SANITIZER_FLAGS}" \
+          ${COVERAGE_FLAGS}
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Prepare for upload
+      if: inputs.platform == 'windows-2019' && (github.event_name == 'schedule' || github.event_name == 'push')
+      run: |
+        md -p ${{github.workspace}}/build/upload
+        cp ${{github.workspace}}/build/bin/${{env.BUILD_TYPE}}/bpf_conformance_runner.exe ${{github.workspace}}/build/upload/bpf_conformance_runner.exe
+        cp ${{github.workspace}}/build/bin/${{env.BUILD_TYPE}}/bpf_conformance_runner.pdb ${{github.workspace}}/build/upload/bpf_conformance_runner.pdb
+        cp -r ${{github.workspace}}/tests ${{github.workspace}}/build/upload
+
+    - name: Upload build as artifact
+      if: inputs.platform == 'windows-2019' && (github.event_name == 'schedule' || github.event_name == 'push') && github.ref == 'refs/heads/main' && env.BUILD_TYPE == 'RelWithDebInfo'
+      uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      with:
+        name: bpf_conformance-Release
+        path: |
+          ${{github.workspace}}/build/upload
+
+    - name: Upload build as artifact
+      if: inputs.platform == 'windows-2019' && (github.event_name == 'schedule' || github.event_name == 'push') && github.ref == 'refs/heads/main' && env.BUILD_TYPE == 'Debug'
+      uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      with:
+        name: bpf_conformance-Debug
+        path: |
+          ${{github.workspace}}/build/upload
+
+    - name: Tests
+      if: ${{ startsWith(inputs.platform, 'ubuntu-') }}
+      working-directory: ${{github.workspace}}
+      run: |
+        cmake --build build --target test --
+
+    - name: Rerun failed tests with more verbose output
+      if: inputs.platform == 'ubuntu-latest' && failure()
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ctest --rerun-failed --output-on-failure
+
+    - name: Upload build folder for diagnosing issues
+      if: always()
+      uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      with:
+        name: bpf_conformance-diagnostic-${{inputs.platform}}-${{inputs.configuration}}-enable-sanitizers-${{inputs.enable_sanitizers}}-enable-coverage-${{inputs.enable_coverage}}
+        path: ${{github.workspace}}/build
+
+    - name: Generate code coverage report
+      if: inputs.enable_coverage == true
+      run: |
+        mkdir -p coverage
+        lcov --capture --directory build --include '${{github.workspace}}/*' --output-file coverage/lcov.info --exclude '${{github.workspace}}/external/*'
+
+    - name: Coveralls Parallel
+      if: inputs.enable_coverage == true
+      uses: coverallsapp/github-action@cfd0633edbd2411b532b808ba7a8b5e04f76d2c8 # v2.3.4
+      with:
+        github-token: ${{ secrets.github_token }}
+        flag-name: run-${{inputs.build_type}}-${{inputs.platform}}-${{inputs.arch}}
+        parallel: true
+
+    - name: Log in to the Container registry
+      if: inputs.publish_docker == true
+      uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata (tags, labels) for Docker
+      if: inputs.publish_docker == true
+      id: meta
+      uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+    - name: Build and push Docker image
+      if: inputs.publish_docker == true && github.event_name == 'push'
+      uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d
+      with:
+        context: build
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+

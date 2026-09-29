@@ -1,0 +1,595 @@
+# Copyright (c) Prevail Verifier contributors.
+# SPDX-License-Identifier: MIT
+---
+test-case: stack load 16 bits little-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=1", "s[504...504].uvalue=1",
+      "s[505...505].type=number", "s[505...505].svalue=2", "s[505...505].uvalue=2"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u16 *)(r10 - 8) ; load 2 bytes spanning s[504...505]: 0x01 and 0x02 -> 0x0201
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...505].type=number
+  - s[504].svalue=1
+  - s[504].uvalue=1
+  - s[505].svalue=2
+  - s[505].uvalue=2
+  - r0.type=number
+  - r0.svalue=513
+  - r0.uvalue=513
+---
+test-case: stack load 16 bits big-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=2", "s[504...504].uvalue=2",
+      "s[505...505].type=number", "s[505...505].svalue=1", "s[505...505].uvalue=1"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u16 *)(r10 - 8) ; load 2 bytes spanning s[504...505]: 0x02 and 0x01 -> 0x0201
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...505].type=number
+  - s[504].svalue=2
+  - s[504].uvalue=2
+  - s[505].svalue=1
+  - s[505].uvalue=1
+  - r0.type=number
+  - r0.svalue=513
+  - r0.uvalue=513
+---
+test-case: stack load 32 bits little-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=120", "s[504...504].uvalue=120",
+      "s[505...505].type=number", "s[505...505].svalue=86", "s[505...505].uvalue=86",
+      "s[506...506].type=number", "s[506...506].svalue=52", "s[506...506].uvalue=52",
+      "s[507...507].type=number", "s[507...507].svalue=18", "s[507...507].uvalue=18"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u32 *)(r10 - 8) ; load s[504...507]: 0x12345678 on little-endian
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...507].type=number
+  - s[504].svalue=120
+  - s[504].uvalue=120
+  - s[505].svalue=86
+  - s[505].uvalue=86
+  - s[506].svalue=52
+  - s[506].uvalue=52
+  - s[507].svalue=18
+  - s[507].uvalue=18
+  - r0.type=number
+  - r0.svalue=305419896
+  - r0.uvalue=305419896
+---
+test-case: stack load 32 bits big-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=18", "s[504...504].uvalue=18",
+      "s[505...505].type=number", "s[505...505].svalue=52", "s[505...505].uvalue=52",
+      "s[506...506].type=number", "s[506...506].svalue=86", "s[506...506].uvalue=86",
+      "s[507...507].type=number", "s[507...507].svalue=120", "s[507...507].uvalue=120"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u32 *)(r10 - 8) ; load s[504...507]: 0x12345678 on big-endian
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...507].type=number
+  - s[504].svalue=18
+  - s[504].uvalue=18
+  - s[505].svalue=52
+  - s[505].uvalue=52
+  - s[506].svalue=86
+  - s[506].uvalue=86
+  - s[507].svalue=120
+  - s[507].uvalue=120
+  - r0.type=number
+  - r0.svalue=305419896
+  - r0.uvalue=305419896
+---
+test-case: stack load 64 bits little-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=240", "s[504...504].uvalue=240",
+      "s[505...505].type=number", "s[505...505].svalue=222", "s[505...505].uvalue=222",
+      "s[506...506].type=number", "s[506...506].svalue=188", "s[506...506].uvalue=188",
+      "s[507...507].type=number", "s[507...507].svalue=154", "s[507...507].uvalue=154",
+      "s[508...508].type=number", "s[508...508].svalue=120", "s[508...508].uvalue=120",
+      "s[509...509].type=number", "s[509...509].svalue=86", "s[509...509].uvalue=86",
+      "s[510...510].type=number", "s[510...510].svalue=52", "s[510...510].uvalue=52",
+      "s[511...511].type=number", "s[511...511].svalue=18", "s[511...511].uvalue=18"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u64 *)(r10 - 8) ; load s[504...511]: 0x9abcdef0 and 0x12345678 -> 0x123456789abcdef0 on little-endian
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504].svalue=240
+  - s[504].uvalue=240
+  - s[505].svalue=222
+  - s[505].uvalue=222
+  - s[506].svalue=188
+  - s[506].uvalue=188
+  - s[507].svalue=154
+  - s[507].uvalue=154
+  - s[508].svalue=120
+  - s[508].uvalue=120
+  - s[509].svalue=86
+  - s[509].uvalue=86
+  - s[510].svalue=52
+  - s[510].uvalue=52
+  - s[511].svalue=18
+  - s[511].uvalue=18
+  - r0.type=number
+  - r0.svalue=1311768467463790320
+  - r0.uvalue=1311768467463790320
+---
+test-case: stack load 64 bits big-endian across multiple variables
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...504].type=number", "s[504...504].svalue=18", "s[504...504].uvalue=18",
+      "s[505...505].type=number", "s[505...505].svalue=52", "s[505...505].uvalue=52",
+      "s[506...506].type=number", "s[506...506].svalue=86", "s[506...506].uvalue=86",
+      "s[507...507].type=number", "s[507...507].svalue=120", "s[507...507].uvalue=120",
+      "s[508...508].type=number", "s[508...508].svalue=154", "s[508...508].uvalue=154",
+      "s[509...509].type=number", "s[509...509].svalue=188", "s[509...509].uvalue=188",
+      "s[510...510].type=number", "s[510...510].svalue=222", "s[510...510].uvalue=222",
+      "s[511...511].type=number", "s[511...511].svalue=240", "s[511...511].uvalue=240"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    r0 = *(u64 *)(r10 - 8) ; load s[504...511]: 0x123456789abcdef0 on big-endian
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504].svalue=18
+  - s[504].uvalue=18
+  - s[505].svalue=52
+  - s[505].uvalue=52
+  - s[506].svalue=86
+  - s[506].uvalue=86
+  - s[507].svalue=120
+  - s[507].uvalue=120
+  - s[508].svalue=154
+  - s[508].uvalue=154
+  - s[509].svalue=188
+  - s[509].uvalue=188
+  - s[510].svalue=222
+  - s[510].uvalue=222
+  - s[511].svalue=240
+  - s[511].uvalue=240
+  - r0.type=number
+  - r0.svalue=1311768467463790320
+  - r0.uvalue=1311768467463790320
+---
+test-case: stack re-assign little-endian immediate first
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 8) = 0 ; zero the first four bytes of 0x123456789abcdef0 -> 0x12345678 on little-endian machine
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...507].svalue=0
+  - s[504...507].uvalue=0
+  - s[508...511].svalue=305419896
+  - s[508...511].uvalue=305419896
+---
+test-case: stack re-assign big-endian immediate first
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 8) = 0 ; zero the first four bytes of 0x123456789abcdef0 -> 0x9abcdef0 on big-endian machine
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...507].svalue=0
+  - s[504...507].uvalue=0
+  - s[508...511].svalue=2596069104
+  - s[508...511].uvalue=2596069104
+---
+test-case: stack re-assign little-endian immediate middle
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 6) = 0 ; zero the middle four bytes of 0x123456789abcdef0
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...505].svalue=57072
+  - s[504...505].uvalue=57072
+  - s[506...509].svalue=0
+  - s[506...509].uvalue=0
+  - s[510...511].svalue=4660
+  - s[510...511].uvalue=4660
+---
+test-case: stack re-assign big-endian immediate middle
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 6) = 0 ; zero the middle four bytes of 0x123456789abcdef0
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...505].svalue=4660
+  - s[504...505].uvalue=4660
+  - s[506...509].svalue=0
+  - s[506...509].uvalue=0
+  - s[510...511].svalue=57072
+  - s[510...511].uvalue=57072
+---
+test-case: stack re-assign little-endian immediate last
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["!big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 4) = 0 ; zero the last four bytes of 0x123456789abcdef0 -> 0x9abcdef0
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...507].svalue=2596069104
+  - s[504...507].uvalue=2596069104
+  - s[508...511].svalue=0
+  - s[508...511].uvalue=0
+---
+test-case: stack re-assign big-endian immediate last
+
+pre: ["r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number", "s[504...511].svalue=1311768467463790320", "s[504...511].uvalue=1311768467463790320"]
+
+options: ["big_endian"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 4) = 0 ; zero the last four bytes of 0x123456789abcdef0 -> 0x12345678
+
+post:
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+  - s[504...507].svalue=305419896
+  - s[504...507].uvalue=305419896
+  - s[508...511].svalue=0
+  - s[508...511].uvalue=0
+---
+test-case: set numeric size
+
+pre: ["r1.type=number",
+      "r2.type=stack", "r2.stack_offset=512",
+      "r10.type=stack", "r10.stack_offset=512"]
+
+code:
+  <start>: |
+    *(u64 *)(r10 - 8) = r1
+    r2 -= 8
+
+post:
+  - r1.type=number
+  - s[504...511].svalue=r1.svalue
+  - s[504...511].uvalue=r1.uvalue
+  - r2.type=stack
+  - r2.stack_offset=504
+  - r2.stack_numeric_size=8
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+
+---
+test-case: havoc numeric size
+
+pre: ["r2.type=stack", "r2.stack_offset=504", "r2.stack_numeric_size=8",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number"]
+
+code:
+  <start>: |
+    *(u8 *)(r10 - 8) = r3 ; this should force r2.stack_numeric_size to become 0
+
+post:
+  - r2.type=stack
+  - r2.stack_offset=504
+  - s[504].type=r3.type
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[505...511].type=number
+
+---
+test-case: shorten numeric size from int64* to int32*
+
+pre: ["r2.type=stack", "r2.stack_offset=504", "r2.stack_numeric_size=8",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 4) = r3 ; this should update r2.stack_numeric_size to be reduced to 4
+
+post:
+  - r2.type=stack
+  - r2.stack_offset=504
+  - r2.stack_numeric_size=4
+  - s[508...511].type=r3.type
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...507].type=number
+
+---
+test-case: lengthen numeric size from int32* to int64*
+
+pre: ["r1.type=number",
+      "r2.type=stack", "r2.stack_offset=504", "r2.stack_numeric_size=4",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[504...507].type=number"]
+
+code:
+  <start>: |
+    *(u32 *)(r10 - 4) = r1 ; this should update r2.stack_numeric_size to be expanded to 8
+
+post:
+  - r1.type=number
+  - s[508...511].svalue=r1.svalue
+  - s[508...511].uvalue=r1.uvalue
+  - r2.type=stack
+  - r2.stack_offset=504
+  - r2.stack_numeric_size=8
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[504...511].type=number
+
+---
+test-case: join two stack ranges
+
+pre: ["r0.type=number",
+      "r2.type=stack", "r2.stack_offset=512",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[496...511].type=number"]
+
+code:
+  <start>: |
+    if r0 == 0 goto <mid>
+    r2 -= 8                ; r2 is an int64_t* (aka int8_t[8]) pointing into stack memory
+    goto <out>
+  <mid>: |
+    r2 -= 16               ; r2 is an int64_t* (aka int8_t[8]) pointing into stack memory
+  <out>: |
+    r1 = *(u64 *)(r2 - 0)  ; r1 should be able to dereference the int64_t* pointer
+    exit
+
+post:
+  - r0.type=number
+  - r0.uvalue=[0, +oo]
+  - r1.type=number
+  - r2.type=stack
+  - r2.stack_offset=[496, 504]
+  - r2.stack_offset-r0.uvalue<=503
+  - r2.stack_numeric_size=[8, 16]
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[496...511].type=number
+---
+test-case: havoc if clobber stack bytes
+
+pre:
+  - r2.type=stack
+  - r2.stack_offset=[496, 504]
+  - r2.stack_numeric_size=[8, 16]
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[496...511].type=number
+
+code:
+  <start>: |
+    *(u8 *)(r10 - 16) = r0 ; this should reset r2.stack_numeric_size to 0
+
+post:
+  - s[496].type=r0.type
+  - r2.type=stack
+  - r2.stack_offset=[496, 504]
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[497...511].type=number
+
+---
+test-case: store and load stack pointer from stack
+
+pre: ["r2.type=stack", "r2.stack_offset=504", "r2.stack_numeric_size=8",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[504...511].type=number"]
+
+code:
+  <start>: |
+    *(u64 *)(r10 - 16) = r2
+    r3 = *(u64 *)(r10 - 16)
+
+post:
+  - r3.svalue=r2.svalue
+  - r3.uvalue=r2.uvalue
+  - s[496...503].uvalue=r2.uvalue
+  - s[496...503].svalue=r2.svalue
+  - r2.type=stack
+  - r2.stack_offset=504
+  - r2.stack_numeric_size=8
+  - r3.type=stack
+  - r3.stack_offset=504
+  - r3.stack_numeric_size=8
+  - r10.type=stack
+  - r10.stack_offset=512
+  - s[496...503].type=stack
+  - s[496...503].stack_offset=504
+  - s[496...503].stack_numeric_size=8
+  - s[504...511].type=number
+---
+test-case: subtract stack pointers
+
+pre: ["r1.type=stack", "r1.stack_offset=[500,504]", "r1.stack_numeric_size=8",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[500...511].type=number"]
+
+code:
+  <start>: |
+    r1 -= r10
+
+post:
+  - r1.type=number
+  - r1.svalue=[-12, -8]
+  - r1.uvalue=[18446744073709551604, 18446744073709551608]
+  - r10.stack_offset=512
+  - r10.type=stack
+  - s[500...511].type=number
+---
+test-case: advance stack pointer
+
+pre: ["r1.type=stack", "r1.stack_offset=[500,504]", "r1.stack_numeric_size=8",
+      "r2.type=number", "r2.svalue=2", "r2.uvalue=2",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[500...511].type=number"]
+
+code:
+  <start>: |
+    r1 += r2
+
+post:
+  - r1.type=stack
+  - r1.stack_offset=[502, 506]
+  - r1.stack_numeric_size=6
+  - r1.stack_offset-r2.svalue<=504
+  - r2.type=number
+  - r2.svalue=2
+  - r2.uvalue=2
+  - r2.svalue-r1.stack_offset<=-500
+  - r10.stack_offset=512
+  - r10.type=stack
+  - s[500...511].type=number
+---
+test-case: retreat stack pointer
+
+pre: ["r1.type=stack", "r1.stack_offset=[500,504]", "r1.stack_numeric_size=8",
+      "r2.type=number", "r2.svalue=-2", "r2.uvalue=18446744073709551614",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[500...511].type=number"]
+
+code:
+  <start>: |
+    r1 += r2
+
+post:
+  - r1.type=stack
+  - r1.stack_offset=[498, 502]
+  - r1.stack_offset-r2.svalue<=504
+  - r2.type=number
+  - r2.svalue=-2
+  - r2.uvalue=18446744073709551614
+  - r2.svalue-r1.stack_offset<=-500
+  - r10.stack_offset=512
+  - r10.type=stack
+  - s[500...511].type=number
+---
+test-case: retreat stack pointer to increase numeric size
+
+pre: ["r1.type=stack", "r1.stack_offset=[500,504]", "r1.stack_numeric_size=8",
+      "r2.type=number", "r2.svalue=2", "r2.uvalue=2",
+      "r10.type=stack", "r10.stack_offset=512",
+      "s[498...511].type=number"]
+
+code:
+  <start>: |
+    r1 -= r2
+
+post:
+  - r1.type=stack
+  - r1.stack_offset=[498, 502]
+  - r1.stack_numeric_size=10
+  - r2.type=number
+  - r2.svalue=2
+  - r2.uvalue=2
+  - r10.stack_offset=512
+  - r10.type=stack
+  - s[498...511].type=number
+---
+test-case: invalid stack access
+
+pre: ["r10.type=stack", "r10.stack_offset=1024"]
+
+code:
+  <start>: |
+    *(u8 *)(r10 - 513) = 0 ; write out of range
+    r0 = 0
+    exit
+
+post:
+  - r0.type=number
+  - r0.svalue=0
+  - r0.uvalue=0
+  - r10.type=stack
+  - r10.stack_offset=1024
+  - s[511].type=number
+  - s[511].svalue=0
+  - s[511].uvalue=0
+
+messages:
+  - "0: Lower bound must be at least r10.stack_offset - EBPF_SUBPROGRAM_STACK_SIZE (valid_access(r10.offset-513, width=1) for write)"

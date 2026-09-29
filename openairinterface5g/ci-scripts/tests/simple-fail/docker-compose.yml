@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+
+services:
+  test:
+    image: ubuntu:jammy
+    container_name: test_container
+    cap_drop:
+      - ALL
+    entrypoint: /bin/bash -c "false"
+    healthcheck:
+      test: /bin/bash -c "true"
+      interval: 1s
+      timeout: 1s
+      retries: 1

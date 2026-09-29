@@ -1,0 +1,152 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../up_resource_manager/up_resource_manager_impl.h"
+#include "ocudu/cu_cp/ue_configuration.h"
+#include "ocudu/e1ap/common/e1ap_types.h"
+#include "ocudu/e1ap/cu_cp/e1ap_cu_cp_bearer_context_update.h"
+#include "ocudu/f1ap/cu_cp/f1ap_cu_ue_context_update.h"
+#include "ocudu/pdcp/pdcp_config.h"
+#include "ocudu/ran/cu_cp_pdu_session.h"
+#include "ocudu/rrc/rrc_resume.h"
+#include "ocudu/rrc/rrc_types.h"
+
+namespace ocudu::ocucp {
+
+bool verify_and_log_cell_group_config(const byte_buffer& packed_cell_group_cfg, const ocudulog::basic_logger& logger);
+
+/// \brief Fill thew DRB setup mod item for the DU.
+/// \param[out] drb_setup_mod_item The DRB setup item to fill.
+/// \param[in] response_flow_list The list of QoS flows to be added to the NGAP response.
+/// \param[in] psi The PDU session ID.
+/// \param[in] drb_id The DRB ID.
+/// \param[in] next_drb_config The DRB config to be updated.
+/// \param[in] e1ap_drb_item The DRB setup response from CU-UP.
+/// \param[in] ngap_qos_flow_setup_items The initial QoS flow setup request from AMF.
+/// \param[in] logger The logger.
+bool fill_f1ap_drb_setup_mod_item(f1ap_drb_to_setup& drb_setup_mod_item, // Request to setup DRB at DU.
+                                  slotted_id_vector<qos_flow_id_t, cu_cp_associated_qos_flow>* response_flow_list,
+                                  pdu_session_id_t                                             psi,
+                                  drb_id_t                                                     drb_id,
+                                  up_drb_context& next_drb_config,                 // DRB config (info is written back).
+                                  const e1ap_drb_setup_item_ng_ran& e1ap_drb_item, // Response from CU-UP.
+                                  const slotted_id_vector<qos_flow_id_t, qos_flow_setup_request_item>&
+                                                                ngap_qos_flow_setup_items, // Initial request from AMF.
+                                  const ocudulog::basic_logger& logger);
+
+void fill_e1ap_drb_pdcp_config(e1ap_pdcp_config& e1ap_pdcp_cfg, const pdcp_config& cu_cp_pdcp_cfg);
+void fill_e1ap_qos_flow_param_item(e1ap_qos_flow_qos_param_item&      e1ap_qos_item,
+                                   const ocudulog::basic_logger&      logger,
+                                   const qos_flow_setup_request_item& request_item);
+void fill_e1ap_bearer_context_list(
+    slotted_id_vector<pdu_session_id_t, e1ap_pdu_session_res_to_modify_item>& e1ap_list,
+    const std::vector<f1ap_drb_setupmod>&                                     drb_setup_items,
+    const std::map<pdu_session_id_t, up_pdu_session_context_update>&          pdu_sessions_update_list);
+void fill_e1ap_pdu_session_res_to_setup_list(
+    slotted_id_vector<pdu_session_id_t, e1ap_pdu_session_res_to_setup_item>&     pdu_session_res_to_setup_list,
+    const ocudulog::basic_logger&                                                logger,
+    const up_config_update&                                                      next_config,
+    const slotted_id_vector<pdu_session_id_t, cu_cp_pdu_session_res_setup_item>& setup_items,
+    const ue_configuration&                                                      ue_cfg,
+    const security_indication_t&                                                 default_security_indication);
+void fill_drb_to_setup_list(slotted_id_vector<drb_id_t, e1ap_drb_to_setup_item_ng_ran>&          e1ap_drb_to_setup_list,
+                            const slotted_id_vector<qos_flow_id_t, qos_flow_setup_request_item>& qos_flow_list,
+                            const std::map<drb_id_t, up_drb_context>&                            drb_to_add_list,
+                            const ocudulog::basic_logger&                                        logger);
+void fill_drb_to_modify_list(slotted_id_vector<drb_id_t, e1ap_drb_to_modify_item_ng_ran>& e1ap_drb_to_modify_list,
+                             const slotted_id_vector<qos_flow_id_t, ngap_qos_flow_add_or_mod_item>& qos_flow_list,
+                             const std::map<drb_id_t, up_drb_context>&                              drb_to_modify_list,
+                             const ocudulog::basic_logger&                                          logger);
+void fill_drb_to_remove_list(std::vector<drb_id_t>&       e1ap_drb_to_remove_list,
+                             const std::vector<drb_id_t>& drb_to_remove_list);
+
+/// \brief Fill RRC Reconfiguration message content.
+/// \param[out] rrc_reconfig_args The RRC Reconfiguration Arguments struct to fill.
+/// \param[in] srbs_to_be_setup_mod_list SRBs to be setup (only needed if default DRB is being setup).
+/// \param[in] pdu_sessions The PDU sessions to add/mod in the reconfiguration.
+/// \param[in] drb_to_remove DRB to remove from the configurations.
+/// \param[in] du_to_cu_rrc_info RRC container forwarded from the DU to the CU.
+/// \param[in] nas_pdus NAS PDUs to forward to the UE as received by the AMF.
+/// \param[in] rrc_meas_cfg Optional measurement config to include in Reconfiguration.
+/// \param[in] reestablish_srbs Whether to request SRB reestablishment.
+/// \param[in] reestablish_drbs Whether to request DRB reestablishment.
+/// \param[in] sib1 Packed SIB1 content for direct delivery to UE (optional).
+/// \param[in] logger Logger reference.
+/// \return True on success, false otherwise.
+bool fill_rrc_reconfig_args(rrc_reconfiguration_procedure_request&                           rrc_reconfig_args,
+                            const std::vector<f1ap_srb_to_setup>&                            srbs_to_be_setup_mod_list,
+                            const std::map<pdu_session_id_t, up_pdu_session_context_update>& pdu_sessions,
+                            const std::vector<drb_id_t>&                                     drb_to_remove,
+                            const f1ap_du_to_cu_rrc_info&                                    du_to_cu_rrc_info,
+                            const std::vector<byte_buffer>&                                  nas_pdus,
+                            const std::optional<rrc_meas_cfg>&                               rrc_meas_cfg,
+                            bool                                                             reestablish_srbs,
+                            bool                                                             reestablish_drbs,
+                            std::optional<uint8_t>                                           ncc,
+                            byte_buffer                                                      sib1,
+                            std::optional<security::sec_selected_algos>                      selected_algos,
+                            const ocudulog::basic_logger&                                    logger);
+
+/// \brief Fill the RRCResume the UE is answered with, from the bearers that were set up for it.
+///
+/// Shared by a local resume and by a resume whose UE context was retrieved from a peer NG-RAN node, which only differ
+/// in how the bearers got established beforehand.
+///
+/// \param[out] response_msg Response the RRC puts into the RRCResume.
+/// \param[in] srbs_to_be_setup_mod_list SRBs that were set up at the DU.
+/// \param[in] pdu_sessions PDU sessions of the next configuration.
+/// \param[in] drb_to_remove DRBs that are no longer associated with any PDU session.
+/// \param[in] du_to_cu_rrc_info Information the DU reported, carrying the cell group and measurement gap config.
+/// \param[in] rrc_meas_cfg Measurement configuration to send to the UE.
+/// \param[in] reestablish_srbs Whether the UE has to re-establish PDCP for the SRBs.
+/// \param[in] reestablish_drbs Whether the UE has to re-establish PDCP for the DRBs.
+/// \param[in] selected_algos Security algorithms to signal, if the UE has to apply new ones.
+/// \param[in] logger Reference to the logger.
+/// \return True on success, false otherwise.
+bool fill_rrc_resume_request_response(rrc_resume_request_response&          response_msg,
+                                      const std::vector<f1ap_srb_to_setup>& srbs_to_be_setup_mod_list,
+                                      const std::map<pdu_session_id_t, up_pdu_session_context_update>& pdu_sessions,
+                                      const std::vector<drb_id_t>&                                     drb_to_remove,
+                                      const f1ap_du_to_cu_rrc_info&               du_to_cu_rrc_info,
+                                      const std::optional<rrc_meas_cfg>&          rrc_meas_cfg,
+                                      bool                                        reestablish_srbs,
+                                      bool                                        reestablish_drbs,
+                                      std::optional<security::sec_selected_algos> selected_algos,
+                                      const ocudulog::basic_logger&               logger);
+
+/// \brief Processes the response of an E1AP Bearer Context Setup Request and prefills the DRBs of the subsequent F1AP
+/// UE Context Setup or Modification Request. The SRBs are not touched, as they depend on which of them the UE already
+/// has established at the DU.
+/// \param[out] drb_setup_mod_list Reference to the DRB list of the F1AP request to fill.
+/// \param[out] next_config Reference to the calculated config update, whose security settings are updated with the
+/// ones the CU-UP applied.
+/// \param[in] ngap_setup_list Const reference to the PDU sessions that were requested to be set up.
+/// \param[in] bearer_context_setup_resp Const reference to the Bearer Context Setup Response.
+/// \param[in] up_resource_mng Reference to the UP resource manager.
+/// \param[in] default_sec_ind Security indication to apply to PDU sessions that don't carry their own.
+/// \param[in] logger Reference to the logger.
+/// \return True on success, false otherwise.
+bool update_setup_list_with_bearer_ctxt_setup_response(
+    std::vector<f1ap_drb_to_setup>&                                              drb_setup_mod_list,
+    up_config_update&                                                            next_config,
+    const slotted_id_vector<pdu_session_id_t, cu_cp_pdu_session_res_setup_item>& ngap_setup_list,
+    const e1ap_bearer_context_setup_response&                                    bearer_context_setup_resp,
+    up_resource_manager&                                                         up_resource_mng,
+    const security_indication_t&                                                 default_sec_ind,
+    const ocudulog::basic_logger&                                                logger);
+
+/// \brief Processes the response of a UE Context Setup Request.
+/// \param[out] bearer_ctxt_mod_request Reference to the resulting Bearer Context Modification Request response.
+/// \param[out] drb_setup_mod_list Reference to the successful DRB setup list.
+/// \param[out] next_config Const reference to the calculated config update.
+/// \param[in] logger Reference to the logger.
+/// \return True on success, false otherwise.
+bool update_setup_list_with_ue_ctxt_setup_response(e1ap_bearer_context_modification_request& bearer_ctxt_mod_request,
+                                                   const std::vector<f1ap_drb_setupmod>&     drb_setup_mod_list,
+                                                   const up_config_update&                   next_config,
+                                                   const ocudulog::basic_logger&             logger);
+
+} // namespace ocudu::ocucp

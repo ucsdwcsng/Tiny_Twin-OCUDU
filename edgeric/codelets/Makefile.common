@@ -1,0 +1,95 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+all: protos $(C_OBJECTS) $(CPP_OBJECTS)
+
+# Compile C source files into object files
+$(C_OBJECTS): %.o: %.c
+	@echo "--------- $< ----------------------------------------------"
+	$(CC) $(CFLAGS) $(INC) -c $< -o $@
+	- $(VERIFIER_BIN) $@ || echo "$<: Failed verification"
+
+# Compile C++ source files into object files
+$(CPP_OBJECTS): %.o: %.cpp
+	@echo "--------- $< ----------------------------------------------"
+	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
+	- $(VERIFIER_BIN) $@ || echo "$<: Failed verification"
+
+clean :
+	rm -f *.o *.pb.c *.pb.o *_serializer.c *.py
+
+cleanall : clean
+	rm -f *.o *.pb.h *.pb *_serializer.so *.py
+
+
+.PHONY: codelets-cleanall
+codelets-cleanall:
+	@for slib in $(DIRS) ; do \
+			(cd $$slib && make cleanall) || 1 ; \
+    done
+
+print-DIRS:
+	@echo $(DIRS)
+
+
+
+###############################################################################
+#
+# Build JBPF codelets. Input codelets have to be listed in PROTO_AND_SCHEMA
+# The input format is:
+#
+# PROTO_AND_SCHEMA := <proto_file1>^<hook1> <proto_file2>^<hook2> ...
+#
+# where <proto_fileN> is a name of the proto and options (optional)
+# (without extensions; we assume these are the same)
+#
+# Usage example:
+#
+# PROTO_AND_SCHEMA := harq_fine^janus_harq_data \
+# 	  harq_coarse^janus_harq_data
+#
+###############################################################################
+
+.PHONY: protos
+protos: $(PROTO_AND_SCHEMA)
+
+.PHONY: $(PROTO_AND_SCHEMA)
+
+proto_file = $(word 1,$(subst ^, ,$(1)))
+entry_schema = $(word 2,$(subst ^, ,$(1)))
+
+
+# This is a hack
+# Current ctypegen doesn't fail when compilation fails
+# See: https://github.com/ctypesgen/ctypesgen/issues/224
+# Instead, we implement a quick and dirty hack to keep the logs clean
+# It relies on ctypesgen printing out words "fatal error" when compilation actually fails. 
+$(PROTO_AND_SCHEMA):
+	$(JBPF_PROTOBUF_CLI_BIN) serde -s $(call proto_file, $@):$(call entry_schema, $@) -w $(CURDIR) -o $(CURDIR); \
+	rm -f $(CURDIR)/*_serializer.c $(CURDIR)/*.pb.c; \
+	if [ "$(USE_JRTC)" = "1" ]; then \
+		tmpfile=$$(mktemp); \
+		rm -f $(call proto_file, $@).py; \
+		ctypesgen $(call proto_file, $@).pb.h -I${NANO_PB} -o $(call proto_file, $@).py >$$tmpfile 2>&1 || { \
+			cat $$tmpfile; \
+			rm -f $$tmpfile; \
+			exit 1; \
+		}; \
+		if [ ! -f $(call proto_file, $@).py ] || grep -q "fatal error" $$tmpfile; then \
+			echo "Error compiling $(call proto_file, $@).py. See error log below:"; \
+			cat $$tmpfile; \
+			rm -f $$tmpfile; \
+			exit 1; \
+		fi; \
+		rm -f $$tmpfile; \
+	fi
+
+
+#$(PROTO_AND_SCHEMA):
+#	$(JBPF_PROTOBUF_CLI_BIN) serde -s $(call proto_file, $@):$(call entry_schema, $@) -w $(CURDIR) -o $(CURDIR); \
+#	rm -f $(CURDIR)/*_serializer.c $(CURDIR)/*.pb.c; \
+#	if [ "$(USE_JRTC)" = "1" ]; then \
+#		ctypesgen $(call proto_file, $@).pb.h -I${NANO_PB} -o $(call proto_file, $@).py; \
+#	fi
+
+

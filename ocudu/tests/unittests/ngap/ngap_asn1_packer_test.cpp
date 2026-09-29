@@ -1,0 +1,217 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "lib/ngap/ngap_asn1_helpers.h"
+#include "lib/ngap/ngap_asn1_packer.h"
+#include "lib/ngap/ngap_asn1_utils.h"
+#include "ngap_test_messages.h"
+#include "test_helpers.h"
+#include "tests/unittests/gateways/test_helpers.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/asn1/ngap/common.h"
+#include "ocudu/ngap/ngap_message.h"
+#include <gtest/gtest.h>
+
+using namespace ocudu;
+using namespace ocucp;
+
+security::sec_key make_sec_key(std::string hex_str)
+{
+  byte_buffer       key_buf = make_byte_buffer(hex_str).value();
+  security::sec_key key     = {};
+  std::copy(key_buf.begin(), key_buf.end(), key.begin());
+  return key;
+}
+
+/// Fixture class for NGAP ASN1 packer.
+class ngap_asn1_packer_test : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    ocudulog::fetch_basic_logger("TEST").set_level(ocudulog::basic_levels::debug);
+    ocudulog::fetch_basic_logger("TEST").set_hex_dump_max_size(32);
+    ocudulog::fetch_basic_logger("NGAP").set_level(ocudulog::basic_levels::debug);
+    ocudulog::init();
+
+    gw   = std::make_unique<dummy_network_gateway_data_handler>();
+    ngap = std::make_unique<dummy_ngap_message_handler>();
+
+    packer = std::make_unique<ocudu::ocucp::ngap_asn1_packer>(*gw, amf_notifier, *ngap, pcap);
+  }
+
+  void TearDown() override
+  {
+    // Flush logger after each test.
+    ocudulog::flush();
+  }
+
+  std::unique_ptr<dummy_network_gateway_data_handler> gw;
+  dummy_ngap_message_notifier                         amf_notifier;
+  std::unique_ptr<dummy_ngap_message_handler>         ngap;
+  std::unique_ptr<ocudu::ocucp::ngap_asn1_packer>     packer;
+  ocudulog::basic_logger&                             test_logger = ocudulog::fetch_basic_logger("TEST");
+  null_dlt_pcap                                       pcap;
+};
+
+/// Test successful packing and compare with captured test vector.
+TEST_F(ngap_asn1_packer_test, when_packing_successful_then_pdu_matches_tv)
+{
+  // Populate message.
+  ngap_context_t ngap_ctxt = {.gnb_id             = {411, 22},
+                              .ran_node_name      = "tstgnb01",
+                              .amf_name           = "AMF",
+                              .amf_index          = cu_cp_amf_index_t::min,
+                              .supported_tas      = {{7, {{plmn_identity::test_value(), {{slice_service_type{1}}}}}}},
+                              .default_paging_drx = 256};
+
+  ngap_message ngap_msg = {};
+  ngap_msg.pdu.set_init_msg();
+  ngap_msg.pdu.init_msg().load_info_obj(ASN1_NGAP_ID_NG_SETUP);
+  fill_asn1_ng_setup_request(ngap_msg.pdu.init_msg().value.ng_setup_request(), ngap_ctxt);
+
+  // Pack message and forward to gateway.
+  packer->handle_message(ngap_msg);
+
+  // Print packed message and TV.
+  byte_buffer tv = byte_buffer::create({ng_setup_request_packed, sizeof(ng_setup_request_packed)}).value();
+  test_logger.debug(tv.begin(), tv.end(), "Test vector ({} bytes):", tv.length());
+  test_logger.debug(gw->last_pdu.begin(), gw->last_pdu.end(), "Packed PDU ({} bytes):", gw->last_pdu.length());
+
+  // Compare packed message with captured test vector.
+  ASSERT_EQ(gw->last_pdu.length(), sizeof(ng_setup_request_packed));
+  ASSERT_TRUE(std::equal(gw->last_pdu.begin(), gw->last_pdu.end(), ng_setup_request_packed));
+}
+
+/// Test successful packing and unpacking.
+TEST_F(ngap_asn1_packer_test, when_packing_successful_then_unpacking_successful)
+{
+  // Action 1: Create valid ngap message.
+  ocucp::ngap_message ng_setup_response = generate_ng_setup_response();
+
+  // Action 2: Pack message and forward to gateway.
+  packer->handle_message(ng_setup_response);
+
+  // Action 3: Unpack message and forward to NGAP.
+  packer->handle_packed_pdu(std::move(gw->last_pdu));
+
+  // Assert that the originally created message is equal to the unpacked message.
+  ASSERT_EQ(ngap->last_msg.pdu.type(), ng_setup_response.pdu.type());
+}
+
+/// Test unsuccessful packing.
+TEST_F(ngap_asn1_packer_test, when_packing_unsuccessful_then_message_not_forwarded)
+{
+  // Action 1: Generate, pack and forward valid message to bring gateway into known state.
+  ocucp::ngap_message ng_setup_response = generate_ng_setup_response();
+  packer->handle_message(ng_setup_response);
+  // Store size of valid PDU.
+  int valid_pdu_size = gw->last_pdu.length();
+
+  // Action 2: Create invalid NGAP message.
+  ngap_message ngap_msg = {};
+  ngap_msg.pdu.set_successful_outcome();
+  ngap_msg.pdu.successful_outcome().load_info_obj(ASN1_NGAP_ID_NG_SETUP);
+  auto& setup_res = ngap_msg.pdu.successful_outcome().value.ng_setup_resp();
+  setup_res->amf_name.from_string("open5gs-amf0");
+
+  // Action 3: Pack message and forward to gateway.
+  packer->handle_message(ngap_msg);
+
+  // Check that message was not forwarded to gateway.
+  ASSERT_EQ(gw->last_pdu.length(), valid_pdu_size);
+}
+
+// Test unpacking of initial context setup and correct key and algorithm preference list extraction.
+TEST_F(ngap_asn1_packer_test, when_unpack_init_ctx_extract_sec_params_correctly)
+{
+  std::string ngap_init_ctx_req =
+      "000e008090000008000a0002000c005500020000001c00070000f1100200400000000200010077000918000c000000000000005e00205063"
+      "6e38151d62356d9a1a0c9f2391885177307ad494be15281dfe5fdac06302002240080123456700ffff010026402f2e7e02cf5b405e017e00"
+      "42010177000bf200f110020040dd00b06454072000f11000000715020101210201005e0129";
+
+  // Get expected security key.
+  const char*       security_key_cstr = "50636e38151d62356d9a1a0c9f2391885177307ad494be15281dfe5fdac06302";
+  security::sec_key security_key      = make_sec_key(security_key_cstr);
+
+  byte_buffer buf = make_byte_buffer(ngap_init_ctx_req).value();
+
+  asn1::cbit_ref      bref(buf);
+  ocucp::ngap_message msg = {};
+  ASSERT_EQ(msg.pdu.unpack(bref), asn1::OCUDUASN_SUCCESS);
+
+  const asn1::ngap::ngap_pdu_c&                   pdu     = msg.pdu;
+  const asn1::ngap::init_context_setup_request_s& request = pdu.init_msg().value.init_context_setup_request();
+
+  security::sec_key              security_key_o;
+  security::supported_algorithms inte_algos;
+  security::supported_algorithms ciph_algos;
+  security::asn1_to_key(security_key_o, request->security_key);
+  security::asn1_to_supported_algorithms(inte_algos, request->ue_security_cap.nr_integrity_protection_algorithms);
+  security::asn1_to_supported_algorithms(ciph_algos, request->ue_security_cap.nr_encryption_algorithms);
+  test_logger.debug("{}", inte_algos);
+  test_logger.debug("{}", ciph_algos);
+
+  ASSERT_EQ(true, inte_algos[0]);          // NIA1 supported
+  ASSERT_EQ(true, inte_algos[0]);          // NEA1 supported
+  ASSERT_EQ(true, inte_algos[1]);          // NIA2 supported
+  ASSERT_EQ(true, inte_algos[1]);          // NEA2 supported
+  ASSERT_EQ(false, inte_algos[2]);         // NIA3 not supported
+  ASSERT_EQ(false, inte_algos[2]);         // NEA3 not supported
+  ASSERT_EQ(security_key, security_key_o); // Key was correctly copied
+}
+
+/// Test unpacking packing and unpacking of DL NAS messages.
+TEST_F(ngap_asn1_packer_test, when_dl_nas_message_packing_successful_then_unpacking_successful)
+{
+  // Action 1: Create valid NGAP message.
+  amf_ue_id_t  amf_ue_id        = amf_ue_id_t::max;
+  ran_ue_id_t  ran_ue_id        = ran_ue_id_t::max;
+  ngap_message dl_nas_transport = generate_downlink_nas_transport_message(amf_ue_id, ran_ue_id);
+
+  // Action 2: Pack message and forward to gateway.
+  packer->handle_message(dl_nas_transport);
+
+  // Action 3: Unpack message and forward to NGAP.
+  packer->handle_packed_pdu(std::move(gw->last_pdu));
+
+  // Assert that the originally created message is equal to the unpacked message.
+  ASSERT_EQ(ngap->last_msg.pdu.type(), dl_nas_transport.pdu.type());
+
+  // Assert that the AMF UE ID of the originally created message is equal to the one of the unpacked message.
+  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.dl_nas_transport()->amf_ue_ngap_id, to_underlying(amf_ue_id_t::max));
+}
+
+/// Test unpacking packing and unpacking of UL NAS messages.
+TEST_F(ngap_asn1_packer_test, when_ul_nas_message_packing_successful_then_unpacking_successful)
+{
+  // Action 1: Create valid NGAP message.
+  amf_ue_id_t  amf_ue_id        = amf_ue_id_t::max;
+  ran_ue_id_t  ran_ue_id        = ran_ue_id_t::max;
+  ngap_message ul_nas_transport = generate_uplink_nas_transport_message(amf_ue_id, ran_ue_id);
+
+  // Action 2: Pack message and forward to gateway.
+  packer->handle_message(ul_nas_transport);
+
+  // Action 3: Unpack message and forward to NGAP.
+  packer->handle_packed_pdu(std::move(gw->last_pdu));
+
+  // Assert that the originally created message is equal to the unpacked message.
+  ASSERT_EQ(ngap->last_msg.pdu.type(), ul_nas_transport.pdu.type());
+
+  // Assert that the AMF UE ID of the originally created message is equal to the one of the unpacked message.
+  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.ul_nas_transport()->amf_ue_ngap_id, to_underlying(amf_ue_id_t::max));
+}
+
+// Test unsuccessful unpacking.
+TEST_F(ngap_asn1_packer_test, when_unpack_unsuccessful_then_error_indication_is_send)
+{
+  byte_buffer ngap_pdu = make_byte_buffer("deadbeef").value();
+  // Unpack message and forward to NGAP.
+  packer->handle_packed_pdu(ngap_pdu);
+
+  ASSERT_EQ(amf_notifier.last_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types::init_msg);
+  ASSERT_EQ(amf_notifier.last_msg.pdu.init_msg().value.type(),
+            asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::error_ind);
+}

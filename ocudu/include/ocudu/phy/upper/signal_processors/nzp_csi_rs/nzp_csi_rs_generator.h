@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/expected.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ran/csi_rs/csi_rs_constants.h"
+#include "ocudu/ran/csi_rs/csi_rs_types.h"
+#include "ocudu/ran/cyclic_prefix.h"
+#include "ocudu/ran/precoding_beamforming_configuration.h"
+#include "ocudu/ran/slot_point.h"
+
+namespace ocudu {
+
+class resource_grid_writer;
+
+/// Describes a Non-Zero-Power CSI Reference Signal (NZP-CSI-RS) processor interface, in compliance with TS38.211
+/// Section 7.4.1.5.
+class nzp_csi_rs_generator
+{
+public:
+  /// \brief Describes the required parameters to generate the NZP-CSI-RS signal, as described in TS38.211
+  /// Section 7.4.1.5.
+  ///
+  /// \remark The start resource block plus the number of RB shall not exceed the resource grid bandwidth.
+  struct config_t {
+    /// \brief Slot context for sequence initialization.
+    /// \remark This indicates the numerology, SFN and slot index within the frame.
+    slot_point slot;
+    /// Cyclic prefix configuration.
+    cyclic_prefix cp;
+    /// PRB where the CSI resource starts, related to the CRB 0.
+    unsigned start_rb;
+    /// Number of PRBs that the CSI spans.
+    unsigned nof_rb;
+    /// Row number of the CSI-RS location table, as defined in TS38.211 Table 7.4.1.5.3-1.
+    unsigned csi_rs_mapping_table_row;
+    /// Frequency domain allocation references \f${k_0, k_1, ..., k_n}\f$.
+    static_vector<unsigned, CSI_RS_MAX_NOF_K_INDEXES> freq_allocation_ref_idx;
+    /// \brief The time domain location reference \f$l_0\f$.
+    ///
+    /// This reference is defined relative to the start of the slot, and takes values in the range {0, 1, ..., 13}.
+    unsigned symbol_l0;
+    /// \brief The time domain location reference \f$l_1\f$.
+    ///
+    /// This reference is defined relative to the start of the slot, and takes values in the range {2, 3, ..., 12}.
+    unsigned symbol_l1;
+    /// CDM configuration.
+    csi_rs_cdm_type cdm;
+    /// Frequency density configuration.
+    csi_rs_freq_density_type freq_density;
+    /// \brief CSI-RS Scrambling ID, as per TS38.214, Section 5.2.2.3.1.
+    ///
+    /// Takes values in the range {0, 1, ..., 1023}.
+    unsigned scrambling_id;
+    /// Linear amplitude scaling factor.
+    float amplitude;
+    /// Precoding and beamforming configuration.
+    precoding_beamforming_configuration precoding_and_beamforming;
+  };
+
+  /// Default destructor.
+  virtual ~nzp_csi_rs_generator() = default;
+
+  /// \brief Generates and maps the NZP-CSI-RS, according to TS38.211, Section 7.4.1.5.
+  /// \param [out] writer Resource grid writer interface.
+  /// \param [in]  config Required configuration to generate and map the signal.
+  virtual void map(resource_grid_writer& grid, const config_t& config) = 0;
+};
+
+/// Describes the NZP-CSI-RS generator configuration validator interface.
+class nzp_csi_rs_configuration_validator
+{
+public:
+  /// Default destructor.
+  virtual ~nzp_csi_rs_configuration_validator() = default;
+
+  /// \brief Validates NZP-CSI-RS generator configuration parameters.
+  /// \return A success if the parameters contained in \c config are supported, an error message otherwise.
+  virtual error_type<std::string> is_valid(const nzp_csi_rs_generator::config_t& config) const = 0;
+};
+
+} // namespace ocudu

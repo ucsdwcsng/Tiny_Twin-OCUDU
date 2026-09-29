@@ -1,0 +1,297 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/subcarrier_spacing.h"
+#include "ocudu/support/math/math_utils.h"
+
+namespace ocudu {
+
+/// \brief Physical layer time unit.
+///
+/// This class abstracts the PHY reference time unit \f$T_c\f$ described in TS38.211 Section 4.1.
+class phy_time_unit
+{
+private:
+  /// Internal value type. It uses 64-bit word to avoid intermediate multiplications to overflow.
+  using value_type = int64_t;
+  /// Maximum subcarrier spacing in hertz, constant \f$\Delta f_{max}\f$.
+  static constexpr value_type MAX_SCS_HZ = 480 * 1000;
+  /// Constant \f$N_f\f$.
+  static constexpr value_type N_F = 4096;
+  /// Reference time unit in seconds, that is \f$T_c = 1/(\Delta f_{max} \times N_f)\f$.
+  static constexpr double T_C = 1.0 / static_cast<double>(MAX_SCS_HZ * N_F);
+  /// Reference subcarrier spacing, constant \f$\Delta f_{ref}\f$
+  static constexpr value_type SCS_REF_HZ = 15 * 1000;
+  /// DFT size for the reference subcarrier spacing, constant \f$N_{f,ref}\f$
+  static constexpr value_type N_F_REF = 2048;
+  /// Constant \f$\kappa=T_s/T_c=64\f$.
+  static constexpr value_type KAPPA = 64;
+
+  /// Actual value as a multiple of \f$T_c\f$.
+  value_type value = 0;
+
+  /// Private constructor from a value in units of \f$T_c\f$.
+  explicit constexpr phy_time_unit(value_type value_) : value(value_)
+  {
+    // Do nothing.
+  }
+
+public:
+  /// Creates a default physical layer time of zero units.
+  phy_time_unit() = default;
+
+  /// \brief Gets the stored time unit in multiple of \f$T_c\f$.
+  value_type to_Tc() const { return value; }
+
+  /// \brief Gets the time in seconds.
+  /// \tparam U Return type. Must be a floating point type (default: double).
+  template <class U = double>
+  constexpr U to_seconds() const
+  {
+    static_assert(std::is_convertible_v<double, U> && std::is_floating_point_v<U>, "Invalid type.");
+    return static_cast<U>(value) * static_cast<U>(T_C);
+  }
+
+  /// \brief Determines if the time value is sample accurate given a sampling rate in hertz.
+  ///
+  /// The time value is sample accurate if the time is equivalent to an integer number of samples for the given sampling
+  /// rate.
+  ///
+  /// \tparam U Any data type that can be converted to \c value_type.
+  /// \param[in] sampling_rate_Hz Sample rate in hertz.
+  /// \return True if the time is equivalent to an integer number of samples, false otherwise.
+  template <class U>
+  constexpr bool is_sample_accurate(U sampling_rate_Hz_) const
+  {
+    static_assert(std::is_convertible_v<U, value_type>, "Invalid type.");
+    auto sampling_rate_Hz = static_cast<value_type>(sampling_rate_Hz_);
+    return ((std::abs(value) * sampling_rate_Hz) % (SCS_REF_HZ * N_F_REF * KAPPA)) == 0;
+  }
+
+  /// \brief Gets the time expressed as a number of samples for the given sampling rate.
+  ///
+  /// An assertion is triggered if the result would be a non-integer number of samples.
+  ///
+  /// \tparam U Any data type that can be converted to \c value_type.
+  /// \param[in] sampling_rate_Hz_ Sampling rate in Hertz.
+  /// \return The time value in samples.
+  template <typename U>
+  constexpr value_type to_samples(U sampling_rate_Hz_) const
+  {
+    static_assert(std::is_convertible_v<U, value_type>, "Invalid type.");
+    auto sampling_rate_Hz = static_cast<value_type>(sampling_rate_Hz_);
+    ocudu_assert(is_sample_accurate(sampling_rate_Hz),
+                 "Incompatible sampling rate {}.{:02} MHz with time {}.",
+                 sampling_rate_Hz / 1000000,
+                 (sampling_rate_Hz % 1000000) / 10000,
+                 value);
+    return (value * sampling_rate_Hz) / (SCS_REF_HZ * N_F_REF * KAPPA);
+  }
+
+  /// \brief Gets the time expressed as a number of samples for the given sampling rate rounding to the nearest integer.
+  /// \tparam U Any data type that can be converted to \c double.
+  /// \param[in] sampling_rate_Hz_ Sampling rate in Hertz.
+  /// \return The time value in samples.
+  template <typename U>
+  constexpr value_type to_nearest_samples(U sampling_rate_Hz_) const
+  {
+    static_assert(std::is_convertible_v<U, double>, "Invalid type.");
+    auto   sampling_rate_Hz = static_cast<double>(sampling_rate_Hz_);
+    double nof_samples =
+        static_cast<double>(value * sampling_rate_Hz) / static_cast<double>(SCS_REF_HZ * N_F_REF * KAPPA);
+    return static_cast<value_type>(std::round(nof_samples));
+  }
+
+  /// \brief Gets the time expressed in units of \f$T_{\textup{A}}\f$.
+  ///
+  /// Conversion is performed as per TS38.213 Section 4.2, rounding to the nearest integer.
+  ///
+  /// \param[in] scs Subcarrier spacing.
+  /// \remark Used to compute the Timing Advance Command to be sent in RAR (not in MAC CE).
+  /// \remark The time must not be negative. Use \ref to_Ta_signed for times that can be negative, such as measured
+  /// timing offsets.
+  constexpr unsigned to_Ta(subcarrier_spacing scs) const
+  {
+    return divide_round(value * pow2(to_numerology_value(scs)), 16U * KAPPA);
+  }
+
+  /// \brief Gets the time expressed in signed units of \f$T_{\textup{A}}\f$.
+  ///
+  /// Same conversion as \ref to_Ta, extended to negative times. The magnitude is rounded to the nearest integer, so
+  /// negative times round away from zero.
+  ///
+  /// \param[in] scs Subcarrier spacing.
+  /// \remark Used to report measured timing offsets, which are signed, in the units of the Timing Advance Command.
+  constexpr int to_Ta_signed(subcarrier_spacing scs) const
+  {
+    value_type absolute_value = (value < 0) ? -value : value;
+    auto       magnitude      = static_cast<int>(phy_time_unit(absolute_value).to_Ta(scs));
+
+    return (value < 0) ? -magnitude : magnitude;
+  }
+
+  /// \brief Converts the time to an UL Relative Time of Arrival (UL-RTOA) measurement.
+  ///
+  /// UL-RTOA measurements are part of the NR Positioning protocol described in TS38.455, Section 9.2.39 defines the
+  /// Information Elements for the measurement. The semantics are defined in TS38.455 Section 13.1.1.
+  ///
+  /// The measurements are reported in units of \f$T_c\f$ in the range of {-985024, ... 985024}. The reporting
+  /// resolution is given the parameter \f$k\f$, the resolution is defined as \f$T=T_c\times 2^k\f$.
+  ///
+  /// The resolution is selected from the parameter \e timingReportingGranularityFactor contained in the Information
+  /// Element \e TRPMeasurementQuantitiesList-Item in TS38.455 Section 9.3.4.
+  ///
+  /// The resultant measurement is mapped to the reported values according TS38.455 Tables 13.1.1-1/2/3/5/6.
+  ///
+  /// \param[in] resolution Measurement resolution, parameter \f$k\f$, in range {0, ..., 5}.
+  /// \return The resultant UL-RTOA measurement report value.
+  uint32_t to_ul_rtoa(unsigned resolution) const
+  {
+    // The value is below the minimum, report 0.
+    if (value < -985024) {
+      return 0;
+    }
+
+    // The value is above the maximum, report the maximum.
+    if (value > 985024) {
+      return (1970048 >> resolution) + 1;
+    }
+
+    // Conversion for negative measurements.
+    if (value < 0) {
+      return ((value + 985024) >> resolution) + 1;
+    }
+
+    // Conversion for positive measurements.
+    return ((value + 985023) >> resolution) + 1;
+  }
+
+  /// Overload addition operator.
+  constexpr phy_time_unit operator+(phy_time_unit other) const
+  {
+    phy_time_unit ret(*this);
+    ret += other;
+    return ret;
+  }
+
+  /// Overload addition assignment operator.
+  constexpr phy_time_unit operator+=(phy_time_unit other)
+  {
+    value += other.value;
+    return *this;
+  }
+
+  /// Overload subtraction operator.
+  constexpr phy_time_unit operator-(phy_time_unit other) const
+  {
+    phy_time_unit ret(*this);
+    ret -= other;
+    return ret;
+  }
+
+  /// Overload subtraction operator.
+  constexpr phy_time_unit operator-=(phy_time_unit other)
+  {
+    value -= other.value;
+    return *this;
+  }
+
+  /// Overload multiplication assignment operator.
+  constexpr phy_time_unit operator*(unsigned multiplier) const
+  {
+    phy_time_unit ret(*this);
+    ret *= multiplier;
+    return ret;
+  }
+
+  /// Overload multiplication assignment operator.
+  constexpr phy_time_unit operator*=(unsigned multiplier)
+  {
+    value *= multiplier;
+    return *this;
+  }
+
+  /// Overload division operator.
+  constexpr phy_time_unit operator/(unsigned divisor) const
+  {
+    phy_time_unit ret(*this);
+    ret /= divisor;
+    return ret;
+  }
+
+  /// Overload division assignment operator.
+  constexpr phy_time_unit operator/=(unsigned divisor)
+  {
+    value /= divisor;
+    return *this;
+  }
+
+  /// Overload equal to operator.
+  constexpr bool operator==(phy_time_unit other) const { return value == other.value; }
+
+  /// Overload not equal to operator.
+  constexpr bool operator!=(phy_time_unit other) const { return value != other.value; }
+
+  /// Overload greater than operator.
+  constexpr bool operator>(phy_time_unit other) const { return value > other.value; }
+
+  /// Overload lower than operator.
+  constexpr bool operator<(phy_time_unit other) const { return value < other.value; }
+
+  /// Overload greater than or equal to operator.
+  constexpr bool operator>=(phy_time_unit other) const { return value >= other.value; }
+
+  /// Overload lower than or equal to operator.
+  constexpr bool operator<=(phy_time_unit other) const { return value <= other.value; }
+
+  /// Creates a physical layer time from units of \f$\kappa\f$.
+  static constexpr phy_time_unit from_units_of_kappa(unsigned units_of_kappa)
+  {
+    return phy_time_unit(static_cast<value_type>(units_of_kappa) * KAPPA);
+  }
+
+  /// Creates a physical layer time from units of \f$T_c\f$.
+  template <typename Integer>
+  static constexpr phy_time_unit from_units_of_Tc(Integer units_of_Tc)
+  {
+    static_assert(std::is_integral_v<Integer>);
+    return phy_time_unit(static_cast<value_type>(units_of_Tc));
+  }
+
+  /// Creates a physical layer time from a timing advance command \f$T_A\f$, as per TS38.213 Section 4.2.
+  template <typename Integer>
+  static constexpr phy_time_unit from_timing_advance(Integer units_of_Ta, subcarrier_spacing scs)
+  {
+    static_assert(std::is_integral_v<Integer>);
+    return from_units_of_Tc(static_cast<Integer>(units_of_Ta * 16U * KAPPA) /
+                            static_cast<Integer>(pow2(to_numerology_value(scs))));
+  }
+
+  /// Creates a physical layer time from seconds.
+  static constexpr phy_time_unit from_seconds(double seconds)
+  {
+    // Convert to units of Tc.
+    double tc_units_dbl = seconds / T_C;
+    // Multiply by ten and convert to value_type.
+    auto tc_units = static_cast<value_type>(tc_units_dbl * 10.0);
+    // Round to the nearest integer avoiding using std::round.
+    return phy_time_unit(tc_units / 10 + (tc_units % 10) / 5);
+  }
+};
+
+/// \brief Gets the sampling rate from a subcarrier spacing and a DFT size combination.
+/// \tparam U       Return data type. Must be convertible to unsigned (default: double).
+/// \param[in] scs  Subcarrier spacing.
+/// \param dft_size DFT size.
+/// \return The sampling rate in hertz from the given SCS and DFT size.
+template <typename U = double>
+constexpr U to_sampling_rate_Hz(subcarrier_spacing scs, unsigned dft_size)
+{
+  static_assert(std::is_convertible_v<unsigned, U>, "Invalid type.");
+  return static_cast<U>(scs_to_khz(scs) * 1000 * dft_size);
+}
+
+} // namespace ocudu

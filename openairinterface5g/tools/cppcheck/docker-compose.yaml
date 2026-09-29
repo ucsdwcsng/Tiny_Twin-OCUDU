@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+
+services:
+  cppcheck:
+    image: cppcheck
+    build:
+      dockerfile_inline: |
+        FROM ubuntu:focal
+        RUN DEBIAN_FRONTEND=noninteractive apt update && apt install -y cppcheck
+    volumes:
+      - ../../:/code/
+    command:
+      bash -c "cd /code/ && ./tools/cppcheck/run-cppcheck.sh"
+

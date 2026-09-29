@@ -1,0 +1,61 @@
+# VANILLA OCUDU gNB (no jbpf yet - Phase A) - TDD n78 20MHz 30kHz over ZMQ,
+# PLMN 00101, our Open5GS helm core. Includes the OCUDU OAI-interop keys
+# (csi.csi_rs_enabled, pucch.nof_cell_csi_res) + tx_gain -12 crest-factor backoff.
+# ZMQ: gNB tx=4556 -> UE rx=4556 ; UE tx=4557 -> gNB rx=4557 (1-UE point-to-point).
+
+ru_sdr:
+  device_driver: zmq
+  device_args: tx_port=tcp://0.0.0.0:4556,rx_port=tcp://10.53.1.4:4557,base_srate=23.04e6
+  srate: 23.04
+  tx_gain: -12
+  rx_gain: 0
+
+cell_cfg:
+  dl_arfcn: 632628
+  band: 78
+  channel_bandwidth_MHz: 20
+  common_scs: 30
+  plmn: "00101"
+  tac: 7
+  pci: 1
+  nof_antennas_dl: 1
+  nof_antennas_ul: 1
+  tdd_ul_dl_cfg:
+    dl_ul_tx_period: 5
+    nof_dl_slots: 3
+    nof_dl_symbols: 10
+    nof_ul_slots: 1
+    nof_ul_symbols: 2
+  pusch:
+    dmrs_additional_position: 2
+  csi:
+    csi_rs_enabled: true
+  pucch:
+    nof_cell_csi_res: 1
+
+cu_cp:
+  inactivity_timer: 7200
+  amf:
+    addr: open5gs-amf-ngap.open5gs.svc.cluster.local
+    port: 38412
+    bind_addr: 0.0.0.0
+    supported_tracking_areas:
+      - tac: 7
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+
+cu_up:
+  ngu:
+    socket:
+      - bind_addr: 10.53.1.3   # gNB pod IP (N3/GTP-U); newer srsRAN/OCUDU schema
+
+log:
+  filename: /tmp/gnb.log
+  all_level: info
+  hex_max_size: 0
+
+pcap:
+  mac_enable: false
+  ngap_enable: false

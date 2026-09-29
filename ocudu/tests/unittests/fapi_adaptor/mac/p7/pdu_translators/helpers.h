@@ -1,0 +1,143 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/mac/mac_cell_result.h"
+#include "ocudu/scheduler/result/sched_result.h"
+
+namespace ocudu {
+namespace unittests {
+
+/// Helper struct to manage the pointer life cycle of a SIB PDU.
+struct sib_information_test_helper {
+  bwp_configuration     bwp_cfg;
+  coreset_configuration coreset_cfg;
+  sib_information       pdu;
+};
+
+/// Builds and returns a valid SIB1 information PDU.
+sib_information_test_helper build_valid_sib1_information_pdu();
+
+/// Helper struct to manage the pointer life cycle of a RAR PDU.
+struct rar_information_test_helper {
+  bwp_configuration     bwp_cfg;
+  coreset_configuration coreset_cfg;
+  rar_information       pdu;
+};
+
+/// Builds and returns a valid RAR information PDU.
+rar_information_test_helper build_valid_rar_information_pdu();
+
+/// Helper struct to manage the pointer life cycle of a DL paging allocation PDU.
+struct dl_paging_allocation_test_helper {
+  bwp_configuration     bwp_cfg;
+  coreset_configuration coreset_cfg;
+  dl_paging_allocation  pdu;
+};
+
+/// Builds and returns a valid DL paging PDU.
+dl_paging_allocation_test_helper build_valid_dl_paging_pdu();
+
+/// Helper struct to manage the pointer life cycle of a DL message allocation PDU.
+struct dl_msg_allocation_test_helper {
+  bwp_configuration     bwp_cfg;
+  coreset_configuration coreset_cfg;
+  dl_msg_alloc          pdu;
+};
+
+/// Builds and returns a valid DL message allocation PDU.
+dl_msg_allocation_test_helper build_valid_dl_msg_alloc_pdu();
+
+/// Builds and returns a valid MAC SSB PDU.
+dl_ssb_pdu build_valid_dl_ssb_pdu();
+
+/// Helper struct to manage the pointer life cycle of a MAC DL scheduling result.
+struct mac_dl_sched_result_test_helper {
+  std::array<bwp_configuration, 2>                          bwp_cfg;
+  std::array<bwp_configuration, MAX_DL_PDCCH_PDUS_PER_SLOT> bwp_cfg_pdcch;
+  std::array<coreset_configuration, 2>                      coreset_cfg;
+  sib_information_test_helper                               sib1;
+  rar_information_test_helper                               rar;
+  dl_paging_allocation_test_helper                          dl_paging;
+  dl_msg_allocation_test_helper                             dl_msg_alloc;
+  dl_sched_result                                           sched_result;
+  mac_dl_sched_result                                       result;
+};
+
+/// Helper struct to manage the pointer life cycle of a MAC DL scheduling result.
+struct mac_dl_data_result_test_helper {
+  std::array<uint8_t, 1> data;
+  mac_dl_data_result     result;
+};
+
+/// Builds and returns a valid MAC data result.
+mac_dl_data_result_test_helper build_valid_mac_data_result();
+
+/// Builds and returns a valid MAC data result.
+mac_dl_data_result_test_helper build_valid_mac_data_result_with_all_supported_pdu();
+
+/// Builds and returns a valid PRACH occassion.
+prach_occasion_info build_valid_prach_occassion();
+
+/// Helper struct to manage the pointer life cycle of a UL scheduling info.
+struct ul_sched_info_test_helper {
+  bwp_configuration bwp_cfg;
+  ul_sched_info     info;
+};
+
+/// Builds and returns a valid PUSCH PDU.
+ul_sched_info_test_helper build_valid_pusch_pdu();
+
+struct srs_info_helper {
+  bwp_configuration bwp_cfg;
+  srs_info          pdu;
+};
+
+/// Builds and returns a valid SRS PDU.
+srs_info_helper build_valid_srs_pdu();
+
+/// Helper struct to manage the pointer life cycle of a PUCCH info.
+struct pucch_info_test_helper {
+  bwp_configuration bwp_cfg;
+  pucch_resource    res;
+  pucch_info        info;
+};
+
+/// Build and returns a valid PUCCH format 1 PDU.
+pucch_info_test_helper build_valid_pucch_format_1_pdu();
+
+/// Build and returns a valid PUCCH format 2 PDU.
+pucch_info_test_helper build_valid_pucch_format_2_pdu();
+
+/// Build and returns a valid PUCCH format 3 PDU.
+pucch_info_test_helper build_valid_pucch_format_3_pdu();
+
+/// Build and returns a valid PUCCH format 4 PDU.
+pucch_info_test_helper build_valid_pucch_format_4_pdu();
+
+/// Builds and returns a valid MAC DL sched result.
+mac_dl_sched_result_test_helper build_valid_mac_dl_sched_result();
+
+/// Builds and returns a valid MAC DL sched result with all the PDUs filled.
+mac_dl_sched_result_test_helper build_valid_mac_dl_sched_result_with_all_supported_pdus();
+
+/// Helper struct to manage the pointer life cycle of a MAC UL scheduling result.
+struct mac_ul_sched_result_test_helper {
+  pucch_info_test_helper    pucch_f1;
+  pucch_info_test_helper    pucch_f2;
+  ul_sched_info_test_helper pusch;
+  srs_info_helper           srs;
+  ul_sched_result           sched_result;
+  mac_ul_sched_result       result;
+};
+
+/// Builds and returns a valid MAC UL sched result.
+mac_ul_sched_result_test_helper build_valid_mac_ul_sched_result();
+
+/// Builds and returns a valid MAC UL sched result with all PDUs filled.
+mac_ul_sched_result_test_helper build_valid_mac_ul_sched_result_with_all_supported_pdus();
+
+} // namespace unittests
+} // namespace ocudu

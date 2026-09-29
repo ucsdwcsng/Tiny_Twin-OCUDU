@@ -1,0 +1,130 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "slice_ue_repository.h"
+
+using namespace ocudu;
+
+slice_ue::slice_ue(ue& u_, ue_cell& ue_cc_, ran_slice_id_t slice_id_) : u(u_), ue_cc(ue_cc_), slice_id(slice_id_) {}
+
+// class slice_ue_repository
+
+slice_ue_repository::slice_ue_repository(ran_slice_id_t slice_id_, du_cell_index_t cell_index_, ue_repository& ues_) :
+  slice_id(slice_id_), cell_index(cell_index_), ues(ues_)
+{
+}
+
+bool slice_ue_repository::add_ue(ue& u)
+{
+  if (not ue_map.contains(u.ue_index)) {
+    ue_cell* ue_cc = u.find_cell(cell_index);
+    ocudu_sanity_check(ue_cc != nullptr, "Invalid UE added to RAN slice");
+    ue_map.emplace(u.ue_index, u, *ue_cc, slice_id);
+    return true;
+  }
+  return false;
+}
+
+void slice_ue_repository::add_logical_channel(ue& u, lcid_t lcid, lcg_id_t lcg_id)
+{
+  if (lcid == LCID_SRB0) {
+    // SRB0 is never handled by slice scheduler.
+    return;
+  }
+
+  // Create UE entry if not created yet.
+  add_ue(u);
+
+  // Add LCID to DL slice.
+  u.logical_channels().set_lcid_ran_slice(lcid, slice_id);
+
+  // Add LCG-ID to UL slice.
+  u.logical_channels().set_lcg_ran_slice(lcg_id, slice_id);
+}
+
+void slice_ue_repository::rem_logical_channel(du_ue_index_t ue_idx, lcid_t lcid)
+{
+  if (not ue_map.contains(ue_idx)) {
+    return;
+  }
+  auto& slice_u = ue_map[ue_idx];
+
+  ue_logical_channel_repository& lc_mng = slice_u.u.logical_channels();
+  ocudu_sanity_check(lc_mng.has_slice(slice_id), "slice_ue should not be created without slice");
+  if (lc_mng.get_slice_id(lcid) != slice_id) {
+    // LCID is not associated with this slice.
+    return;
+  }
+
+  // Disconnect RAN slice from LCID.
+  lc_mng.reset_lcid_ran_slice(lcid);
+
+  // If there are still other bearers in the slice, do not remove the LCG ID.
+  logical_channel_config_list_ptr lc_chs = slice_u.u.ue_cfg_dedicated()->logical_channels();
+  lcg_id_t lcg_id_to_rem = lc_chs.value().contains(lcid) ? lc_chs.value()[lcid]->lc_group : MAX_NOF_LCGS;
+  bool     to_destroy    = true;
+  for (logical_channel_config_ptr lc : *lc_chs) {
+    if (lc->lcid != lcid and lc->lc_group == lcg_id_to_rem and lc_mng.get_slice_id(lc->lcid) == slice_id) {
+      to_destroy = false;
+      break;
+    }
+  }
+  if (to_destroy) {
+    slice_u.u.logical_channels().reset_lcg_ran_slice(lcg_id_to_rem);
+  }
+
+  if (not slice_u.u.logical_channels().has_slice(slice_id)) {
+    // If no more bearers active for this UE, remove it from the slice.
+    ue_map.erase(ue_idx);
+  }
+}
+
+void slice_ue_repository::rem_ue(du_ue_index_t ue_index)
+{
+  if (not ue_map.contains(ue_index)) {
+    return;
+  }
+  ue_map.erase(ue_index);
+}
+
+static units::bytes sum_allocated_ul_harq_bytes(const ue& u)
+{
+  units::bytes bytes_in_harqs{0};
+  for (unsigned cell_idx = 0, e = u.nof_cells(); cell_idx != e; ++cell_idx) {
+    const ue_cell& cc = u.get_cell(to_serv_cell_index(cell_idx));
+    bytes_in_harqs += cc.harqs.total_ul_bytes_waiting_ack();
+  }
+  return bytes_in_harqs;
+}
+
+unsigned slice_ue::pending_ul_newtx_bytes() const
+{
+  static constexpr unsigned SR_GRANT_BYTES = 512;
+
+  int pending_bytes  = u.logical_channels().ul_pending_bytes(slice_id);
+  int harqs_in_bytes = -1;
+
+  if (pending_bytes > 0) {
+    // Subtract the bytes already allocated in UL HARQs.
+    harqs_in_bytes = static_cast<int>(sum_allocated_ul_harq_bytes(u).value());
+    pending_bytes -= harqs_in_bytes;
+    if (pending_bytes > 0) {
+      return std::max(pending_bytes, 0);
+    }
+  }
+
+  // In case a SR is pending and this is the SRB slice, we return a minimum SR grant size if no other bearers have
+  // pending data.
+  if (slice_id == SRB_RAN_SLICE_ID and has_pending_sr()) {
+    pending_bytes = u.logical_channels().ul_pending_bytes();
+    if (harqs_in_bytes < 0) {
+      // In case harq_in_bytes has not been computed earlier.
+      harqs_in_bytes = static_cast<int>(sum_allocated_ul_harq_bytes(u).value());
+    }
+    pending_bytes -= harqs_in_bytes;
+    return pending_bytes <= 0 ? SR_GRANT_BYTES : 0;
+  }
+
+  return 0;
+}

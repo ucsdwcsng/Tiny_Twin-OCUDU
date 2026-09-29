@@ -1,0 +1,97 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/generic_functions/generic_functions_factories.h"
+#include "ocudu/phy/lower/modulation/ofdm_demodulator.h"
+#include "ocudu/phy/lower/modulation/ofdm_modulator.h"
+#include "ocudu/phy/lower/modulation/ofdm_prach_demodulator.h"
+#include "ocudu/phy/lower/sampling_rate.h"
+
+namespace ocudu {
+
+/// Describes an OFDM modulator factory.
+class ofdm_modulator_factory
+{
+public:
+  /// Default destructor.
+  virtual ~ofdm_modulator_factory() = default;
+
+  /// \brief Creates an OFDM modulator that modulates with symbol granularity.
+  /// \param[in] config Provides the configuration parameters.
+  /// \return A unique pointer to an OFDM symbol modulator if the provided parameters are valid, \c nullptr otherwise.
+  virtual std::unique_ptr<ofdm_symbol_modulator>
+  create_ofdm_symbol_modulator(const ofdm_modulator_configuration& config) = 0;
+
+  /// \brief Creates an OFDM modulator that modulates with slot granularity.
+  /// \param[in] config Provides the configuration parameters.
+  /// \return A unique pointer to an OFDM slot modulator if the provided parameters are valid, \c nullptr otherwise.
+  virtual std::unique_ptr<ofdm_slot_modulator>
+  create_ofdm_slot_modulator(const ofdm_modulator_configuration& config) = 0;
+};
+
+/// Describes an OFDM demodulator factory.
+class ofdm_demodulator_factory
+{
+public:
+  /// Default destructor.
+  virtual ~ofdm_demodulator_factory() = default;
+
+  /// \brief Creates an OFDM demodulator that demodulates with symbol granularity.
+  /// \param[in] config Provides the configuration parameters.
+  /// \return A unique pointer to an OFDM symbol demodulator if the provided parameters are valid, \c nullptr otherwise.
+  virtual std::unique_ptr<ofdm_symbol_demodulator>
+  create_ofdm_symbol_demodulator(const ofdm_demodulator_configuration& config) = 0;
+
+  /// \brief Creates an OFDM demodulator that modulates with slot granularity.
+  /// \param[in] config Provides the configuration parameters.
+  /// \return A unique pointer to an OFDM slot demodulator if the provided parameters are valid, \c nullptr otherwise.
+  virtual std::unique_ptr<ofdm_slot_demodulator>
+  create_ofdm_slot_demodulator(const ofdm_demodulator_configuration& config) = 0;
+};
+
+/// OFDM PRACH demodulator factory.
+class ofdm_prach_demodulator_factory
+{
+public:
+  /// Default destructor.
+  virtual ~ofdm_prach_demodulator_factory() = default;
+
+  /// Creates an OFDM PRACH demodulator.
+  virtual std::unique_ptr<ofdm_prach_demodulator> create() = 0;
+};
+
+/// Describes the necessary parameters for creating generic OFDM modulator and demodulator factories.
+struct ofdm_factory_generic_configuration {
+  /// Provides a DFT factory.
+  std::shared_ptr<dft_processor_factory> dft_factory;
+};
+
+/// Creates a generic OFDM modulator factory.
+std::shared_ptr<ofdm_modulator_factory>
+create_ofdm_modulator_factory_generic(ofdm_factory_generic_configuration& config);
+
+/// Creates a generic OFDM modulator concurrent pool factory.
+std::shared_ptr<ofdm_modulator_factory> create_ofdm_modulator_pool_factory(std::shared_ptr<ofdm_modulator_factory> base,
+                                                                           unsigned max_nof_threads);
+
+/// Creates a generic OFDM demodulator factory.
+std::shared_ptr<ofdm_demodulator_factory>
+create_ofdm_demodulator_factory_generic(ofdm_factory_generic_configuration& config);
+
+/// Creates a generic OFDM demodulator concurrent pool factory.
+std::shared_ptr<ofdm_demodulator_factory>
+create_ofdm_demodulator_pool_factory(std::shared_ptr<ofdm_demodulator_factory> base, unsigned max_nof_threads);
+
+/// \brief Creates a software generic PRACH demodulator.
+/// \param[in] dft_factory DFT factory.
+/// \param[in] srate       Sampling rate.
+/// \param[in] fr          Frequency range.
+std::shared_ptr<ofdm_prach_demodulator_factory>
+create_ofdm_prach_demodulator_factory_sw(std::shared_ptr<dft_processor_factory> dft_factory,
+                                         sampling_rate                          srate,
+                                         frequency_range                        fr);
+
+} // namespace ocudu

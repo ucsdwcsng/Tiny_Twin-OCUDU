@@ -1,0 +1,99 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../mac_config_interfaces.h"
+#include "../mac_dl/mac_dl_metric_handler.h"
+#include "mac_cell_controller_impl.h"
+#include "mac_config.h"
+#include "mac_metrics_aggregator.h"
+#include "mac_scheduler_configurator.h"
+#include "ocudu/mac/mac_config.h"
+#include "ocudu/mac/mac_positioning_measurement_handler.h"
+#include "ocudu/ran/du_types.h"
+#include "ocudu/ran/du_ue_list.h"
+
+namespace ocudu {
+
+struct mac_ue_context {
+  du_ue_index_t   du_ue_index = MAX_NOF_DU_UES;
+  rnti_t          rnti        = rnti_t::INVALID_RNTI;
+  du_cell_index_t pcell_idx   = MAX_NOF_DU_CELLS;
+  rnti_t          cs_rnti     = rnti_t::INVALID_RNTI;
+};
+
+class rnti_manager;
+
+class mac_controller final : public mac_ctrl_configurator, public mac_ue_configurator, public mac_cell_manager
+{
+public:
+  mac_controller(const mac_control_config&   cfg_,
+                 mac_ul_configurator&        ul_unit_,
+                 mac_dl_configurator&        dl_unit_,
+                 rnti_manager&               rnti_table_,
+                 mac_scheduler_configurator& sched_cfg_);
+
+  /// Adds new cell configuration to MAC. The configuration is forwarded to the scheduler.
+  mac_cell_controller& add_cell(const mac_cell_creation_request& cell_cfg) override;
+
+  /// Removes cell configuration from MAC. The cell is also removed from the scheduler.
+  void remove_cell(du_cell_index_t cell_index) override;
+
+  mac_cell_controller& get_cell_controller(du_cell_index_t cell_index) override;
+
+  mac_subframe_time_mapper& get_subframe_time_mapper() override;
+
+  /// Creates UE in MAC and scheduler.
+  async_task<mac_ue_create_response> handle_ue_create_request(const mac_ue_create_request& msg) override;
+
+  /// Deletes UE from MAC and scheduler.
+  async_task<mac_ue_delete_response> handle_ue_delete_request(const mac_ue_delete_request& msg) override;
+
+  /// Reconfigures UE in MAC and scheduler.
+  async_task<mac_ue_reconfiguration_response>
+  handle_ue_reconfiguration_request(const mac_ue_reconfiguration_request& msg) override;
+
+  bool handle_ul_ccch_msg(du_ue_index_t    ue_index,
+                          du_cell_index_t  cell_index,
+                          slot_point       slot_rx,
+                          byte_buffer      ul_ccch_msg,
+                          msg3_mac_ce_list mac_ces) override
+  {
+    return ul_unit.flush_ul_ccch_msg(ue_index, cell_index, slot_rx, std::move(ul_ccch_msg), std::move(mac_ces));
+  }
+
+  void handle_ue_config_applied(du_ue_index_t ue_index) override;
+
+  /// Fetch UE context
+  mac_ue_context* find_ue(du_ue_index_t ue_index);
+  mac_ue_context* find_by_rnti(rnti_t rnti);
+
+private:
+  /// Adds UE solely in MAC controller.
+  rnti_t add_ue(du_ue_index_t ue_index, du_cell_index_t pcell_index, rnti_t tc_rnti) override;
+
+  /// Interface to MAC controller main class used by MAC controller procedures.
+  void remove_ue(du_ue_index_t ue_index) override;
+
+  // args
+  mac_control_config          cfg;
+  ocudulog::basic_logger&     logger;
+  mac_ul_configurator&        ul_unit;
+  mac_dl_configurator&        dl_unit;
+  rnti_manager&               rnti_table;
+  mac_scheduler_configurator& sched_cfg;
+  mac_clock_controller&       time_ctrl;
+
+  // Metrics aggregator.
+  mac_metrics_aggregator metrics;
+
+  // Cell database
+  slotted_array<mac_cell_controller_impl, MAX_NOF_DU_CELLS> cells;
+
+  // UE database
+  du_ue_list<mac_ue_context> ue_db;
+};
+
+} // namespace ocudu

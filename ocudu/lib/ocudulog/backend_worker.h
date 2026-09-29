@@ -1,0 +1,116 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "ocudu/ocudulog/detail/log_entry.h"
+#include "ocudu/ocudulog/detail/support/dyn_arg_store_pool.h"
+#include "ocudu/ocudulog/detail/support/work_queue.h"
+#include "ocudu/ocudulog/shared_types.h"
+#include <mutex>
+#include <thread>
+
+namespace ocudulog {
+
+class sink_repository;
+
+/// The backend worker runs in a secondary thread a routine that endlessly pops
+/// log entries from a work queue and dispatches them to the selected sinks.
+class backend_worker
+{
+public:
+  backend_worker(sink_repository&                       sink_repo_,
+                 detail::work_queue<detail::log_entry>& queue_,
+                 detail::dyn_arg_store_pool&            arg_pool_) :
+    sink_repo(sink_repo_), queue(queue_), arg_pool(arg_pool_), running_flag(false)
+  {
+  }
+
+  backend_worker(const backend_worker&)            = delete;
+  backend_worker& operator=(const backend_worker&) = delete;
+
+  ~backend_worker() { stop(); }
+
+  /// Starts the backend worker thread. After returning from this function the
+  /// secondary thread is ensured to be running. Calling this function more than
+  /// once has no effect.
+  void start(backend_priority priority);
+
+  /// Stops the backend worker thread if it is running, otherwise the call has
+  /// no effect. After returning from this function the secondary thread is
+  /// ensured to have terminated. Calling this function more than once has no
+  /// effect.
+  void stop();
+
+  /// Returns true if the worker thread is currently running, otherwise
+  /// returns false.
+  bool is_running() const { return running_flag; }
+
+  /// Uses the specified error handler to receive error notifications. Calls to
+  /// this method when the worker is running will get ignored.
+  void set_error_handler(error_handler new_err_handler)
+  {
+    // Ignore new handlers when the worker is running.
+    if (is_running()) {
+      return;
+    }
+
+    // Install a dummy callback if the input one is empty. This avoids having to
+    // check for null at each call site.
+    if (!new_err_handler) {
+      err_handler = [](const std::string&) {};
+      return;
+    }
+
+    err_handler = std::move(new_err_handler);
+  }
+
+private:
+  /// Creates the worker thread.
+  /// NOTE: This function should be only called once.
+  void create_worker(backend_priority priority);
+
+  /// Entry function used by the secondary thread.
+  void do_work();
+
+  /// Processes the log entry.
+  void process_log_entry(detail::log_entry&& entry);
+
+  /// Processes outstanding entries in the queue until it gets empty.
+  void process_outstanding_entries();
+
+  /// Checks the current size of the queue reporting an error message if it is
+  /// about to reach its maximum capacity.
+  /// Error message is only reported once to avoid spamming.
+  /// Returns true if an error was reported, otherwise false.
+  bool report_queue_on_full_once()
+  {
+    if (queue.is_almost_full() && !is_err_handler_empty) {
+      err_handler(fmt::format("The backend queue size is about to reach its maximum "
+                              "capacity of {} elements, new log entries will get "
+                              "discarded.\nConsider increasing the queue capacity.",
+                              queue.get_capacity()));
+      err_handler          = [](const std::string&) {};
+      is_err_handler_empty = true;
+      return true;
+    }
+
+    return false;
+  }
+
+  /// Establishes the specified thread priority for the calling thread.
+  void set_thread_priority(backend_priority priority) const;
+
+private:
+  sink_repository&                       sink_repo;
+  detail::work_queue<detail::log_entry>& queue;
+  detail::dyn_arg_store_pool&            arg_pool;
+  detail::shared_variable<bool>          running_flag;
+  error_handler      err_handler = [](const std::string& error) { fmt::print(stderr, "ocuduLog error - {}\n", error); };
+  bool               is_err_handler_empty = false;
+  std::once_flag     start_once_flag;
+  std::thread        worker_thread;
+  fmt::memory_buffer fmt_buffer;
+};
+
+} // namespace ocudulog

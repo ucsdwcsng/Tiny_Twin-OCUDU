@@ -1,0 +1,591 @@
+module o-ran-delay-management {
+  yang-version 1.1;
+  namespace "urn:o-ran:delay:1.0";
+  prefix "o-ran-delay";
+
+  import o-ran-wg4-features {
+    prefix "feat";
+  }
+
+  organization "O-RAN Alliance";
+
+  contact
+    "www.o-ran.org";
+
+  description
+    "This module covers off aspects of O-DU to O-RU delay management,
+    including configuration data related to O-RU transmission and reception
+    windows.
+
+    Copyright 2024 the O-RAN Alliance.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'AS IS'
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the above disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the above disclaimer in the documentation
+    and/or other materials provided with the distribution.
+    * Neither the Members of the O-RAN Alliance nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.";
+
+  revision "2024-08-12" {
+    description
+      "version 16.0.0
+
+      1) Removing the range to align bandwidth type to same bandwidth type as
+      in uplane-config module and module-cap modules.
+      2) Add in Ta3-2g data processing delay";
+
+    reference "ORAN-WG4.M.0-v16.00";
+  }
+
+  revision "2024-04-15" {
+    description
+      "version 15.0.0
+
+      1) add support for for beamforming list and delay profiles(s) per endpoint.";
+
+    reference "ORAN-WG4.M.0-v15.00";
+  }
+
+  revision "2022-08-15" {
+    description
+      "version 10.0.0
+
+      1) introducing new feature for ACK NACK feedback.";
+
+    reference "ORAN-WG4.M.0-v10.00";
+  }
+
+  revision "2021-12-01" {
+    description
+      "version 8.0.0
+
+      1) typographical corrections in descriptions.
+      2) add new schema node beam-context-gap-period.";
+
+    reference "ORAN-WG4.M.0-v08.00";
+  }
+
+  revision "2020-08-10" {
+    description
+      "version 4.0.0
+
+      1) introduction of new t1a-max-cp-dl leaf to enable decoupled timing between C- and U-Plane";
+
+    reference "ORAN-WG4.M.0-v04.00";
+  }
+
+  revision "2019-07-03" {
+    description
+      "version 1.1.0
+
+      1) fixing descriptions of ta3-min and ta3-max.
+      2) introducing grouping/uses to enable model re-use by WG5";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+  revision "2019-02-04" {
+    description
+      "version 1.0.0
+
+      1) imported model from xRAN
+      2) changed namespace and reference from xran to o-ran";
+
+    reference "ORAN-WG4.M.0-v01.00";
+  }
+
+
+  feature ADAPTIVE-RU-PROFILE {
+    description
+      "This feature indicates that the O-RU supports adaptive O-RU delay profile
+      based on information provided by the NETCONF client.";
+  }
+
+  typedef bandwidth {
+    type uint32;
+    units kilohertz;
+    description
+      "transmission bandwidth configuration in units of kHz -
+      covering NB-IoT through to New Radio.
+      Value shall correspond to a value defined in 38.104.";
+  }
+
+  grouping bandwidth-configuration {
+    description
+      "Grouping for bandwidth and SCS configuration";
+
+    leaf bandwidth {
+      type bandwidth;
+      description
+        "transmission bandwidth configuration in units of kHz -
+        covering NBIoT through to New Radio - see 38.104";
+    }
+    leaf subcarrier-spacing {
+      type uint32 {
+        range "0 .. 240000 ";
+      }
+      units Hertz;
+      description "sub-carrier spacing in Hz";
+    }
+  }
+
+  grouping t2a-up {
+    description
+      "configuration of t2a for uplink";
+
+    leaf t2a-min-up {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the minimum O-RU data processing delay between receiving IQ data
+        message over the fronthaul interface and transmitting
+        the corresponding first IQ sample at the antenna";
+    }
+    leaf t2a-max-up {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the earliest allowable time when a data packet is received before
+        the corresponding first IQ sample is transmitted at the antenna";
+    }
+  }
+
+  grouping t2a-cp-dl {
+    description
+      "Grouping for t2a CP for downlink";
+
+    leaf t2a-min-cp-dl {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the minimum O-RU data processing delay between receiving downlink
+        real time control plane message over the fronthaul interface and
+        transmitting the corresponding first IQ sample at the antenna";
+    }
+    leaf t2a-max-cp-dl {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the earliest allowable time when a downlink real time control message
+        is received before the corresponding first IQ sample is transmitted at
+        the antenna";
+    }
+  }
+
+  grouping ta3 {
+    description
+      "Grouping for ta3 configuration";
+
+    leaf ta3-min {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the minimum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting the first data sample over the
+        fronthaul interface";
+    }
+    leaf ta3-max {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the maximum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting the last data sample over the
+        fronthaul interface";
+    }
+  }
+
+  grouping t2a-cp-ul {
+    description
+      "Grouping for t2a CP uplink";
+
+    leaf t2a-min-cp-ul {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the minimum O-RU data processing delay between receiving real time
+        up-link control plane message over the fronthaul interface and
+        receiving the first IQ sample at the antenna";
+    }
+    leaf t2a-max-cp-ul {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the earliest allowable time when a real time up-link control message
+        is received before the corresponding first IQ sample is received  at
+        the antenna";
+    }
+  }
+
+  grouping ta3-ack {
+    description
+      "Grouping for ta3-ack configuration";
+    leaf ta3-min-ack {
+      type int32;
+      units nanoseconds;
+      description
+        "the minimum delay between the DL/UL air reference point (tDL=0 or tUL=0) of symbol M
+        and the time O-RU sends section type 8 (ACK/NACK feedback) to O-DU.
+        This value can be negative, which indicates it is in advance of the air reference point.
+        This leaf only exists if section extension 22 (ACK/NACK request) and section type 8 (ACK/NACK feedback)
+        are supported by at least one endpoint.";
+    }
+
+    leaf ta3-max-ack {
+      type int32;
+      units nanoseconds;
+      description
+        "the maximum delay between the DL/UL air reference point (tDL=0 or tUL=0) of symbol M
+        and the time O-RU sends section type 8 (ACK/NACK feedback) to O-DU.
+        This value can be negative, which indicates it is in advance of the air reference point.
+        This leaf only exists if section extension 22 (ACK/NACK request) and section type 8 (ACK/NACK feedback)
+        are supported by at least one endpoint.";
+    }
+  }
+
+  grouping ta3-2g {
+    description
+      "Grouping for ta3-2g configuration";
+
+    leaf ta3-min-2g {
+      if-feature feat:RRM-MEAS-REPORTING;
+      type uint32;
+      units nanoseconds;
+      description
+        "The minimum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting a C-Plane message carrying RRM measurements
+        over the fronthaul interface.
+
+        Please refer to CUS specification clause 4.4.3 for more details.";
+    }
+    leaf ta3-max-2g {
+      if-feature feat:RRM-MEAS-REPORTING;
+      type uint32;
+      units nanoseconds;
+      description
+        "The maximum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting a C-Plane message carrying RRM measurements
+        over the fronthaul interface.
+
+        Please refer to CUS specification clause 4.4.3 for more details.";
+    }
+  }
+
+  grouping ru-delay-profile {
+    description
+      "Grouping for RU delay profile";
+
+    uses t2a-up;
+    uses t2a-cp-dl;
+
+    leaf tcp-adv-dl {
+      type uint32;
+      units nanoseconds;
+      mandatory true;
+      description
+        "the time difference (advance) between the reception window for
+        downlink real time Control messages and reception window for the
+        corresponding IQ data messages.";
+    }
+
+    uses ta3;
+    uses t2a-cp-ul;
+    uses ta3-ack;
+    uses ta3-2g;
+  }
+
+  grouping o-du-delay-profile {
+    description
+      "Grouping for O-DU delay profile";
+
+    leaf t1a-max-up {
+      type uint32;
+      units nanoseconds;
+      description
+        "the earliest possible time which the O-DU can support transmitting
+        an IQ data message prior to transmission of the corresponding IQ
+        samples at the antenna";
+    }
+    leaf tx-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "The maximum amount of time which the O-DU requires to transmit
+        all downlink user plane IQ data message for a symbol";
+    }
+    leaf ta4-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "the latest possible time which the O-DU can support receiving the
+        last uplink user plane IQ data message for a symbol.";
+    }
+    leaf rx-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "The maximum time difference the O-DU can support between
+        receiving the first user plane IQ data message for a symbol and
+        receiving the last user plane IQ data message for the same symbol";
+    }
+    leaf t1a-max-cp-dl {
+      type uint32;
+      units nanoseconds;
+      description
+        "The earliest possible time which the O-DU can support transmitting the
+        downlink real time control message prior to transmission of the
+        corresponding IQ samples at the antenna.";
+    }
+  }
+
+  grouping t12 {
+    description
+      "Grouping for t12";
+
+    leaf t12-min {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum measured delay between DU port-ID and O-RU port-ID";
+    }
+// additional leaf added by Samsung
+    leaf t12-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "the maximum measured delay between CU port-ID and O-RU port-ID";
+    }
+  }
+
+  grouping t34 {
+    description
+      "Grouping for t34";
+
+    leaf t34-min {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum measured delay between O-RU port-ID and CU port-ID";
+    }
+// additional leaf added by Samsung
+    leaf t34-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "the maximum measured delay between O-RU port-ID and CU port-ID";
+    }
+  }
+
+  grouping non-default-ru-delay-profile {
+    description
+      "Grouping for O-RU delay profile different from the default value in ru-delay-profile.";
+     leaf t2a-min-up {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum O-RU data processing delay between receiving IQ data
+        message over the fronthaul interface and transmitting
+        the corresponding first IQ sample at the antenna";
+    }
+    leaf t2a-max-up {
+      type uint32;
+      units nanoseconds;
+      description
+        "the earliest allowable time when a data packet is received before
+        the corresponding first IQ sample is transmitted at the antenna";
+    }
+    leaf t2a-min-cp-dl {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum O-RU data processing delay between receiving downlink
+        real time control plane message over the fronthaul interface and
+        transmitting the corresponding first IQ sample at the antenna";
+    }
+    leaf t2a-max-cp-dl {
+      type uint32;
+      units nanoseconds;
+      description
+        "the earliest allowable time when a downlink real time control message
+        is received before the corresponding first IQ sample is transmitted at
+        the antenna";
+    }
+    leaf tcp-adv-dl {
+      type uint32;
+      units nanoseconds;
+      description
+        "the time difference (advance) between the reception window for
+        downlink real time Control messages and reception window for the
+        corresponding IQ data messages.";
+    }
+    leaf ta3-min {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting the first data sample over the
+        fronthaul interface";
+    }
+    leaf ta3-max {
+      type uint32;
+      units nanoseconds;
+      description
+        "the maximum O-RU data processing delay between receiving an IQ sample
+        at the antenna and transmitting the last data sample over the
+        fronthaul interface";
+    }
+    leaf t2a-min-cp-ul {
+      type uint32;
+      units nanoseconds;
+      description
+        "the minimum O-RU data processing delay between receiving real time
+        up-link control plane message over the fronthaul interface and
+        receiving the first IQ sample at the antenna";
+    }
+    leaf t2a-max-cp-ul {
+      type uint32;
+      units nanoseconds;
+      description
+        "the earliest allowable time when a real time up-link control message
+        is received before the corresponding first IQ sample is received  at
+        the antenna";
+    }
+    leaf ta3-min-ack {
+      type int32;
+      units nanoseconds;
+      description
+        "the minimum delay between the DL/UL air reference point (tDL=0 or tUL=0) of symbol M
+        and the time O-RU sends section type 8 (ACK/NACK feedback) to O-DU.
+        This value can be negative, which indicates it is in advance of the air reference point.
+        This leaf only exists if section extension 22 (ACK/NACK request) and section type 8 (ACK/NACK feedback)
+        are supported by at least one endpoint.";
+    }
+    leaf ta3-max-ack {
+      type int32;
+      units nanoseconds;
+      description
+        "the maximum delay between the DL/UL air reference point (tDL=0 or tUL=0) of symbol M
+        and the time O-RU sends section type 8 (ACK/NACK feedback) to O-DU.
+        This value can be negative, which indicates it is in advance of the air reference point.
+        This leaf only exists if section extension 22 (ACK/NACK request) and section type 8 (ACK/NACK feedback)
+        are supported by at least one endpoint.";
+    }
+
+    uses ta3-2g;
+  }
+
+  grouping delay-management-group {
+    description "a delay management grouping";
+    list bandwidth-scs-delay-state {
+      key "bandwidth subcarrier-spacing";
+      description
+        "Array of structures containing sets of parameters for delay management.";
+
+      uses bandwidth-configuration;
+
+      container ru-delay-profile {
+        config false;
+        description "container for O-RU delay parameters";
+
+        uses ru-delay-profile;
+      }
+    }
+
+    list non-default-ru-delay-profile {
+      if-feature feat:BF-DELAY-PROFILE;
+      key "delay-profile-id";
+      description
+        "Sets of parameters defined when o-ru supported multiple delay profiles,
+        only the parameters that are different from the default delay profile are defined.";
+      leaf delay-profile-id {
+        type uint16 {
+          range "1..max";
+        }
+        description
+          "Used to identify the set of delay profile that are different from the default delay profile.
+          Value '0' is reserved to refer to default value";
+        }
+      list non-default-bandwidth-scs-delay-state {
+        key "bandwidth subcarrier-spacing";
+        description
+          "Array of structures containing sets of parameters for delay management.";
+        uses bandwidth-configuration;
+        container non-default-ru-delay-profile {
+          config false;
+          description
+            "O-RU delay parameters that are different from the default delay profile.
+            If a parameter doesn't exist, this parameter will use the defalt value determined in ru-delay-profile.";
+        uses non-default-ru-delay-profile;
+        }
+      }
+    }
+
+    container adaptive-delay-configuration {
+      if-feature ADAPTIVE-RU-PROFILE;
+      description "container for adaptive delay parameters";
+      list bandwidth-scs-delay-state {
+        key "bandwidth subcarrier-spacing";
+        description
+          "Array of structures containing sets of parameters for delay management.";
+
+        uses bandwidth-configuration;
+
+        container o-du-delay-profile {
+          description
+            "O-DU provided delay profile for adaptive delay configuration";
+
+          uses o-du-delay-profile;
+        }
+      }
+
+      container transport-delay {
+        description
+          "O-DU provided transport-delay parameters";
+        uses t12;
+        uses t34;
+      }
+    }
+
+    leaf beam-context-gap-period {
+      type uint16;
+      units microseconds;
+      description
+        "Time gap between the end of reception window of the C-Plane message(Msg-A) with new beam weights for a given beamId and end of the reception window
+        of the C-Plane message(Msg-B) that cites the same beamId without weights in the new context.
+        Note: Value of '0' indicates that the end of the Msg-A and Msg-B reception windows are perfectly aligned, which should allow Msg-B to use the new
+        beamforming weights with a '0' microsecond beam-context-gap-period. Value of '65535' implies infinite gap, which means a beamId may not be reused
+        at all in a different context (applicable only to weight-based dynamic beamforming). If O-DU chooses not to interpret/honor this value, behaviour
+        of O-RU is unpredictable if a beamId has new weights loaded in one context and is reused in a different context. Please refer the CUS-Plane spec
+        Section 'Weight-based dynamic beamforming' for detailed description";
+    }
+  }
+  container delay-management {
+    description "top-level tree covering off O-DU to O-RU delay management";
+
+    uses delay-management-group;
+  }
+}

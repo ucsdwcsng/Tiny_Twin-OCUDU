@@ -1,0 +1,325 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "modulation_mapper_lut_impl.h"
+#include "ocudu/ocuduvec/bit.h"
+#include "ocudu/ocuduvec/dot_prod.h"
+#include "ocudu/ocuduvec/sc_prod.h"
+#include "fmt/format.h"
+
+using namespace ocudu;
+
+namespace {
+
+/// Generic optimized modulator for any modulation order QM > 2 and QM % 2 == 0.
+template <unsigned QM>
+struct modulator_table_s {
+  // The indexing provides the complex symbol corresponding to the binary expansion of the index.
+  std::array<cf_t, pow2(QM)>  cf_table;
+  std::array<ci8_t, pow2(QM)> ci8_table;
+  float                       scaling;
+
+  // Constructs the Look-up table.
+  constexpr modulator_table_s()
+  {
+    // see TS38.211 Section 5.1.
+    for (uint32_t i = 0, i_end = pow2(QM); i != i_end; ++i) {
+      float offset = -1;
+      float real   = 0;
+      float imag   = 0;
+      for (uint32_t j = 0, j_end = QM / 2; j != j_end; ++j) {
+        real += offset;
+        imag += offset;
+        offset *= 2;
+
+        real *= ((i & (1U << (2U * j + 1U))) != 0) ? +1 : -1;
+        imag *= ((i & (1U << (2U * j + 0U))) != 0) ? +1 : -1;
+      }
+      cf_table[i]  = {real, imag};
+      ci8_table[i] = to_ci8(cf_table[i]);
+    }
+
+    // Calculate average power to calculate scaling for having a power average of one.
+    float avg_power = ocuduvec::average_power(cf_table);
+    ocudu_assert(std::isnormal(avg_power), "Corrupted modulation average power.");
+
+    // Perform scaling.
+    scaling = std::sqrt(1 / avg_power);
+    ocuduvec::sc_prod(cf_table, cf_table, scaling);
+  }
+
+  // Modulates the input bits.
+  template <typename Type>
+  constexpr void modulate(span<Type> symbols, const bit_buffer& input, const std::array<Type, pow2(QM)>& table) const
+  {
+    unsigned       i_symbol    = 0;
+    Type*          symbols_ptr = symbols.data();
+    const uint8_t* input_ptr   = input.get_buffer().data();
+
+    // Optimized version for QPSK.
+    if (QM == 2) {
+      for (unsigned i_byte = 0, i_symbol_end = (symbols.size() / 4) * 4; i_symbol != i_symbol_end;) {
+        uint8_t byte            = input_ptr[i_byte++];
+        uint8_t index0          = (byte >> 6U) & 0b11;
+        uint8_t index1          = (byte >> 4U) & 0b11;
+        uint8_t index2          = (byte >> 2U) & 0b11;
+        uint8_t index3          = byte & 0b11;
+        symbols_ptr[i_symbol++] = table[index0];
+        symbols_ptr[i_symbol++] = table[index1];
+        symbols_ptr[i_symbol++] = table[index2];
+        symbols_ptr[i_symbol++] = table[index3];
+      }
+    }
+
+    // Optimized version for 16-QAM.
+    if (QM == 4) {
+      for (unsigned i_byte = 0, i_symbol_end = (symbols.size() / 2) * 2; i_symbol != i_symbol_end;) {
+        uint8_t byte            = input_ptr[i_byte++];
+        uint8_t index0          = byte >> 4U;
+        uint8_t index1          = byte & 0b1111;
+        symbols_ptr[i_symbol++] = table[index0];
+        symbols_ptr[i_symbol++] = table[index1];
+      }
+    }
+
+    // Optimized version for 64-QAM.
+    if (QM == 6) {
+      for (unsigned i_byte = 0, i_symbol_end = (symbols.size() / 4) * 4; i_symbol != i_symbol_end;) {
+        uint8_t byte0 = input_ptr[i_byte++];
+        uint8_t byte1 = input_ptr[i_byte++];
+        uint8_t byte2 = input_ptr[i_byte++];
+
+        uint8_t index0 = byte0 >> 2U;
+        uint8_t index1 = ((byte0 & 0b11U) << 4U) | (byte1 >> 4U);
+        uint8_t index2 = ((byte1 & 0b1111U) << 2U) | (byte2 >> 6U);
+        uint8_t index3 = byte2 & 0b111111U;
+
+        // Get the symbol from the table.
+        symbols_ptr[i_symbol++] = table[index0];
+        symbols_ptr[i_symbol++] = table[index1];
+        symbols_ptr[i_symbol++] = table[index2];
+        symbols_ptr[i_symbol++] = table[index3];
+      }
+    }
+
+    // Optimized version for 256-QAM.
+    if (QM == 8) {
+      for (unsigned i_byte = 0, i_symbol_end = symbols.size(); i_symbol != i_symbol_end;) {
+        uint8_t byte            = input_ptr[i_byte++];
+        symbols_ptr[i_symbol++] = table[byte];
+      }
+    }
+
+    // Optimized version for 1024-QAM.
+    if (QM == 10) {
+      for (unsigned i_byte = 0, i_symbol_end = (symbols.size() / 4) * 4; i_symbol != i_symbol_end;) {
+        uint8_t byte0 = input_ptr[i_byte++];
+        uint8_t byte1 = input_ptr[i_byte++];
+        uint8_t byte2 = input_ptr[i_byte++];
+        uint8_t byte3 = input_ptr[i_byte++];
+        uint8_t byte4 = input_ptr[i_byte++];
+
+        uint16_t index0 = (static_cast<uint16_t>(byte0) << 2U) | (byte1 >> 6U);
+        uint16_t index1 = (static_cast<uint16_t>(byte1 & 0b111111U) << 4U) | (byte2 >> 4U);
+        uint16_t index2 = (static_cast<uint16_t>(byte2 & 0b1111U) << 6U) | (byte3 >> 2U);
+        uint16_t index3 = (static_cast<uint16_t>(byte3 & 0b11U) << 8U) | byte4;
+
+        symbols_ptr[i_symbol++] = table[index0];
+        symbols_ptr[i_symbol++] = table[index1];
+        symbols_ptr[i_symbol++] = table[index2];
+        symbols_ptr[i_symbol++] = table[index3];
+      }
+    }
+
+    // Generic implementation.
+    for (unsigned i_symbol_end = symbols.size(); i_symbol != i_symbol_end; ++i_symbol) {
+      // Calculate modulation table index.
+      unsigned index = 0;
+      if (QM == 10) {
+        // bit_buffer::extract supports up to 8 bits, so split 10 bits into 8+2.
+        unsigned bit_off = QM * i_symbol;
+        index            = (input.extract<unsigned>(bit_off, 8) << 2U) | input.extract<unsigned>(bit_off + 8U, 2);
+      } else {
+        index = input.extract<unsigned>(QM * i_symbol, QM);
+      }
+
+      // Get the symbol from the table.
+      symbols_ptr[i_symbol] = table[index];
+    }
+  }
+
+  // Modulates the input bits.
+  constexpr void modulate(span<cf_t> symbols, const bit_buffer& input) const { modulate(symbols, input, cf_table); }
+
+  // Modulates the input bits.
+  constexpr float modulate(span<ci8_t> symbols, const bit_buffer& input) const
+  {
+    modulate(symbols, input, ci8_table);
+    return scaling;
+  }
+};
+
+/// Generic optimized modulator for BSPK.
+struct modulator_table_bpsk {
+  // The indexing provides the complex symbol corresponding to the binary expansion of the index.
+  const std::array<cf_t, 2>  cf_table  = {{{M_SQRT1_2, M_SQRT1_2}, {-M_SQRT1_2, -M_SQRT1_2}}};
+  const std::array<ci8_t, 2> ci8_table = {{{1, 1}, {-1, -1}}};
+
+  // Modulates the input bits.
+  void modulate(span<cf_t> symbols, const bit_buffer& input) const
+  {
+    cf_t* symbols_ptr = symbols.data();
+    for (unsigned i_bit = 0, i_bit_end = input.size(); i_bit != i_bit_end; ++i_bit) {
+      unsigned index     = input.extract<unsigned>(i_bit, 1);
+      symbols_ptr[i_bit] = cf_table[index];
+    }
+  }
+
+  // Modulates the input bits.
+  float modulate(span<ci8_t> symbols, const bit_buffer& input) const
+  {
+    ci8_t* symbols_ptr = symbols.data();
+    for (unsigned i_bit = 0, i_bit_end = input.size(); i_bit != i_bit_end; ++i_bit) {
+      unsigned index     = input.extract<unsigned>(i_bit, 1);
+      symbols_ptr[i_bit] = ci8_table[index];
+    }
+    return M_SQRT1_2;
+  }
+};
+
+/// Generic optimized modulator for π/2-BPSK.
+struct modulator_table_pi_2_bpsk {
+  // The indexing provides the complex symbol corresponding to the binary expansion of the index.
+  const std::array<cf_t, 2>  cf_table_even  = {{{M_SQRT1_2, M_SQRT1_2}, {-M_SQRT1_2, -M_SQRT1_2}}};
+  const std::array<cf_t, 2>  cf_table_odd   = {{{-M_SQRT1_2, M_SQRT1_2}, {M_SQRT1_2, -M_SQRT1_2}}};
+  const std::array<ci8_t, 2> ci8_table_even = {{{1, 1}, {-1, -1}}};
+  const std::array<ci8_t, 2> ci8_table_odd  = {{{-1, 1}, {1, -1}}};
+
+  // Modulates the input bits.
+  void modulate(span<cf_t> symbols, const bit_buffer& input) const
+  {
+    cf_t* symbols_ptr = symbols.data();
+    for (unsigned i_bit = 0, i_bit_end = input.size(); i_bit != i_bit_end; ++i_bit) {
+      uint8_t index      = input.extract(i_bit, 1);
+      symbols_ptr[i_bit] = (i_bit & 1U) ? cf_table_odd[index] : cf_table_even[index];
+    }
+  }
+
+  // Modulates the input bits.
+  float modulate(span<ci8_t> symbols, const bit_buffer& input) const
+  {
+    ci8_t* symbols_ptr = symbols.data();
+    for (unsigned i_bit = 0, i_bit_end = input.size(); i_bit != i_bit_end; ++i_bit) {
+      uint8_t index      = input.extract(i_bit, 1);
+      symbols_ptr[i_bit] = (i_bit & 1U) ? ci8_table_odd[index] : ci8_table_even[index];
+    }
+    return M_SQRT1_2;
+  }
+};
+
+} // namespace
+
+/// Modulation tables.
+static const modulator_table_pi_2_bpsk pi_2_bpsk_modulator;
+static const modulator_table_bpsk      bpsk_modulator;
+static const modulator_table_s<2>      qpsk_modulator;
+static const modulator_table_s<4>      qam16_modulator;
+static const modulator_table_s<6>      qam64_modulator;
+static const modulator_table_s<8>      qam256_modulator;
+static const modulator_table_s<10>     qam1024_modulator;
+
+void modulation_mapper_lut_impl::modulate(span<cf_t> symbols, const bit_buffer& input, modulation_scheme scheme)
+{
+  ocudu_assert(input.size() == get_bits_per_symbol(scheme) * symbols.size(),
+               "The number of bits {} is not consistent with the number of symbols {} for modulation scheme {}.",
+               input.size(),
+               symbols.size(),
+               fmt::underlying(scheme));
+
+  switch (scheme) {
+    case modulation_scheme::PI_2_BPSK:
+      pi_2_bpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::BPSK:
+      bpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QPSK:
+      qpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM16:
+      qam16_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM64:
+      qam64_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM256:
+      qam256_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM1024:
+      qam1024_modulator.modulate(symbols, input);
+      break;
+    default:
+      ocudu_assertion_failure("Invalid modulation scheme.");
+  }
+}
+
+float ocudu::modulation_mapper::get_modulation_scaling(modulation_scheme modulation)
+{
+  switch (modulation) {
+    case modulation_scheme::PI_2_BPSK:
+      return M_SQRT1_2;
+    case modulation_scheme::BPSK:
+      return M_SQRT1_2;
+    case modulation_scheme::QPSK:
+      return qpsk_modulator.scaling;
+    case modulation_scheme::QAM16:
+      return qam16_modulator.scaling;
+    case modulation_scheme::QAM64:
+      return qam64_modulator.scaling;
+    case modulation_scheme::QAM256:
+      return qam256_modulator.scaling;
+    case modulation_scheme::QAM1024:
+    default:
+      return qam1024_modulator.scaling;
+  }
+}
+
+float modulation_mapper_lut_impl::modulate(span<ci8_t> symbols, const bit_buffer& input, modulation_scheme scheme)
+{
+  ocudu_assert(input.size() == get_bits_per_symbol(scheme) * symbols.size(),
+               "The number of bits {} is not consistent with the number of symbols {} for modulation scheme {}.",
+               input.size(),
+               symbols.size(),
+               fmt::underlying(scheme));
+
+  float scaling = 0.0;
+
+  switch (scheme) {
+    case modulation_scheme::PI_2_BPSK:
+      scaling = pi_2_bpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::BPSK:
+      scaling = bpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QPSK:
+      scaling = qpsk_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM16:
+      scaling = qam16_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM64:
+      scaling = qam64_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM256:
+      scaling = qam256_modulator.modulate(symbols, input);
+      break;
+    case modulation_scheme::QAM1024:
+      scaling = qam1024_modulator.modulate(symbols, input);
+      break;
+    default:
+      ocudu_assertion_failure("Invalid modulation scheme.");
+  }
+
+  return scaling;
+}

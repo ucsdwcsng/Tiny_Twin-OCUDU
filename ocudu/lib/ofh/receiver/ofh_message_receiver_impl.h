@@ -1,0 +1,122 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+#pragma once
+
+#include "../operation_controller_dummy.h"
+#include "ofh_closed_rx_window_handler.h"
+#include "ofh_data_flow_uplane_uplink_data.h"
+#include "ofh_data_flow_uplane_uplink_prach.h"
+#include "ofh_message_receiver.h"
+#include "ofh_message_receiver_metrics_collector.h"
+#include "ofh_sequence_id_checker_impl.h"
+#include "ocudu/adt/static_vector.h"
+#include "ocudu/ocudulog/logger.h"
+#include "ocudu/ofh/ecpri/ecpri_packet_decoder.h"
+#include "ocudu/ofh/ethernet/ethernet_receiver.h"
+#include "ocudu/ofh/ethernet/vlan_ethernet_frame_decoder.h"
+#include "ocudu/ofh/ofh_constants.h"
+#include "ocudu/ofh/ofh_controller.h"
+#include "ocudu/ofh/serdes/ofh_message_properties.h"
+#include "ocudu/ofh/serdes/ofh_uplane_message_decoder.h"
+
+namespace ocudu {
+namespace ofh {
+
+class rx_window_checker;
+
+/// Message receiver configuration.
+struct message_receiver_config {
+  /// Radio sector identifier.
+  unsigned sector;
+  /// Number of symbols
+  unsigned nof_symbols;
+  /// Subcarrier spacing.
+  subcarrier_spacing scs;
+  /// VLAN ethernet frame parameters.
+  ether::vlan_frame_params vlan_params;
+  /// Uplink PRACH eAxC.
+  static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> prach_eaxc;
+  /// Uplink eAxC.
+  static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
+  /// Warn unreceived Open Fronthaul messages.
+  warn_unreceived_ru_frames warn_unreceived_frames = warn_unreceived_ru_frames::after_traffic_detection;
+  /// If set to true, metrics are enabled in the message receiver.
+  bool are_metrics_enabled = false;
+  /// If set to true, logs late events as warnings, otherwise as info.
+  bool enable_log_warnings_for_lates;
+};
+
+/// Message receiver dependencies.
+struct message_receiver_dependencies {
+  /// Logger.
+  ocudulog::basic_logger* logger = nullptr;
+  /// Ethernet receiver.
+  std::unique_ptr<ether::receiver> eth_receiver;
+  /// Reception window checker.
+  rx_window_checker* window_checker = nullptr;
+  /// Reception window handler.
+  closed_rx_window_handler* window_handler;
+  /// eCPRI packet decoder.
+  std::unique_ptr<ecpri::packet_decoder> ecpri_decoder;
+  /// Ethernet frame decoder.
+  std::unique_ptr<ether::vlan_frame_decoder> eth_frame_decoder;
+  /// User-Plane uplink data flow.
+  std::unique_ptr<data_flow_uplane_uplink_data> data_flow_uplink;
+  /// User-Plane uplink PRACH data flow.
+  std::unique_ptr<data_flow_uplane_uplink_prach> data_flow_prach;
+  /// Sequence id checker.
+  std::unique_ptr<sequence_id_checker> seq_id_checker;
+};
+
+/// Open Fronthaul message receiver interface implementation.
+class message_receiver_impl : public message_receiver
+{
+public:
+  message_receiver_impl(const message_receiver_config& config, message_receiver_dependencies&& dependencies);
+
+  // See interface for documentation.
+  void on_new_frame(ether::unique_rx_buffer buffer) override;
+
+  // See interface for the documentation.
+  operation_controller& get_operation_controller() override { return controller; }
+
+  // See interface for the documentation.
+  message_receiver_metrics_collector* get_metrics_collector() override
+  {
+    return metrics_collector.enabled() ? &metrics_collector : nullptr;
+  }
+
+private:
+  /// Processes an Ethernet frame received from the underlying Ethernet link.
+  void process_new_frame(ether::unique_rx_buffer buff);
+
+  /// Returns true if the ethernet frame represented by the given eth parameters should be filtered, otherwise false.
+  bool should_ethernet_frame_be_filtered(const ether::vlan_frame_params& eth_params) const;
+
+  /// Returns true if the eCPRI packet represented by the given eCPRI parameters should be filtered, otherwise false.
+  bool should_ecpri_packet_be_filtered(const ecpri::packet_parameters& ecpri_params) const;
+
+private:
+  ocudulog::basic_logger&                               logger;
+  const unsigned                                        sector_id;
+  const unsigned                                        nof_symbols;
+  const subcarrier_spacing                              scs;
+  const ether::vlan_frame_params                        vlan_params;
+  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_prach_eaxc;
+  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
+  bool                                                  warn_unreceived_frames_on_first_rx_message;
+  rx_window_checker&                                    window_checker;
+  closed_rx_window_handler&                             window_handler;
+  std::unique_ptr<sequence_id_checker>                  seq_id_checker;
+  std::unique_ptr<ether::vlan_frame_decoder>            vlan_decoder;
+  std::unique_ptr<ecpri::packet_decoder>                ecpri_decoder;
+  std::unique_ptr<data_flow_uplane_uplink_data>         data_flow_uplink;
+  std::unique_ptr<data_flow_uplane_uplink_prach>        data_flow_prach;
+  message_receiver_metrics_collector                    metrics_collector;
+  bool                                                  enable_log_warnings_for_lates;
+  operation_controller_dummy                            controller;
+};
+
+} // namespace ofh
+} // namespace ocudu

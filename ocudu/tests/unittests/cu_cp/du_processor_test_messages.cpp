@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "du_processor_test_messages.h"
+#include "lib/f1ap/cu_cp/procedures/f1_setup_procedure.h"
+#include "tests/test_doubles/f1ap/f1ap_test_messages.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/asn1/f1ap/common.h"
+#include "ocudu/asn1/f1ap/f1ap_pdu_contents.h"
+#include "ocudu/f1ap/f1ap_message.h"
+
+using namespace ocudu;
+using namespace ocucp;
+
+void ocudu::ocucp::generate_valid_f1_setup_request(du_setup_request& setup_request,
+                                                   gnb_du_id_t       gnb_du_id,
+                                                   nr_cell_identity  nci,
+                                                   pci_t             pci,
+                                                   unsigned          tac)
+{
+  f1ap_message f1setup_msg = test_helpers::generate_f1_setup_request(gnb_du_id, {{.nci = nci, .pci = pci, .tac = tac}});
+  setup_request            = create_du_setup_request(f1setup_msg.pdu.init_msg().value.f1_setup_request()).value();
+}
+
+void ocudu::ocucp::generate_f1_setup_request_base(du_setup_request& setup_request)
+{
+  f1ap_message f1setup_msg = test_helpers::generate_f1_setup_request(
+      int_to_gnb_du_id(0x11), {{.nci = nr_cell_identity::create(gnb_id_t{411, 22}, 0).value(), .pci = 0, .tac = 7}});
+  f1setup_msg.pdu.init_msg().value.f1_setup_request()->gnb_du_served_cells_list_present = false;
+  f1setup_msg.pdu.init_msg().value.f1_setup_request()->gnb_du_served_cells_list.clear();
+  setup_request = create_du_setup_request(f1setup_msg.pdu.init_msg().value.f1_setup_request()).value();
+}
+
+f1ap_message ocudu::ocucp::create_f1_setup_request_with_too_many_cells(const f1ap_message& base)
+{
+  f1ap_message msg = base;
+
+  msg.pdu.set_init_msg().load_info_obj(ASN1_F1AP_ID_F1_SETUP);
+  msg.pdu.init_msg().value.f1_setup_request()->gnb_du_served_cells_list_present = true;
+  auto& cells = msg.pdu.init_msg().value.f1_setup_request()->gnb_du_served_cells_list;
+  cells.resize(MAX_NOF_DU_CELLS + 1);
+  for (unsigned i = 0; i != cells.size(); ++i) {
+    cells[i].load_info_obj(ASN1_F1AP_ID_GNB_DU_SERVED_CELLS_ITEM);
+    cells[i]->gnb_du_served_cells_item() = test_helpers::generate_served_cells_item(
+        {.nci = nr_cell_identity::create(gnb_id_t{411, 22}, i).value(), .pci = (pci_t)i, .tac = 7});
+  }
+
+  return msg;
+}
+
+void ocudu::ocucp::generate_f1_setup_request_with_too_many_cells(du_setup_request& setup_request)
+{
+  f1ap_message f1setup_msg  = test_helpers::generate_f1_setup_request();
+  auto&        f1_setup_req = f1setup_msg.pdu.init_msg().value.f1_setup_request();
+  f1_setup_req->gnb_du_served_cells_list.clear();
+
+  f1_setup_req->gnb_du_served_cells_list_present = true;
+
+  for (int du_cell_idx_int = static_cast<uint16_t>(MIN_DU_CELL_INDEX); du_cell_idx_int < MAX_NOF_DU_CELLS + 1;
+       du_cell_idx_int++) {
+    f1_setup_req->gnb_du_served_cells_list.push_back({});
+    f1_setup_req->gnb_du_served_cells_list.back().load_info_obj(ASN1_F1AP_ID_GNB_DU_SERVED_CELLS_ITEM);
+    f1_setup_req->gnb_du_served_cells_list.back()->gnb_du_served_cells_item() =
+        test_helpers::generate_served_cells_item(
+            {.nci = nr_cell_identity::create(gnb_id_t{411, 22}, du_cell_idx_int).value(),
+             .pci = (pci_t)du_cell_idx_int,
+             .tac = 7});
+  }
+
+  setup_request = create_du_setup_request(f1setup_msg.pdu.init_msg().value.f1_setup_request()).value();
+}
+
+ue_rrc_context_creation_request ocudu::ocucp::generate_ue_rrc_context_creation_request(cu_cp_ue_index_t ue_index,
+                                                                                       rnti_t           c_rnti,
+                                                                                       nr_cell_identity nrcell_id)
+{
+  ue_rrc_context_creation_request req = {};
+  req.ue_index                        = ue_index;
+  req.c_rnti                          = c_rnti;
+  req.cgi.plmn_id                     = plmn_identity::test_value();
+  req.cgi.nci                         = nrcell_id;
+  asn1::unbounded_octstring<true> tmp;
+  tmp.from_string(
+      "5c00b001117aec701061e0007c20408d07810020a2090480ca8000f800000000008370842000088165000048200002069a06aa49880002"
+      "00204000400d008013b64b1814400e468acf120000096070820f177e060870000000e25038000040bde802000400000000028201950300"
+      "c400");
+  req.du_to_cu_rrc_container = byte_buffer::create(tmp.begin(), tmp.end()).value();
+
+  return req;
+}

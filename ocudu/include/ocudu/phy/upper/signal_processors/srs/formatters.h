@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/adt/bounded_bitset.h"
+#include "ocudu/phy/upper/signal_processors/srs/srs_estimator_configuration.h"
+#include "ocudu/phy/upper/signal_processors/srs/srs_estimator_result.h"
+#include "ocudu/ran/resource_allocation/rb_interval.h"
+#include "ocudu/ran/srs/srs_channel_matrix.h"
+#include "ocudu/ran/srs/srs_channel_matrix_formatters.h"
+#include "ocudu/ran/srs/srs_context_formatter.h"
+#include "ocudu/ran/srs/srs_information.h"
+#include "ocudu/ran/srs/srs_resource_formatter.h"
+#include "ocudu/support/math/math_utils.h"
+#include <limits>
+
+namespace fmt {
+
+/// \brief Custom formatter for \c ocudu::srs_estimator_configuration.
+template <>
+struct formatter<ocudu::srs_estimator_configuration> {
+  /// Helper used to parse formatting options and format fields.
+  ocudu::delimited_formatter helper;
+
+  /// Default constructor.
+  formatter() = default;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return helper.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::srs_estimator_configuration& config, FormatContext& ctx) const
+  {
+    if (config.context) {
+      helper.format_always(ctx, "{}", *config.context);
+    }
+    helper.format_if_verbose(ctx, "slot={}", config.slot);
+
+    // Format CRBs and REs only if the resource is supported.
+    if (config.resource.is_valid() && !config.resource.has_frequency_hopping() &&
+        (config.resource.hopping == ocudu::srs_group_or_sequence_hopping::neither)) {
+      ocudu::bounded_bitset<ocudu::NOF_SUBCARRIERS_PER_RB> re_mask(ocudu::NOF_SUBCARRIERS_PER_RB);
+      ocudu::srs_information                               info = {};
+      for (unsigned i_antenna_port = 0, nof_antennas = static_cast<unsigned>(config.resource.nof_antenna_ports);
+           i_antenna_port != nof_antennas;
+           ++i_antenna_port) {
+        info = ocudu::get_srs_information(config.resource, i_antenna_port);
+
+        unsigned initial_re      = info.mapping_initial_subcarrier % info.comb_size;
+        unsigned nof_srs_per_prb = ocudu::NOF_SUBCARRIERS_PER_RB / info.comb_size;
+        for (unsigned i = 0; i != nof_srs_per_prb; ++i) {
+          re_mask.set(i * info.comb_size + initial_re);
+        }
+      }
+
+      unsigned            start_crb_index = info.mapping_initial_subcarrier / ocudu::NOF_SUBCARRIERS_PER_RB;
+      ocudu::crb_interval rb_range        = {
+          start_crb_index, start_crb_index + info.sequence_length * info.comb_size / ocudu::NOF_SUBCARRIERS_PER_RB};
+
+      helper.format_always(ctx, "crb={}", rb_range);
+      helper.format_always(ctx, "re={{{:n}}}", re_mask);
+    } else {
+      helper.format_always(ctx, "crb=invalid");
+      helper.format_always(ctx, "re=invalid");
+    }
+
+    helper.format_if_verbose(ctx, "ports={}", ocudu::span<const uint8_t>(config.ports));
+
+    return ctx.out();
+  }
+};
+
+/// \brief Custom formatter for \c ocudu::srs_estimator_result.
+template <>
+struct formatter<ocudu::srs_estimator_result> {
+  /// Helper used to parse formatting options and format fields.
+  ocudu::delimited_formatter helper;
+
+  /// Default constructor.
+  formatter() = default;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return helper.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const ocudu::srs_estimator_result& config, FormatContext& ctx) const
+  {
+    helper.format_always(ctx, "t_align={:+.1f}ns", config.time_alignment.time_alignment * 1e9);
+    helper.format_always(ctx, "epre={:+.1f}dB", config.epre_dB.value_or(std::numeric_limits<float>::quiet_NaN()));
+    helper.format_always(ctx, "rsrp={:+.1f}dB", config.rsrp_dB.value_or(std::numeric_limits<float>::quiet_NaN()));
+    helper.format_always(
+        ctx,
+        "noise_var={:+.1f}dB",
+        ocudu::convert_power_to_dB(config.noise_variance.value_or(std::numeric_limits<float>::quiet_NaN())));
+
+    // Get matrix Frobenius norm.
+    float frobenius_norm = config.channel_matrix.frobenius_norm();
+
+    if (std::isnormal(frobenius_norm)) {
+      // Normalize matrix.
+      ocudu::srs_channel_matrix norm_matrix = config.channel_matrix;
+      norm_matrix *= 1.0F / frobenius_norm;
+
+      // Print norm and matrix.
+      helper.format_if_verbose(ctx, "H={:.3e} * {}", frobenius_norm, norm_matrix);
+    } else {
+      // Do not print anything if there are no coefficients.
+      helper.format_if_verbose(ctx, "H=[]");
+    }
+
+    return ctx.out();
+  }
+};
+
+} // namespace fmt

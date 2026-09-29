@@ -1,0 +1,38 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "split6_plugin.h"
+
+namespace ocudu {
+
+struct worker_manager_config;
+
+/// Dummy split 6 plugin implementation.
+class split6_plugin_dummy : public split6_plugin
+{
+public:
+  // See interface for documentation.
+  void on_parsing_configuration_registration(CLI::App& app) override {}
+
+  // See interface for documentation.
+  bool on_configuration_validation() const override { return false; }
+
+  // See interface for documentation.
+  bool is_ran_config_supported(const odu::du_high_ran_config& configuration) const override { return false; }
+
+  // See interface for documentation.
+  void on_loggers_registration() override {}
+
+  // See interface for documentation.
+  void fill_worker_manager_config(worker_manager_config& config) override {}
+
+  // See interface for documentation.
+  std::unique_ptr<fapi_adaptor::phy_fapi_adaptor>
+  create_fapi_adaptor(const fapi_adaptor::split6_o_du_low_fapi_adaptor_configuration& fapi_cfg,
+                      const o_du_unit_dependencies&                                   dependencies) override;
+};
+
+} // namespace ocudu

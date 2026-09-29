@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+########################################################################
+# Default configuration files
+########################################################################
+file(GLOB CONFIG_FILES
+  "*.yml"
+)
+install(FILES ${CONFIG_FILES} DESTINATION ${DATA_DIR})

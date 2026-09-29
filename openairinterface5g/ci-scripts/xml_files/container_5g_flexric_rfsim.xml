@@ -1,0 +1,225 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-flexric</htmlTabRef>
+  <htmlTabName>Monolithic SA TDD gNB and FlexRic Integration</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb oai-nr-ue</images>
+  </testCase>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-flexric</images>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Updating CN5G images</desc>
+    <node>localhost</node>
+    <command>docker compose -f ../doc/tutorial_resources/oai-cn5g/docker-compose.yaml pull</command>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>doc/tutorial_resources/oai-cn5g</yaml_path>
+    <services>mysql oai-nrf oai-udr oai-udm oai-ausf oai-amf oai-smf oai-upf oai-ext-dn</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI nearRT-RIC</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>nearRT-RIC</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G gNB in RF sim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>oai-gnb</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy RC monitoring</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-rc-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy 2 OAI 5G NR-UEs in RF sim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>oai-nr-ue oai-nr-ue2</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE 1 and 2</desc>
+    <id>rfsim5g_ue rfsim5g_ue2</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy KPM monitoring</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-kpm-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy KPM monitoring and RC control</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-kpm-rc</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy custom SMs monitoring</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-gtp-mac-rlc-pdcp-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (DL/TCP)(20 sec)</desc>
+    <iperf_args>-t 20 -R</iperf_args>
+    <id>rfsim5g_ue rfsim5g_ue2</id>
+    <node>localhost</node>
+    <svr_id>oai_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_tcp_rate_target>10</iperf_tcp_rate_target>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>Iperf (UL/TCP)(20 sec)</desc>
+    <iperf_args>-t 20</iperf_args>
+    <id>rfsim5g_ue rfsim5g_ue2</id>
+    <node>localhost</node>
+    <svr_id>oai_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_tcp_rate_target>5</iperf_tcp_rate_target>
+  </testCase>
+
+  <testCase>
+    <class>Detach_UE</class>
+    <desc>Detach OAI UE 1 and 2</desc>
+    <id>rfsim5g_ue rfsim5g_ue2</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop RC monitoring xApp</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-rc-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop KPM monitoring xApp</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-kpm-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop KPM monitoring and RC control xApp</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-kpm-rc</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop custom SMs monitoring xApp</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>xapp-gtp-mac-rlc-pdcp-moni</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop OAI UEs</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>oai-nr-ue oai-nr-ue2</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop OAI gNB</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>oai-gnb</services>
+  </testCase>
+
+  <testCase>
+    <class>Stop_Object</class>
+    <desc>Stop nearRT-RIC</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <services>nearRT-RIC</services>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <desc>Undeploy RAN and FlexRIC</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_flexric</yaml_path>
+    <always_exec>true</always_exec>
+    <analysis>
+      <service>nearRT-RIC=LastLineContains=The nearRT-RIC run SUCCESSFULLY</service>
+      <service>xapp-rc-moni=LastLineContains=Test xApp run SUCCESSFULLY</service>
+      <service>xapp-kpm-moni=LastLineContains=Test xApp run SUCCESSFULLY</service>
+      <service>xapp-kpm-rc=LastLineContains=Test xApp run SUCCESSFULLY</service>
+      <service>xapp-gtp-mac-rlc-pdcp-moni=LastLineContains=Test xApp run SUCCESSFULLY</service>
+      <services>oai-gnb=EndsWithBye oai-nr-ue oai-nr-ue2</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <desc>Undeploy Core Network</desc>
+    <node>localhost</node>
+    <yaml_path>doc/tutorial_resources/oai-cn5g</yaml_path>
+    <always_exec>true</always_exec>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb oai-nr-ue</images>
+    <always_exec>true</always_exec>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-flexric</images>
+    <always_exec>true</always_exec>
+  </testCase>
+
+</testCaseList>

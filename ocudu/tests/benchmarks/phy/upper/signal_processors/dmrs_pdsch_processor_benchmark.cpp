@@ -1,0 +1,159 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/adt/format.h"
+#include "ocudu/phy/support/support_factories.h"
+#include "ocudu/phy/upper/signal_processors/pdsch/dmrs_pdsch_processor.h"
+#include "ocudu/phy/upper/signal_processors/pdsch/factories.h"
+#include "ocudu/support/benchmark_utils.h"
+#include "ocudu/support/error_handling.h"
+#include <getopt.h>
+#include <random>
+
+using namespace ocudu;
+
+// Random generator.
+static std::mt19937 rgen(0);
+
+static unsigned nof_repetitions = 1000;
+static unsigned nof_rb          = 106;
+static bool     silent          = false;
+
+struct channel_topology {
+  unsigned nof_ports;
+  unsigned nof_layers;
+};
+
+static std::vector<channel_topology> channel_topology_list{{1, 1}, {2, 2}, {3, 3}, {4, 4}};
+
+static void usage(const char* prog)
+{
+  fmt::print("Usage: {} [-P precoder type] [-n number of RB] [-R repetitions] [-s silent]\n", prog);
+  fmt::print("\t-n Number of resource blocks [Default {}]\n", nof_rb);
+  fmt::print("\t-R Repetitions [Default {}]\n", nof_repetitions);
+  fmt::print("\t-s Toggle silent operation [Default {}]\n", silent);
+  fmt::print("\t-h Show this message\n");
+}
+
+static void parse_args(int argc, char** argv)
+{
+  int opt = 0;
+  while ((opt = getopt(argc, argv, "n:DR:sh")) != -1) {
+    switch (opt) {
+      case 'n':
+        nof_rb = std::strtol(optarg, nullptr, 10);
+        break;
+      case 'R':
+        nof_repetitions = std::strtol(optarg, nullptr, 10);
+        break;
+      case 's':
+        silent = (!silent);
+        break;
+      case 'h':
+      default:
+        usage(argv[0]);
+        std::exit(0);
+    }
+  }
+}
+
+// Creates a resource grid.
+static std::unique_ptr<resource_grid> create_resource_grid(unsigned nof_ports, unsigned nof_symbols, unsigned nof_subc)
+{
+  std::shared_ptr<channel_precoder_factory> precoding_factory = create_channel_precoder_factory("auto");
+  report_fatal_error_if_not(precoding_factory != nullptr, "Invalid channel precoder factory.");
+  std::shared_ptr<resource_grid_factory> rg_factory = create_resource_grid_factory();
+  report_fatal_error_if_not(rg_factory != nullptr, "Invalid resource grid factory.");
+
+  return rg_factory->create(nof_ports, nof_symbols, nof_subc);
+}
+
+int main(int argc, char** argv)
+{
+  parse_args(argc, argv);
+
+  // Create pseudo-random sequence generator.
+  std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
+  report_fatal_error_if_not(prg_factory, "prg_factory");
+
+  std::shared_ptr<channel_precoder_factory> precoding_factory = create_channel_precoder_factory("auto");
+  report_fatal_error_if_not(precoding_factory, "precoding_factory");
+
+  std::shared_ptr<resource_grid_mapper_factory> rg_mapper_factory =
+      create_resource_grid_mapper_factory(precoding_factory);
+  report_fatal_error_if_not(rg_mapper_factory, "rg_mapper_factory");
+
+  std::shared_ptr<dmrs_pdsch_processor_factory> dmrs_pdsch_proc_factory =
+      create_dmrs_pdsch_processor_factory_sw(prg_factory, rg_mapper_factory);
+  report_fatal_error_if_not(dmrs_pdsch_proc_factory, "dmrs_pdsch_proc_factory");
+
+  std::unique_ptr<dmrs_pdsch_processor> dmrs_proc = dmrs_pdsch_proc_factory->create();
+  report_fatal_error_if_not(dmrs_proc, "dmrs_proc");
+
+  // Precoding weight distribution.
+  std::uniform_real_distribution<float> weight_dist(-1.0F, 1.0F);
+
+  benchmarker perf_meas("DM-RS PDSCH processor", nof_repetitions);
+
+  for (auto topology : channel_topology_list) {
+    std::unique_ptr<resource_grid> grid =
+        create_resource_grid(topology.nof_ports, MAX_NSYMB_PER_SLOT, MAX_NOF_SUBCARRIERS);
+    report_fatal_error_if_not(grid, "grid");
+
+    // Generate precoding weights.
+    precoding_weight_matrix weights(topology.nof_layers, topology.nof_ports);
+    for (unsigned i_port = 0; i_port != topology.nof_ports; ++i_port) {
+      span<cf_t> port_weights = weights.get_port_coefficients(i_port);
+      std::generate(port_weights.begin(), port_weights.end(), [&weight_dist]() {
+        return cf_t(weight_dist(rgen), weight_dist(rgen));
+      });
+    }
+
+    // Generate DM-RS PDSCH configuration.
+    dmrs_pdsch_processor::config_t dmrs_config;
+    dmrs_config.slot                 = slot_point(subcarrier_spacing::kHz15, 0);
+    dmrs_config.reference_point_k_rb = 0;
+    dmrs_config.scrambling_id        = 0;
+    dmrs_config.n_scid               = false;
+    dmrs_config.amplitude            = 1.0f;
+    dmrs_config.symbols_mask         = symbol_slot_mask(
+        {false, false, true, false, false, false, false, false, false, false, false, true, false, false});
+    dmrs_config.rb_mask                   = ~crb_bitmap(nof_rb);
+    dmrs_config.precoding_and_beamforming = precoding_beamforming_configuration::make_wideband(weights);
+
+    // Test DM-RS Type 1 generation.
+    {
+      dmrs_config.type          = dmrs_config_type::type1;
+      unsigned nof_dmrs_symbols = dmrs_config.rb_mask.count() * dmrs_config.symbols_mask.count() *
+                                  get_nof_re_per_prb(dmrs_config.type) * topology.nof_layers;
+
+      std::string meas_descr = fmt::to_string(topology.nof_ports) + " ports x " + fmt::to_string(topology.nof_layers) +
+                               " layers, DM-RS Type 1 ";
+
+      perf_meas.new_measure(meas_descr, nof_dmrs_symbols, [&dmrs_proc, &grid, &dmrs_config]() {
+        dmrs_proc->map(grid->get_writer(), dmrs_config);
+      });
+    }
+
+    // Test DM-RS Type 2 generation.
+    {
+      dmrs_config.type          = dmrs_config_type::type2;
+      unsigned nof_dmrs_symbols = dmrs_config.rb_mask.count() * dmrs_config.symbols_mask.count() *
+                                  get_nof_re_per_prb(dmrs_config.type) * topology.nof_layers;
+
+      std::string meas_descr = fmt::to_string(topology.nof_ports) + " ports x " + fmt::to_string(topology.nof_layers) +
+                               " layers, DM-RS Type 2 ";
+
+      perf_meas.new_measure(meas_descr, nof_dmrs_symbols, [&dmrs_proc, &grid, &dmrs_config]() {
+        dmrs_proc->map(grid->get_writer(), dmrs_config);
+      });
+    }
+  }
+
+  if (!silent) {
+    perf_meas.print_percentiles_throughput("symbols");
+  }
+
+  return 0;
+}

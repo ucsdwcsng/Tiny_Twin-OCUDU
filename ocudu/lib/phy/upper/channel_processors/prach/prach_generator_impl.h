@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/phy/upper/channel_processors/prach/prach_generator.h"
+#include "ocudu/ran/prach/prach_constants.h"
+#include <vector>
+
+namespace ocudu {
+
+/// \brief On-demand PRACH time-domain signal generator.
+///
+/// It generates PRACH frequency-domain signals on demand instead of generating and storing them off-line. It minimizes
+/// memory footprint at the cost of longer processing time.
+///
+/// More details about the generation algorithm can be found in
+/// > D. Gregoratti, X. Arteaga, and J. Broquetas, "Mathematical Properties of the Zadoff-Chu Sequences,"
+/// > online: https://arxiv.org/abs/2311.01035
+class prach_generator_impl : public prach_generator
+{
+private:
+  /// PRACH long sequence length.
+  static constexpr unsigned LONG = prach_constants::LONG_SEQUENCE_LENGTH;
+  /// PRACH short sequence length.
+  static constexpr unsigned SHORT = prach_constants::SHORT_SEQUENCE_LENGTH;
+
+  /// Temporary sequence.
+  std::vector<cf_t> sequence;
+
+  /// Calculates sequence number \f$u\f$ as per TS38.211 Table 6.3.3.1-3.
+  static unsigned get_sequence_number_long(unsigned root_sequence_index);
+
+  /// Calculates sequence number \f$u\f$ as per TS38.211 Table 6.3.3.1-4.
+  static unsigned get_sequence_number_short(unsigned root_sequence_index);
+
+  /// \brief Generates the sequence \f$y_{u,v}\f$ for long preambles.
+  /// \param[in] u   Sequence number.
+  /// \param[in] C_v Sequence shift.
+  /// \return A read-only view of the generated sequence.
+  span<const cf_t> generate_y_u_v_long(unsigned u, unsigned C_v);
+
+  /// \brief Generates the sequence \f$y_{u,v}\f$ for short preambles.
+  /// \param[in] u   Sequence number.
+  /// \param[in] C_v Sequence shift.
+  /// \return A read-only view of the generated sequence.
+  span<const cf_t> generate_y_u_v_short(unsigned u, unsigned C_v);
+
+public:
+  prach_generator_impl() : sequence(LONG)
+  {
+    // Do nothing.
+  }
+
+  // See interface for documentation.
+  span<const cf_t> generate(const configuration& config) override;
+};
+
+} // namespace ocudu

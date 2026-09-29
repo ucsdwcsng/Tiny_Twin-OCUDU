@@ -1,0 +1,121 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/ran/arfcn.h"
+#include "ocudu/ran/bwp/bwp_configuration.h"
+#include "ocudu/ran/du_types.h"
+#include "ocudu/ran/nr_cgi.h"
+#include "ocudu/ran/pci.h"
+#include "ocudu/ran/positioning/positioning_ids.h"
+#include "ocudu/ran/positioning/trp_information_exchange.h"
+#include "ocudu/ran/scs_specific_carrier.h"
+#include "ocudu/ran/slot_point.h"
+#include "ocudu/ran/srs/srs_configuration.h"
+#include "ocudu/support/async/async_task.h"
+
+namespace ocudu::odu {
+
+struct du_trp_info {
+  trp_id_t                           trp_id;
+  std::optional<pci_t>               pci;
+  std::optional<nr_cell_global_id_t> cgi;
+  std::optional<arfcn_t>             arfcn;
+  /// Geographical coordinates of the TRP antenna, as per TS 38.473, Section 9.3.1.184.
+  std::optional<geographical_coordinates_t> geo_coords;
+};
+
+struct du_trp_info_response {
+  std::vector<du_trp_info> trps;
+};
+
+struct du_positioning_info_request {
+  du_ue_index_t ue_index;
+};
+
+struct srs_carrier {
+  arfcn_t                           point_a;
+  bool                              freq_shift_7p5khz_present;
+  std::vector<scs_specific_carrier> ul_ch_bw_per_scs_list;
+  bwp_configuration                 ul_bwp_cfg;
+  srs_config                        srs_cfg;
+  std::optional<pci_t>              pci;
+};
+
+struct du_positioning_info_response {
+  std::vector<srs_carrier> srs_carriers;
+};
+
+enum class pos_meas_type { gnb_rx_tx, ul_srs_rsrp, ul_aoa, ul_rtoa, multiple_ul_aoa, ul_srs_rsrpp };
+
+struct positioning_meas_quantity {
+  /// Positioning measurement type.
+  pos_meas_type meas_type;
+  /// Granularity factor. Values: (-6, ..., 5).
+  std::optional<int8_t> granularity_factor;
+};
+
+struct du_trp_meas_request {
+  trp_id_t                           trp_id;
+  std::optional<nr_cell_global_id_t> cgi;
+};
+
+struct du_positioning_meas_request {
+  std::vector<du_trp_meas_request>       trp_meas_req_list;
+  std::vector<positioning_meas_quantity> pos_meas_quants;
+  std::vector<srs_carrier>               srs_carriers;
+};
+
+struct pos_meas_result_ul_rtoa {
+  uint8_t  granularity;
+  uint32_t ul_rtoa;
+};
+
+struct pos_meas_result_ul_rsrp {
+  /// Values {0,..,126}, as per TS 38.473, Section 9.3.1.166.
+  uint8_t ul_rsrp;
+};
+
+struct pos_meas_result_ul_aoa {
+  /// Azimuth Angle of Arrival, in units of 0.1 degrees. Values {0,...,3599}, as per TS 38.473, Section 9.3.1.157.
+  uint16_t azimuth_aoa;
+  /// Zenith Angle of Arrival, in units of 0.1 degrees. Values {0,...,1799}, as per TS 38.473, Section 9.3.1.157.
+  std::optional<uint16_t> zenith_aoa;
+};
+
+using pos_meas_result_item = std::variant<pos_meas_result_ul_rtoa, pos_meas_result_ul_rsrp, pos_meas_result_ul_aoa>;
+
+struct pos_meas_result {
+  trp_id_t trp_id;
+  /// Slot point at which the measurement (SRS) was received at PHY layer.
+  /// \remark TS 38.473 Section 9.3.1.166 defines a time-stamp per result item; unlike the TS, here we keep 1 slot
+  /// (timestamp) common for all result items, as this timestamp comes from the same SRS indication that contains all
+  /// the measurement results.
+  slot_point                        sl_rx;
+  std::vector<pos_meas_result_item> results;
+};
+
+struct du_positioning_meas_response {
+  std::vector<pos_meas_result> pos_meas_list;
+};
+
+/// Interface used by F1AP-DU to request the DU for positioning services.
+class f1ap_du_positioning_handler
+{
+public:
+  virtual ~f1ap_du_positioning_handler() = default;
+
+  /// Request information regarding supported TRPs as per TS 38.473, Section 8.13.8.
+  virtual du_trp_info_response request_trp_info() = 0;
+
+  /// Request UE positioning information as per TS 38.473, Section 8.13.9.
+  virtual async_task<du_positioning_info_response> request_positioning_info(const du_positioning_info_request& req) = 0;
+
+  /// Request UE positioning measurement as per TS 38.473, Section 8.13.2.
+  virtual async_task<du_positioning_meas_response>
+  request_positioning_measurement(const du_positioning_meas_request& req) = 0;
+};
+
+} // namespace ocudu::odu

@@ -1,0 +1,8 @@
+*.o
+*.so
+*.pb
+*.pb.h
+tmp.yaml
+
+# In codelet folder, python files are generated from C++ code
+*.py

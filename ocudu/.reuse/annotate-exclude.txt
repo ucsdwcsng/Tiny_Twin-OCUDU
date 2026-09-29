@@ -1,0 +1,9 @@
+\.git/
+\.reuse/
+REUSE\.toml$
+\.md$
+\.mdx$
+^build/
+^docs/doxygen/
+^external/
+^plugins/

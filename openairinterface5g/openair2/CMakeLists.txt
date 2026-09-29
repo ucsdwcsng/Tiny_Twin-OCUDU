@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: LicenseRef-CSSL-1.0
+
+add_compile_options(-Wunused-parameter)
+add_subdirectory(E1AP)
+if(E2_AGENT)
+  add_subdirectory(E2AP)
+endif()
+if(E3_AGENT)
+  message(STATUS "Add E3 Agent capabilities")
+  add_subdirectory(E3AP)
+endif()
+add_subdirectory(F1AP)
+add_subdirectory(NRUP)
+add_subdirectory(LAYER2)
+add_subdirectory(M2AP)
+add_subdirectory(X2AP)
+add_subdirectory(RRC)
+add_subdirectory(XNAP)

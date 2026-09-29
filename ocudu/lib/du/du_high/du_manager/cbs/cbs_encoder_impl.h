@@ -1,0 +1,73 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+/// \file
+/// \brief GSM-7 and UCS-2 encoder for CBS messages.
+
+#pragma once
+
+#include "ocudu/du/du_high/du_manager/cbs/cbs_encoder.h"
+
+namespace ocudu {
+
+/// \brief GSM-7 and UCS-2 encoder for CBS messages.
+///
+/// This class implements ASCII to GSM-7 encoding using the default alphabet and the default alphabet extension tables
+/// defined in TS23.038 Section 6.2.1, as well as UTF-8 to UCS-2 encoding as defined in TS23.038 Section 6.2.3. The
+/// GSM-7 encoded messages are packed following the CBS packing format defined in TS23.038 Section 6.1.2.2.
+class cbs_encoder_impl : public cbs_encoder
+{
+public:
+  // See interface for documentation.
+  std::vector<uint8_t> encode_cb_data(const std::string& message, unsigned data_coding_scheme) const override;
+
+private:
+  /// Supported CBS message encoding options.
+  enum class encoding_type {
+    /// GSM-7 7-bit character encoding using the default alphabet and its extension table.
+    GSM7,
+    /// UCS-2 16-bit character encoding supporting all unicode code points in the basic multilingual plane.
+    UCS2,
+    /// Invalid or unsupported encoding formats.
+    INVALID
+  };
+
+  /// Selects either GSM-7 or UCS-2 encoding based on the SIB-7 and SIB-8 \c dataCodingScheme field value.
+  static encoding_type select_cbs_encoding(uint8_t data_coding_scheme);
+
+  /// \brief Fills a CB-Data information element with the contents of a CBS message using GSM-7 encoding.
+  ///
+  /// Only printable ASCII characters in the default GSM-7 alphabet and its extension table are supported by this
+  /// method.
+  ///
+  /// \param[in] message ETWS/CMAS warning message string.
+  /// \return A packed CB-Data IE with the contents of the message.
+  /// \remark An error is thrown if any character in the warning message is not present in the GSM-7 default alphabet
+  ///         or is not a printable ASCII character.
+  static std::vector<uint8_t> fill_cb_data_gsm7(const std::string& message);
+
+  /// \brief Fills a CB-Data information element with the contents of a CBS message using UCS-2 encoding.
+  ///
+  /// All unicode code points in the basic multilingual plane are supported by this method.
+  ///
+  /// \param[in] message ETWS/CMAS warning message string.
+  /// \return A packed CB-Data IE with the contents of the message.
+  /// \remark An error is thrown if any character in the warning message is not present in the basic multilingual
+  ///         unicode plane.
+  static std::vector<uint8_t> fill_cb_data_ucs2(const std::string& message);
+
+  /// CB Data IE Information Page field number of bytes. See TS23.041 Section 9.4.2.2.5.
+  static constexpr unsigned info_page_nof_bytes = 82;
+  /// CB Data IE Information Page Length field number of bytes.
+  static constexpr unsigned info_len_nof_bytes = 1;
+  /// Maximum number of CB Data IE information pages.
+  static constexpr unsigned max_nof_cb_data_pages = 15;
+};
+
+std::unique_ptr<cbs_encoder> create_cbs_encoder()
+{
+  return std::make_unique<cbs_encoder_impl>();
+}
+
+} // namespace ocudu

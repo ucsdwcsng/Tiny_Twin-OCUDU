@@ -1,0 +1,100 @@
+#!/bin/groovy
+/*
+ * SPDX-License-Identifier: LicenseRef-CSSL-1.0
+ */
+
+// Location of the python executor node shall be in the same subnet as the others servers
+def nodeExecutor = params.nodeExecutor
+
+// Name of the resource
+def lockResources = []
+if (params.LockResources != null && params.LockResources.trim().length() > 0)
+  params.LockResources.trim().split(",").each{lockResources += [resource: it.trim()]}
+
+// Docker Hub account to push to
+def DH_Account = "oaisoftwarealliance"
+
+// internal registry to use
+def OAI_Registry = "gracehopper3-oai.sboai.cs.eurecom.fr"
+
+pipeline {
+  agent {
+    label nodeExecutor
+  }
+  options {
+    ansiColor('xterm')
+    lock(extra: lockResources)
+  }
+  stages {
+    stage ("Verify Parameters") {
+      steps {
+        script {
+          echo '\u2705 \u001B[32mVerify Parameters\u001B[0m'
+          def allParametersPresent = true
+
+          // It is already to late to check it
+          if (params.nodeExecutor != null) {
+            echo "Docker Push executor node  :   ${nodeExecutor}"
+          }
+          if (params.LockResources == null) {
+            echo "no LockResources given"
+            allParametersPresent = false
+          }
+        }
+      }
+    }
+    stage ("Push to DockerHub") {
+      steps {
+        script {
+          def WEEK_TAG = sh returnStdout: true, script: 'date +"%Y.w%V"'
+          WEEK_TAG = WEEK_TAG.trim()
+          if ((params.forceTag != null) && (params.tagToUse != null)) {
+            if (params.forceTag) {
+              WEEK_TAG = params.tagToUse
+              echo "Forced Tag is ${WEEK_TAG}"
+            }
+          }
+          def WEEK_SHA = sh returnStdout: true, script: 'git log -n1 --pretty=format:"%H" origin/develop'
+          WEEK_SHA = WEEK_SHA.trim()
+
+          withCredentials([
+            [$class: 'UsernamePasswordMultiBinding', credentialsId: "${params.DH_Credentials}", usernameVariable: 'DH_Username', passwordVariable: 'DH_Password']
+          ]) {
+            def listOfImages = ["oai-enb", "oai-gnb", "oai-lte-ue", "oai-nr-ue", "oai-nr-cuup", "oai-gnb-fhi72"]
+            // Logging in on both registries
+            sh "docker login -u ${DH_Username} -p ${DH_Password} > /dev/null 2>&1"
+            sh "docker login -u oaicicd -p oaicicd ${OAI_Registry} > /dev/null 2>&1"
+            listOfImages.eachWithIndex { item, iindex ->
+              if (["oai-gnb", "oai-nr-ue", "oai-nr-cuup"].contains(item)) {
+                // For images built on AMD64 and ARMv8 Jetson
+                echo "Pushing image '${item}' for both AMD64 and ARM64 architectures with tags: ${WEEK_TAG} and develop"
+                sh "docker rmi ${DH_Account}/${item}:${WEEK_TAG} ${DH_Account}/${item}:develop || true"
+                sh "docker buildx imagetools create --tag ${DH_Account}/${item}:${WEEK_TAG} ${OAI_Registry}/${item}:armv8_develop-${WEEK_SHA} ${OAI_Registry}/${item}:develop-${WEEK_SHA}"
+                sh "docker buildx imagetools create --tag ${DH_Account}/${item}:develop ${OAI_Registry}/${item}:armv8_develop-${WEEK_SHA} ${OAI_Registry}/${item}:develop-${WEEK_SHA}"
+              } else {
+                sh "docker pull --quiet ${OAI_Registry}/${item}:develop-${WEEK_SHA}"
+                sh "docker image tag ${OAI_Registry}/${item}:develop-${WEEK_SHA} ${DH_Account}/${item}:develop"
+                sh "docker image tag ${OAI_Registry}/${item}:develop-${WEEK_SHA} ${DH_Account}/${item}:${WEEK_TAG}"
+                sh "docker push --quiet ${DH_Account}/${item}:develop"
+                sh "docker push --quiet ${DH_Account}/${item}:${WEEK_TAG}"
+              }
+              sh "docker rmi ${DH_Account}/${item}:${WEEK_TAG} ${DH_Account}/${item}:develop ${OAI_Registry}/${item}:develop-${WEEK_SHA} || true"
+            }
+            // Logging out on both registries
+            sh "docker logout ${OAI_Registry} > /dev/null 2>&1"
+            sh "docker logout > /dev/null 2>&1"
+          }
+        }
+      }
+    }
+  }
+  post {
+    always {
+      script {
+        sh "docker logout ${OAI_Registry} > /dev/null 2>&1"
+        sh "docker logout > /dev/null 2>&1"
+        echo "End of Registry Push"
+      }
+    }
+  }
+}

@@ -1,0 +1,345 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "ocudu/asn1/ngap/ngap.h"
+#include "ocudu/asn1/ngap/ngap_ies.h"
+#include "ocudu/cu_cp/up_context.h"
+#include "ocudu/ngap/ngap.h"
+#include "ocudu/ngap/ngap_handover.h"
+#include "ocudu/ngap/ngap_types.h"
+#include "ocudu/ran/cause/ngap_cause.h"
+#include "ocudu/ran/gtpu/gtpu_teid.h"
+#include "ocudu/ran/nr_cgi.h"
+#include "ocudu/ran/tai.h"
+
+namespace ocudu::ocucp {
+
+/// \brief Check that two NGAP PDUs have the same type.
+bool is_same_pdu_type(const ngap_message& lhs, const ngap_message& rhs);
+bool is_pdu_type(const ngap_message& pdu, asn1::ngap::ngap_elem_procs_o::init_msg_c::types type);
+bool is_pdu_type(const ngap_message& pdu, asn1::ngap::ngap_elem_procs_o::successful_outcome_c::types type);
+
+// NG Application Protocol (NGSetupRequest)
+//     NGAP-PDU: initiatingMessage (0)
+//         initiatingMessage
+//             procedureCode: id-NGSetup (21)
+//             criticality: reject (0)
+//             value
+//                 NGSetupRequest
+//                     protocolIEs: 4 items
+//                         Item 0: id-GlobalRANNodeID
+//                             ProtocolIE-Field
+//                                 id: id-GlobalRANNodeID (27)
+//                                 criticality: reject (0)
+//                                 value
+//                                     GlobalRANNodeID: globalGNB-ID (0)
+//                                         globalGNB-ID
+//                                             pLMNIdentity: 00f110
+//                                                 Mobile Country Code (MCC): Unknown (1)
+//                                                 Mobile Network Code (MNC): Unknown (01)
+//                                             gNB-ID: gNB-ID (0)
+//                                                 gNB-ID: 00066c [bit length 22, 2 LSB pad bits, 0000 0000  0000 0110
+//                                                 0110 11.. decimal value 411]
+//                         Item 1: id-RANNodeName
+//                             ProtocolIE-Field
+//                                 id: id-RANNodeName (82)
+//                                 criticality: ignore (1)
+//                                 value
+//                                     RANNodeName: tstgnb01
+//                         Item 2: id-SupportedTAList
+//                             ProtocolIE-Field
+//                                 id: id-SupportedTAList (102)
+//                                 criticality: reject (0)
+//                                 value
+//                                     SupportedTAList: 1 item
+//                                         Item 0
+//                                             SupportedTAItem
+//                                                 tAC: 7 (0x000007)
+//                                                 broadcastPLMNList: 1 item
+//                                                     Item 0
+//                                                         BroadcastPLMNItem
+//                                                             pLMNIdentity: 00f110
+//                                                                 Mobile Country Code (MCC): Unknown (1)
+//                                                                 Mobile Network Code (MNC): Unknown (01)
+//                                                             tAISliceSupportList: 1 item
+//                                                                 Item 0
+//                                                                     SliceSupportItem
+//                                                                         s-NSSAI
+//                                                                             sST: 01
+//                         Item 3: id-DefaultPagingDRX
+//                             ProtocolIE-Field
+//                                 id: id-DefaultPagingDRX (21)
+//                                 criticality: ignore (1)
+//                                 value
+//                                     PagingDRX: v256 (3)
+static const uint8_t ng_setup_request_packed[] = {
+    0x00, 0x15, 0x00, 0x33, 0x00, 0x00, 0x04, 0x00, 0x1b, 0x00, 0x08, 0x00, 0x00, 0xf1, 0x10, 0x00, 0x00, 0x06, 0x6c,
+    0x00, 0x52, 0x40, 0x0a, 0x03, 0x80, 0x74, 0x73, 0x74, 0x67, 0x6e, 0x62, 0x30, 0x31, 0x00, 0x66, 0x00, 0x0d, 0x00,
+    0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0xf1, 0x10, 0x00, 0x00, 0x00, 0x08, 0x00, 0x15, 0x40, 0x01, 0x60};
+
+/// \brief Generate a dummy NG Setup Response.
+ngap_message generate_ng_setup_response(plmn_identity plmn = plmn_identity::test_value());
+
+/// \brief Generate a dummy NG Setup Failure.
+ngap_message generate_ng_setup_failure();
+
+/// \brief Generate a dummy NG Setup Failure with bad PLMN.
+ngap_message generate_ng_setup_failure_with_bad_plmn(asn1::ngap::time_to_wait_e time_to_wait);
+
+/// \brief Generate a dummy NG Setup Failure with a time to wait.
+ngap_message generate_ng_setup_failure_with_time_to_wait(asn1::ngap::time_to_wait_e time_to_wait);
+
+const uint32_t nas_pdu_len = 4; // Dummy length used for testing (content is not important)
+/// \brief Generate a dummy Initial UE Message.
+cu_cp_initial_ue_message generate_initial_ue_message(cu_cp_ue_index_t ue_index);
+
+/// \brief Generate a dummy DL NAS Transport Message.
+ngap_message
+generate_downlink_nas_transport_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id, byte_buffer nas_pdu = {});
+
+/// \brief Generate a dummy DL NAS Transport Message with UE Cap Info Request.
+ngap_message generate_downlink_nas_transport_message_with_ue_cap_info_request(amf_ue_id_t amf_ue_id,
+                                                                              ran_ue_id_t ran_ue_id,
+                                                                              byte_buffer nas_pdu = {});
+
+/// \brief Generate a dummy UL NAS Transport Message.
+cu_cp_ul_nas_transport generate_ul_nas_transport_message(cu_cp_ue_index_t ue_index);
+
+/// \brief Generate a dummy UL NAS Transport Message.
+ngap_message generate_uplink_nas_transport_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy Initial Context Setup Request base.
+ngap_message generate_initial_context_setup_request_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy Initial Context Setup Request Message.
+ngap_message generate_valid_initial_context_setup_request_message(
+    amf_ue_id_t                                                amf_ue_id,
+    ran_ue_id_t                                                ran_ue_id,
+    std::optional<cu_cp_core_network_assist_info_for_inactive> cn_assist_info_for_inactive = std::nullopt,
+    std::optional<location_report_request>                     location_reporting_request  = std::nullopt);
+
+/// \brief Generate a valid dummy Initial Context Setup Request Message with a PDUSessionResourceSetupListCxtReq.
+ngap_message generate_valid_initial_context_setup_request_message_with_pdu_session(amf_ue_id_t amf_ue_id,
+                                                                                   ran_ue_id_t ran_ue_id);
+
+/// \brief Generate an invalid dummy Initial Context Setup Request Message.
+ngap_message generate_invalid_initial_context_setup_request_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate an invalid dummy Initial Context Setup Request Message with a PDUSessionResourceSetupListCxtReq.
+ngap_message generate_invalid_initial_context_setup_request_message_with_pdu_session(amf_ue_id_t amf_ue_id,
+                                                                                     ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy UE Context Modification Request base.
+ngap_message generate_ue_context_modification_request_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy UE Context Modification Request Message.
+ngap_message generate_valid_ue_context_modification_request_message(
+    amf_ue_id_t                                                amf_ue_id,
+    ran_ue_id_t                                                ran_ue_id,
+    std::optional<aggregate_maximum_bit_rate_t>                ue_ambr                     = std::nullopt,
+    std::optional<cu_cp_core_network_assist_info_for_inactive> cn_assist_info_for_inactive = std::nullopt,
+    std::optional<guami_t>                                     new_guami                   = std::nullopt);
+
+/// \brief Generate an invalid dummy UE Context Modification Request Message.
+ngap_message generate_invalid_ue_context_modification_request_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate an valid dummy UE Context Release Command Message with AMF UE NGAP ID.
+ngap_message generate_valid_ue_context_release_command_with_amf_ue_ngap_id(amf_ue_id_t amf_ue_id);
+
+/// \brief Generate an valid dummy UE Context Release Command Message with UE NGAP ID pair.
+ngap_message generate_valid_ue_context_release_command_with_ue_ngap_id_pair(amf_ue_id_t amf_ue_id,
+                                                                            ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy UE Context Release Command Message with the UE-NGAP-IDs choice set to its extension
+/// alternative (neither AMF UE NGAP ID nor UE NGAP ID pair present).
+ngap_message generate_ue_context_release_command_with_choice_exts_ue_ngap_ids();
+
+/// \brief Generate a dummy PDU Session Resource Setup Request base.
+ngap_message generate_pdu_session_resource_setup_request_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+struct qos_flow_test_params {
+  qos_flow_id_t qos_flow_id;
+  uint16_t      five_qi;
+};
+
+struct pdu_session_test_params {
+  pdu_session_type_t                pdu_session_type;
+  std::vector<qos_flow_test_params> qos_flows;
+};
+
+/// \brief Generate a valid dummy PDU Session Resource Setup Request Message.
+ngap_message generate_valid_pdu_session_resource_setup_request_message(
+    amf_ue_id_t                                                amf_ue_id,
+    ran_ue_id_t                                                ran_ue_id,
+    const std::map<pdu_session_id_t, pdu_session_test_params>& pdu_sessions,
+    std::optional<security_indication_t>                       sec_ind = std::nullopt);
+
+/// \brief Generate an invalid dummy PDU Session Resource Setup Request Message.
+ngap_message generate_invalid_pdu_session_resource_setup_request_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy PDU Session Resource Setup Request with IPv4 PDUSessionType but IPv4v6 transport layer
+/// address.
+ngap_message generate_pdu_session_resource_setup_request_with_pdu_session_type_ipv4_and_ipv4v6_transport_layer_address(
+    amf_ue_id_t amf_ue_id,
+    ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy PDU Session Resource Setup Response.
+ngap_pdu_session_resource_setup_response
+generate_ngap_pdu_session_resource_setup_response(ngap_pdu_session_resource_setup_request& request);
+
+/// \brief Generate a dummy PDU Session Resource Release Command base.
+ngap_message generate_pdu_session_resource_release_command_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy PDU Session Resource Release Command.
+ngap_message generate_valid_pdu_session_resource_release_command(amf_ue_id_t      amf_ue_id,
+                                                                 ran_ue_id_t      ran_ue_id,
+                                                                 pdu_session_id_t pdu_session_id);
+
+/// \brief Generate an invalid dummy PDU Session Resource Release Command.
+ngap_message generate_invalid_pdu_session_resource_release_command(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a dummy PDU Session Resource Release Response.
+ngap_pdu_session_resource_release_response
+generate_ngap_pdu_session_resource_release_response(pdu_session_id_t pdu_session_id);
+
+/// \brief Generate a dummy PDU Session Resource Modify Request base.
+ngap_message generate_pdu_session_resource_modify_request_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy PDU Session Resource Modify Request Message.
+ngap_message generate_valid_pdu_session_resource_modify_request_message(
+    amf_ue_id_t                       amf_ue_id,
+    ran_ue_id_t                       ran_ue_id,
+    pdu_session_id_t                  pdu_session_id,
+    const std::vector<qos_flow_id_t>& qos_flow_add_or_modify_list = {uint_to_qos_flow_id(1)},
+    const std::vector<qos_flow_id_t>& qos_flow_to_release_list    = {});
+
+/// \brief Generate an invalid dummy PDU Session Resource Modify Request Message.
+ngap_message generate_invalid_pdu_session_resource_modify_request_message(amf_ue_id_t      amf_ue_id,
+                                                                          ran_ue_id_t      ran_ue_id,
+                                                                          pdu_session_id_t pdu_session_id);
+
+/// \brief Generate a dummy PDU Session Resource Modify Response.
+ngap_pdu_session_resource_modify_response
+generate_ngap_pdu_session_resource_modify_response(pdu_session_id_t pdu_session_id,
+                                                   qos_flow_id_t    qos_flow_id = uint_to_qos_flow_id(1));
+
+/// \brief Generate a valid dummy Paging message with only mandatory fields set.
+ngap_message generate_valid_minimal_paging_message();
+
+/// \brief Generate a valid dummy Paging message.
+ngap_message generate_valid_paging_message();
+
+/// \brief Generate an invalid dummy Paging message.
+ngap_message generate_invalid_paging_message();
+
+/// \brief Generate an Error Indication message.
+ngap_message generate_error_indication_message(amf_ue_id_t  amf_ue_id,
+                                               ran_ue_id_t  ran_ue_id,
+                                               ngap_cause_t cause = ngap_cause_radio_network_t::unknown_pdu_session_id);
+
+/// Optional content of the dummy Handover Request generated by \ref generate_valid_handover_request.
+struct handover_request_params {
+  /// Whether the source's DRB-to-QoS-flow mapping (DRB1 <-> QFI1, matching the admitted PDU session) is included in
+  /// the Source to Target Transparent Container, letting the target confirm and prefer DRB1's numbering (TS 38.413
+  /// section 9.3.1.29). Set to false to simulate a source that did not signal it.
+  bool include_drb_to_qos_flow_mapping = true;
+  /// Whether the source proposes DL data forwarding for its QoS flows (TS 38.413 section 9.3.1.33).
+  bool propose_dl_data_forwarding = false;
+  /// Whether the 5GC rules out data forwarding for the PDU session (TS 38.413 section 9.3.1.63).
+  bool data_forwarding_not_possible = false;
+};
+
+/// \brief Generate a valid dummy Handover Request message.
+ngap_message generate_valid_handover_request(amf_ue_id_t amf_ue_id, const handover_request_params& params = {});
+
+/// \brief Generate a valid dummy Handover Preparation Failure message.
+ngap_message generate_handover_preparation_failure(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy Handover Command message.
+ngap_message generate_valid_handover_command(amf_ue_id_t amf_ue_id,
+                                             ran_ue_id_t ran_ue_id,
+                                             bool        with_data_forwarding_info = false,
+                                             bool        with_forwarding_tunnel    = true);
+
+/// \brief Generate a valid dummy DL RAN Status Transfer. \c drb_ids adds one DRBs Subject to Status Transfer List
+/// entry per DRB, e.g. to simulate a source DRB ID that was not admitted at (or not allocated the same way by) the
+/// target.
+ngap_message generate_valid_dl_ran_status_transfer(amf_ue_id_t                  amf_ue_id,
+                                                   ran_ue_id_t                  ran_ue_id,
+                                                   const std::vector<drb_id_t>& drb_ids = {});
+
+/// \brief Generate a handover preparation request.
+ngap_handover_preparation_request
+generate_handover_preparation_request(cu_cp_ue_index_t                                          ue_index,
+                                      const std::map<pdu_session_id_t, up_pdu_session_context>& pdu_sessions,
+                                      nr_cell_identity nci               = nr_cell_identity::create({1, 22}, 1).value(),
+                                      uint32_t         gnb_id_bit_length = 22,
+                                      plmn_identity    target_plmn       = plmn_identity::test_value());
+
+/// \brief Generate a valid dummy Handover Cancel Acknowledgement message.
+ngap_message generate_handover_cancel_ack(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+ngap_message generate_ng_reset_ack(const asn1::ngap::ue_associated_lc_ng_conn_list_l& ng_reset_ues = {});
+
+/// \brief Generate a valid dummy Location Reporting Control message with direct event type.
+ngap_message generate_location_reporting_control_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a valid dummy Location Reporting Control message with change-of-serving-cell event type.
+ngap_message generate_location_reporting_control_message_with_cell_change(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a Location Reporting Control message with
+/// change_of_serving_cell_and_ue_presence_in_the_area_of_interest event type and the given Location Reporting Reference
+/// IDs in the Area of Interest list.
+ngap_message
+generate_location_reporting_control_message_with_cell_change_and_ue_presence(amf_ue_id_t                 amf_ue_id,
+                                                                             ran_ue_id_t                 ran_ue_id,
+                                                                             const std::vector<uint8_t>& ref_ids);
+
+/// \brief Generate a Location Reporting Control message with the UE-presence-in-area-of-interest event type and the
+/// given Location Reporting Reference IDs in the Area of Interest list.
+ngap_message generate_location_reporting_control_message_with_ue_presence(amf_ue_id_t                 amf_ue_id,
+                                                                          ran_ue_id_t                 ran_ue_id,
+                                                                          const std::vector<uint8_t>& ref_ids);
+
+/// \brief Generate a Path Switch Request Failure message with the given cause.
+ngap_message generate_path_switch_request_failure(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id, ngap_cause_t cause);
+
+/// \brief Generate a Path Switch Request Ack message.
+ngap_message generate_path_switch_request_ack(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate a Path Switch Request Ack message with a new UL NG-U tunnel endpoint for each PDU session.
+ngap_message generate_path_switch_request_ack_with_ul_tunnel(amf_ue_id_t             amf_ue_id,
+                                                             ran_ue_id_t             ran_ue_id,
+                                                             pdu_session_id_t        psi,
+                                                             transport_layer_address ul_tla,
+                                                             gtpu_teid_t             ul_teid);
+
+/// \brief Generate a minimal WRITE-REPLACE WARNING REQUEST with mandatory IEs only.
+ngap_message generate_write_replace_warning_request();
+
+/// \brief Generate a WRITE-REPLACE WARNING REQUEST with optional IEs (warning type, msg contents, warning area list).
+ngap_message generate_write_replace_warning_request_with_optionals();
+
+/// \brief Generate a WRITE-REPLACE WARNING REQUEST with a specific NR CGI list as warning area.
+ngap_message generate_write_replace_warning_request_with_nr_cgi_list(const std::vector<nr_cell_global_id_t>& cgis);
+
+/// \brief Generate a WRITE-REPLACE WARNING REQUEST with a TAI list as warning area.
+ngap_message generate_write_replace_warning_request_with_tai_list(const std::vector<tai_t>& tais);
+
+/// \brief Generate a WRITE-REPLACE WARNING REQUEST with warning message contents present but without data coding
+/// scheme. Used to verify the spec compliance check: per TS 38.413 section 9.3.1.37, DCS shall be present when warning
+/// message contents is present; the CU-CP must not produce a SIB7/8 with content when DCS is absent.
+ngap_message generate_write_replace_warning_request_with_msg_no_dcs();
+
+/// \brief Generate a CMAS WRITE-REPLACE WARNING REQUEST: data coding scheme and warning message contents present,
+/// no warning type. The CU-CP must encode a SIB8 carrying the message content (TS 38.413 section 8.9.1).
+ngap_message generate_write_replace_warning_request_cmas();
+
+/// \brief Generate a full ETWS WRITE-REPLACE WARNING REQUEST: warning type, data coding scheme, and warning message
+/// contents all present. The CU-CP must produce both a SIB6 and a SIB7 (TS 38.413 section 8.9.1).
+ngap_message generate_write_replace_warning_request_etws_full();
+
+} // namespace ocudu::ocucp

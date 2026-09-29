@@ -1,0 +1,90 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#pragma once
+
+#include "../ngap_repository.h"
+#include "amf_connection_manager.h"
+#include "cu_cp_ue_admission_controller.h"
+#include "cu_up_connection_manager.h"
+#include "du_connection_manager.h"
+#include "xnc_connection_manager.h"
+
+namespace ocudu::ocucp {
+
+/// CU-CP controller configuration.
+struct cu_cp_controller_config {
+  unsigned max_nof_dus;
+  unsigned max_nof_cu_ups;
+};
+
+/// CU-CP controller dependencies.
+struct cu_cp_controller_dependencies {
+  cu_cp_amf_reconnection_handler&      cu_cp_notifier;
+  async_task_scheduler&                common_task_sched;
+  ngap_repository&                     ngaps;
+  cu_up_processor_repository&          cu_ups;
+  du_processor_repository&             dus;
+  xnap_repository&                     xncs;
+  std::vector<xnc_connection_gateway*> xnc_gws;
+  task_executor&                       ctrl_exec;
+  timer_manager&                       timers;
+  ocudulog::basic_logger&              logger;
+  cu_cp_ng_setup_complete_notifier*    ng_setup_notifier = nullptr;
+};
+
+/// \brief Entity responsible for managing the CU-CP connections to remote nodes and determining whether the CU-CP
+/// is in a state to accept new connections.
+///
+/// In particular, this class is responsible for:
+/// - triggering an AMF connection and tracking the status of the connection;
+/// - determining whether a new DU setup request should be accepted based on the status of other remote node
+/// connections;
+/// - determining whether new UEs should be accepted depending on the status of the CU-CP remote connections.
+class cu_cp_controller : public cu_cp_ue_admission_controller
+{
+public:
+  cu_cp_controller(const cu_cp_controller_config& configuration, cu_cp_controller_dependencies dependencies);
+
+  /// Stops the CU-CP controller.
+  void stop();
+
+  /// Gets the AMF connection handler.
+  amf_connection_manager& amf_connection_handler() { return amf_mng; }
+
+  /// Gets the XNC connection handler.
+  xnc_connection_manager& xnc_connection_handler() { return xnc_mng; }
+
+  /// Handles a DU setup request for the given PLMN identifiers. Returns true on success, false otherwise.
+  bool handle_du_setup_request(const std::set<plmn_identity>& plmn_ids);
+
+  /// Determines whether the CU-CP should accept new UE connections.
+  bool request_ue_setup() const override;
+
+  /// Determines whether the CU-CP should accept a new UE connection based on its PLMN.
+  bool is_supported_plmn(const plmn_identity& plmn) const;
+
+  /// Gets the F1C handler.
+  cu_cp_f1c_handler& get_f1c_handler() { return du_mng; }
+
+  /// Gets the E1 handler.
+  cu_cp_e1_handler& get_e1_handler() { return cu_up_mng; }
+
+  /// Gets the XNC handler.
+  cu_cp_xnc_handler& get_xnc_handler() { return xnc_mng; }
+
+private:
+  task_executor&          ctrl_exec;
+  ocudulog::basic_logger& logger;
+
+  amf_connection_manager   amf_mng;
+  du_connection_manager    du_mng;
+  cu_up_connection_manager cu_up_mng;
+  xnc_connection_manager   xnc_mng;
+
+  std::mutex mutex;
+  bool       running = true;
+};
+
+} // namespace ocudu::ocucp

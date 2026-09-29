@@ -1,0 +1,323 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+variables:
+  BUILDKIT_CLI_VERSION: "0.31.2"
+  RH_TOOL_CLI_VERSION: "1.0.4"
+
+.docker-builder:
+  tags:
+    - ${OCUDU_RUNNER_TAG}-${PLATFORM}
+  variables:
+    NAME: ""
+    CONTEXT: ""
+    DOCKERFILE: ""
+    PLATFORM: "amd64" # arm64 or amd64
+    VERSION: ""
+    BUILD_ARGS: "" # ; separated
+    BUILD_SECRETS: "" # ; separated, format id=secret_name,src=secret_file
+    DOCKER_TARGET: "" # Dockerfile stage to build; empty means last stage
+    MODE: "build"
+    MULTI_ARCH_BUILD: ""
+    PLATFORM_OS: "linux"
+    CACHE: "false"
+    CACHE_MODE: "min" # min or max
+    OVERWRITE: "false"
+    ATTESTATION_FILE: ""
+    GRYPE_SKIP: "false"
+    COSIGN_YES: "true" # Used by Cosign to skip confirmation prompts for non-destructive operations
+    REGISTRY_URI: ${CI_REGISTRY_IMAGE}
+    REGISTRY_AUTH_SERVER: ${CI_REGISTRY}
+    REGISTRY_AUTH_USERNAME: ${CI_REGISTRY_USER}
+    REGISTRY_AUTH_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  id_tokens:
+    SIGSTORE_ID_TOKEN: # Used by Cosign to get certificate from Fulcio
+      aud: sigstore
+  image: ${OCUDU_REGISTRY_URI}/buildkit-cli:$BUILDKIT_CLI_VERSION
+  artifacts:
+    paths:
+      - grype-report.json
+    when: on_failure
+  script:
+    - |
+      check_if_image_exists() {
+        IMAGE_NAME_TO_CHECK=$1
+        echo "docker manifest inspect $IMAGE_NAME_TO_CHECK"
+        if \
+          docker manifest inspect $IMAGE_NAME_TO_CHECK;
+        then
+          echo "Image ${IMAGE_NAME_TO_CHECK} already exists. Aborting"
+          exit 0
+        fi
+      }
+
+    # Validate parameters
+    - |
+      [ -z "$NAME" ] && echo "NAME parameter is mandatory" && exit 1
+      [ -z "$CONTEXT" ] && CONTEXT="${CI_PROJECT_DIR}"
+      [ -z "$DOCKERFILE" ] && DOCKERFILE="${CONTEXT}"
+      [ -z "$VERSION" ] && VERSION=$(date +%Y)_$(date +%m)_$(date +%d)
+      IMAGE_NAME="${REGISTRY_URI}/${NAME}"
+      IMAGE_NAME_VERSION="${IMAGE_NAME}:${VERSION}"
+      if [ -n "$BUILD_ARGS" ]; then
+        BUILD_ARGS="--opt build-arg:$(echo $BUILD_ARGS | sed 's/;/ --opt build-arg:/g')"
+      fi
+      if [ -n "$BUILD_SECRETS" ]; then
+        BUILD_SECRETS=$(echo "$BUILD_SECRETS" | sed 's/;/ --secret /g; s/^/--secret /')
+      fi
+      BUILD_ARGS="${BUILD_ARGS} ${BUILD_SECRETS} --opt build-arg:PIP_EXTRA_INDEX_URL=https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/api/v4/projects/${CI_PROJECT_ID}/packages/pypi/simple"
+
+    # Prepare detached SPDX signing for protected publish pipelines
+    - |
+      COSIGN_KEY_FILE=""
+      COSIGN_PUBLIC_KEY_FILE=""
+      if [ "${MODE}" = "publish" ] && [ "${CI_COMMIT_REF_PROTECTED}" = "true" ]; then
+        [ -z "${COSIGN_PRIVATE_KEY_B64}" ] && echo "COSIGN_PRIVATE_KEY_B64 is mandatory on protected publish pipelines" && exit 1
+        [ -z "${COSIGN_PASSWORD}" ] && echo "COSIGN_PASSWORD is mandatory on protected publish pipelines" && exit 1
+
+        COSIGN_KEY_FILE=/tmp/cosign.key
+        COSIGN_PUBLIC_KEY_FILE=/tmp/cosign.pub
+        install -m 600 /dev/null "${COSIGN_KEY_FILE}"
+        trap 'rm -f "${COSIGN_KEY_FILE}" "${COSIGN_PUBLIC_KEY_FILE}"' EXIT
+        printf '%s' "${COSIGN_PRIVATE_KEY_B64}" | base64 --decode > "${COSIGN_KEY_FILE}"
+        cosign public-key --key "${COSIGN_KEY_FILE}" > "${COSIGN_PUBLIC_KEY_FILE}"
+      fi
+
+    # Add docker config
+    - &docker_login |
+      [ -z "${REGISTRY_AUTH_SERVER}" ] && echo "REGISTRY_AUTH_SERVER is mandatory" && exit 1
+      [ -z "${REGISTRY_AUTH_USERNAME}" ] && echo "REGISTRY_AUTH_USERNAME is mandatory" && exit 1
+      [ -z "${REGISTRY_AUTH_PASSWORD}" ] && echo "REGISTRY_AUTH_PASSWORD is mandatory" && exit 1
+      echo "${REGISTRY_AUTH_PASSWORD}" | docker login "${REGISTRY_AUTH_SERVER}" -u "${REGISTRY_AUTH_USERNAME}" --password-stdin
+
+    # check if exists
+    - |
+      if [[ "${OVERWRITE}" != "true" ]]; then
+        check_if_image_exists $IMAGE_NAME_VERSION
+      fi
+
+    # Prepare build
+    - |
+      OUTPUT="type=image,name=${IMAGE_NAME_VERSION}"
+
+      # Publish
+      if [ ${MODE} = "publish" ]; then
+        if [[ ${MULTI_ARCH_BUILD} == "true" ]]; then
+          # Multi arch build, join to manifest later.
+          IMAGE_NAME_VERSION="${IMAGE_NAME_VERSION}-${PLATFORM}"
+          OUTPUT="type=image,name=${IMAGE_NAME_VERSION}"
+        fi
+        OUTPUT="${OUTPUT},push=true"
+      fi
+
+    # Use and generate build cache
+    - |
+      if [[ "${CACHE}" == "true" ]]; then
+        BUILD_ARGS="--import-cache type=registry,ref=${IMAGE_NAME}:cache-${PLATFORM} --export-cache type=registry,ref=${IMAGE_NAME}:cache-${PLATFORM},mode=${CACHE_MODE} ${BUILD_ARGS}"
+      fi
+
+    # Build & publish
+    - |
+      TARGET_OPT=""
+      [ -n "${DOCKER_TARGET}" ] && TARGET_OPT="--opt target=${DOCKER_TARGET}"
+    - |
+      sh -c "buildctl-daemonless.sh build \
+        --progress=plain \
+        --opt platform=${PLATFORM_OS}/${PLATFORM} \
+        --frontend=dockerfile.v0 \
+        --local context="${CONTEXT}" \
+        --local dockerfile=${DOCKERFILE} \
+        ${BUILD_ARGS} \
+        ${TARGET_OPT} \
+        --output ${OUTPUT}"
+
+    # Attestation functions
+    - |
+      generate_container_spdx() {
+        # Catalog OS packages only (no file metadata or executable classification).
+        # Post-process to strip file-level SPDX entries: without this the output
+        # exceeds 19MB (dpkg package lists inflate it) which breaks cosign attest
+        # because Rekor rejects entries that large.
+        #   awk:    removes FileName: element blocks (File sections from dpkg lists)
+        #   grep 1: removes evident-by RelationshipComment lines paired with file refs
+        #   grep 2: removes CONTAINS/OTHER Relationship lines pointing to SPDXRef-File-
+
+        SYFT_REGISTRY_AUTH_USERNAME="${REGISTRY_AUTH_USERNAME}" \
+          SYFT_REGISTRY_AUTH_PASSWORD="${REGISTRY_AUTH_PASSWORD}" \
+          SYFT_REGISTRY_AUTH_AUTHORITY="${REGISTRY_AUTH_SERVER}" \
+          syft registry:${IMAGE_NAME_VERSION} -o spdx \
+          --select-catalogers "os,-file-metadata-cataloger,-file-executable-cataloger" \
+          | awk '/^FileName:/{skip=1;next} /^$/{if(skip){skip=0;next}} !skip' \
+          | grep -v "^RelationshipComment: evident-by:" \
+          | grep -v "^Relationship:.*SPDXRef-File-" \
+          > container.spdx
+      }
+
+      attest_spdx() {
+        local predicate=$1
+        local base_url="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${NAME}/${VERSION}"
+
+        echo "Attesting ${predicate} ($(wc -c < ${predicate}) bytes)"
+        cosign attest --predicate "${predicate}" --type spdx ${IMAGE_DIGEST}
+
+        if [ -n "${COSIGN_KEY_FILE}" ]; then
+          echo "Signing ${predicate} as detached blob signature"
+          cosign sign-blob --key "${COSIGN_KEY_FILE}" \
+            --output-signature "${predicate}.sig" "${predicate}"
+
+          echo "Publishing ${predicate}, ${predicate}.sig and cosign.pub to package registry (${base_url})"
+          curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --upload-file "${predicate}" "${base_url}/${predicate}"
+          curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --upload-file "${predicate}.sig" "${base_url}/${predicate}.sig"
+          curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --upload-file "${COSIGN_PUBLIC_KEY_FILE}" "${base_url}/cosign.pub"
+        else
+          echo "Skipping detached blob signature on unprotected pipeline"
+        fi
+      }
+
+    # Attestation functions
+    - |
+      if [ ${MODE} = "publish" ]; then
+        IMAGE_DIGEST="${IMAGE_NAME_VERSION}@$(regctl image digest ${IMAGE_NAME_VERSION})"
+
+        echo "=== Signing image ==="
+        cosign sign ${IMAGE_DIGEST}
+
+        echo "=== Generating container SPDX ==="
+        generate_container_spdx
+        if [ -s container.spdx ]; then
+          echo "=== Attesting container SPDX ==="
+          attest_spdx container.spdx
+        else
+          echo "WARNING: syft produced an empty container.spdx, skipping container attestation"
+        fi
+
+        if [ -n "$ATTESTATION_FILE" ]; then
+          echo "=== Attesting ${ATTESTATION_FILE} ==="
+          regctl image get-file ${IMAGE_NAME_VERSION} ${ATTESTATION_FILE} > build.spdx
+          attest_spdx build.spdx
+          echo ""
+        fi
+
+        if [ "${GRYPE_SKIP}" != "true" ]; then
+          echo "=== Running grype CVE scan on ${IMAGE_NAME_VERSION} ==="
+          grype registry:${IMAGE_NAME_VERSION} --fail-on critical --ignore-states wont-fix,not-fixed -o json > grype-report.json
+          echo "=== Vulnerability summary ==="
+          jq -r '.matches[] | .vulnerability.severity' grype-report.json | sort | uniq -c | awk '{printf "  %s: %d\n", $2, $1}'
+          echo "  Total: $(jq '.matches | length' grype-report.json)"
+          echo "=== Attesting grype report ==="
+          cosign attest --predicate grype-report.json --type vuln ${IMAGE_DIGEST}
+        fi
+      fi
+
+.docker manifest:
+  stage: publish
+  image: ${OCUDU_REGISTRY_URI}/buildkit-cli:$BUILDKIT_CLI_VERSION
+  rules:
+    - if: $ON_DEFAULT_BRANCH
+    - if: $ON_MR
+  variables:
+    GIT_STRATEGY: none
+    NAME: none
+    VERSION: none
+    REGISTRY_URI: ${CI_REGISTRY_IMAGE}
+    REGISTRY_AUTH_SERVER: ${CI_REGISTRY}
+    REGISTRY_AUTH_USERNAME: ${CI_REGISTRY_USER}
+    REGISTRY_AUTH_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  before_script:
+    - *docker_login
+  script:
+    - *docker_login # Setup duplicated on purpose so both before_script and script can be overwritten
+    - |
+      docker manifest create \
+        ${REGISTRY_URI}/${NAME}:${VERSION} \
+        --amend ${REGISTRY_URI}/${NAME}:${VERSION}-amd64 \
+        --amend ${REGISTRY_URI}/${NAME}:${VERSION}-arm64
+      docker manifest push ${REGISTRY_URI}/${NAME}:${VERSION}
+      echo "Image ${REGISTRY_URI}/${NAME}:${VERSION} pushed"
+
+.docker copy:
+  image: ${OCUDU_REGISTRY_URI}/buildkit-cli:$BUILDKIT_CLI_VERSION
+  tags:
+    - ${OCUDU_RUNNER_TAG}-amd64
+  variables:
+    GIT_STRATEGY: none
+    SOURCE_IMAGE: ""
+    DESTINATION_IMAGE: ""
+    REGISTRY_AUTH_SERVER: ${CI_REGISTRY}
+    REGISTRY_AUTH_USERNAME: ${CI_REGISTRY_USER}
+    REGISTRY_AUTH_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  before_script:
+    - *docker_login
+  script:
+    - *docker_login # Setup duplicated on purpose so before_script can be overwritten
+    - |
+      [ -z "${SOURCE_IMAGE}" ] && echo "SOURCE_IMAGE is mandatory" && exit 1
+      [ -z "${DESTINATION_IMAGE}" ] && echo "DESTINATION_IMAGE is mandatory" && exit 1
+      regctl manifest get "${SOURCE_IMAGE}" >/dev/null
+      regctl image copy "${SOURCE_IMAGE}" "${DESTINATION_IMAGE}"
+      echo "Image ${DESTINATION_IMAGE} pushed"
+
+.docker compose:
+  stage: ci
+  image: docker:29.6.1-dind
+  tags:
+    - ${OCUDU_RUNNER_TAG}-${PLATFORM}
+  timeout: 2h
+  variables:
+    PLATFORM: "amd64" # arm64 or amd64
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - |
+      export DOCKER_HOST=unix:///var/run/docker.sock
+      dockerd-entrypoint.sh --host=${DOCKER_HOST} --tls=false 2>&1 &
+    - |
+      i=0
+      while ! docker info >/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -ge 60 ]; then
+          echo "ERROR: dockerd not ready after 60s"
+          exit 1
+        fi
+        sleep 1
+      done
+
+.check image exists for all supported ubuntu versions:
+  image: ${OCUDU_REGISTRY_URI}/buildkit-cli:$BUILDKIT_CLI_VERSION
+  variables:
+    VERSIONS_TO_IGNORE: ""
+    REGISTRY_AUTH_SERVER: ${CI_REGISTRY}
+    REGISTRY_AUTH_USERNAME: ${CI_REGISTRY_USER}
+    REGISTRY_AUTH_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  before_script:
+    # Add docker config
+    - *docker_login
+    # Install
+    - . /etc/os-release
+    - |
+      DEBIAN_FRONTEND=noninteractive apt-get update && \
+        apt-get install -y --no-install-recommends distro-info &&
+        apt-get install -y --only-upgrade distro-info-data
+    - |
+      distro_info_cmd="distro-info --release --date $(date -d '+5 days' --iso-8601)"
+      if echo "$($distro_info_cmd --unsupported 2>&1)" | grep -q "$VERSION_ID"; then
+        echo "Current OS distribution is not supported anymore so its distro-info could be outdated."
+        exit 1
+      fi
+    - |
+      check_if_image_exists() {
+        IMAGE_NAME_BEFORE=$1
+        IMAGE_NAME_AFTER=$2
+        distro_info_cmd="distro-info --release --date $(date -d '+5 days' --iso-8601)"
+        for _ubuntu_version_ in $($distro_info_cmd --supported | grep -v "$($distro_info_cmd --devel 2>/dev/null || echo 'no devel')" | sed 's/ LTS//g'); do
+          if [[ $VERSIONS_TO_IGNORE != *$_ubuntu_version_* ]]; then
+            image_to_check="${IMAGE_NAME_BEFORE}${_ubuntu_version_}${IMAGE_NAME_AFTER}"
+            echo "##################################################"
+            echo "Checking $image_to_check ..."
+            echo "##################################################"
+            docker manifest inspect $image_to_check
+          fi
+        done
+      }

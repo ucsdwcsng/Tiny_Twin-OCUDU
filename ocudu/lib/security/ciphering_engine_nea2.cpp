@@ -1,0 +1,55 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ciphering_engine_nea2.h"
+
+using namespace ocudu;
+using namespace security;
+
+#if !OCUDU_MBEDTLS_PSA
+ciphering_engine_nea2::ciphering_engine_nea2(sec_128_key        k_128_enc_,
+                                             uint8_t            bearer_id_,
+                                             security_direction direction_) :
+  bearer_id(bearer_id_), direction(direction_), k_128_enc(k_128_enc_), logger(ocudulog::fetch_basic_logger("SEC"))
+{
+  int ret = aes_setkey_enc(&ctx, k_128_enc.data(), 128);
+  if (ret != 0) {
+    ocudu_assertion_failure("Failure in aes_setkey_enc");
+    return;
+  }
+}
+
+security_status ciphering_engine_nea2::apply_ciphering(byte_buffer& buf, size_t offset, uint32_t count)
+{
+  byte_buffer_view msg{buf.begin() + offset, buf.end()};
+
+  logger.debug("Applying ciphering. count={}", count);
+  logger.debug("K_enc: {}", k_128_enc);
+  logger.debug(msg.begin(), msg.end(), "Ciphering input:");
+
+  unsigned char stream_blk[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  unsigned char nonce_cnt[16]  = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  size_t        nc_off         = 0;
+
+  // Construct nonce
+  nonce_cnt[0] = (count >> 24) & 0xff;
+  nonce_cnt[1] = (count >> 16) & 0xff;
+  nonce_cnt[2] = (count >> 8) & 0xff;
+  nonce_cnt[3] = count & 0xff;
+  nonce_cnt[4] = ((bearer_id & 0x1f) << 3) | ((to_number(direction) & 0x01) << 2);
+
+  // Encryption
+  byte_buffer_segment_span_range segments = msg.modifiable_segments();
+  for (const auto& segment : segments) {
+    int ret =
+        mbedtls_aes_crypt_ctr(&ctx, segment.size(), &nc_off, nonce_cnt, stream_blk, segment.data(), segment.data());
+    if (ret != 0) {
+      return security_status::ciphering_failure;
+    }
+  }
+  logger.debug(msg.begin(), msg.end(), "Ciphering output:");
+
+  return security_status::success;
+}
+#endif

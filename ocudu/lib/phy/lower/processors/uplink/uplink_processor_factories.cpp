@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "ocudu/phy/lower/processors/uplink/uplink_processor_factories.h"
+#include "uplink_processor_impl.h"
+
+using namespace ocudu;
+
+namespace {
+
+class lower_phy_uplink_processor_factory_sw : public lower_phy_uplink_processor_factory
+{
+public:
+  lower_phy_uplink_processor_factory_sw(std::shared_ptr<prach_processor_factory> prach_proc_factory_,
+                                        std::shared_ptr<puxch_processor_factory> puxch_proc_factory_) :
+    prach_proc_factory(std::move(prach_proc_factory_)), puxch_proc_factory(std::move(puxch_proc_factory_))
+  {
+    ocudu_assert(prach_proc_factory, "Invalid PRACH processor factory.");
+    ocudu_assert(puxch_proc_factory, "Invalid PUxCH processor factory.");
+  }
+
+  std::unique_ptr<lower_phy_uplink_processor> create(const uplink_processor_configuration& config) override
+  {
+    // Prepare PUxCH processor configuration.
+    puxch_processor_configuration puxch_proc_config = {.cp                = config.cp,
+                                                       .scs               = config.scs,
+                                                       .srate             = config.rate,
+                                                       .bandwidth_rb      = config.bandwidth_prb,
+                                                       .dft_window_offset = dft_window_offset,
+                                                       .center_freq_Hz    = config.center_frequency_Hz,
+                                                       .nof_rx_ports      = config.nof_rx_ports};
+
+    // Prepare uplink processor configuration.
+    lower_phy_uplink_processor_impl::configuration proc_config = {.sector_id    = config.sector_id,
+                                                                  .scs          = config.scs,
+                                                                  .cp           = config.cp,
+                                                                  .rate         = config.rate,
+                                                                  .nof_rx_ports = config.nof_rx_ports};
+
+    return std::make_unique<lower_phy_uplink_processor_impl>(
+        prach_proc_factory->create(), puxch_proc_factory->create(puxch_proc_config), proc_config);
+  }
+
+private:
+  static constexpr float                   dft_window_offset = 0.5F;
+  std::shared_ptr<prach_processor_factory> prach_proc_factory;
+  std::shared_ptr<puxch_processor_factory> puxch_proc_factory;
+};
+
+} // namespace
+
+std::shared_ptr<lower_phy_uplink_processor_factory>
+ocudu::create_uplink_processor_factory_sw(std::shared_ptr<prach_processor_factory> prach_proc_factory,
+                                          std::shared_ptr<puxch_processor_factory> puxch_proc_factory)
+{
+  return std::make_shared<lower_phy_uplink_processor_factory_sw>(std::move(prach_proc_factory),
+                                                                 std::move(puxch_proc_factory));
+}

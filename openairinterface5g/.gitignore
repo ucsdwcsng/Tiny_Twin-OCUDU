@@ -1,0 +1,36 @@
+# vim swp
+*.swp
+
+# log and exec file
+cmake_targets/log/
+cmake_targets/*/build/
+cmake_targets/ran_build/
+log/
+lte_build_oai/
+build*
+
+# IDE files
+.vscode
+.cproject
+.project
+.settings
+
+# Tags for vim/global
+GPATH
+GRTAGS
+GTAGS
+tags
+
+# Package conffiles
+
+tools/packages/oai-lte/conffiles
+tools/packages/oai-nr/conffiles
+tools/packages/liboai-common/conffiles
+tools/packages/liboai-usrp/conffiles
+
+
+# others
+nfapi_nr_interface_scf
+*.log
+*.out
+CMakeUserPresets.json

@@ -1,0 +1,542 @@
+// SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+// SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+// Portions of this file may implement 3GPP specifications, which may be subject to additional licensing requirements.
+
+#include "pdu_rx_handler.h"
+#include "ocudu/adt/format.h"
+#include "ocudu/instrumentation/traces/up_traces.h"
+#include "ocudu/ocudulog/ocudulog.h"
+#include "ocudu/support/format/fmt_basic_parser.h"
+#include "ocudu/support/format/fmt_to_c_str.h"
+#include "fmt/std.h"
+
+using namespace ocudu;
+
+namespace {
+
+/// \brief Structure used to provide a logging prefix for the UE PDU/subPDU.
+struct pdu_log_prefix {
+  const char*                  type;
+  rnti_t                       rnti;
+  du_ue_index_t                ue_index;
+  std::optional<lcid_ul_sch_t> lcid;
+};
+
+} // namespace
+
+static pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu)
+{
+  return pdu_log_prefix{.type = "UL", .rnti = pdu.pdu_rx.rnti, .ue_index = pdu.ue_index};
+}
+
+static pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu, const mac_ul_sch_subpdu& subpdu)
+{
+  return pdu_log_prefix{.type = "UL", .rnti = pdu.pdu_rx.rnti, .ue_index = pdu.ue_index, .lcid = subpdu.lcid()};
+}
+
+namespace fmt {
+
+template <>
+struct formatter<pdu_log_prefix> : public basic_parser {
+  template <typename FormatContext>
+  auto format(const pdu_log_prefix& p, FormatContext& ctx) const
+  {
+    fmt::format_to(ctx.out(), "{} rnti={}", p.type, p.rnti);
+    if (p.ue_index != ocudu::INVALID_DU_UE_INDEX) {
+      fmt::format_to(ctx.out(), " ue={}", p.ue_index);
+    }
+    if (p.lcid.has_value()) {
+      const char* event = p.lcid->is_sdu() ? p.lcid->is_ccch() ? "UL-CCCH" : "UL-DCCH" : "CE";
+      fmt::format_to(ctx.out(), " lcid={:#x} {}", *p.lcid, event);
+    }
+    return ctx.out();
+  }
+};
+
+} // namespace fmt
+
+pdu_rx_handler::pdu_rx_handler(mac_ul_ccch_notifier&          ccch_notifier_,
+                               mac_ue_executor_mapper&        ue_exec_mapper_,
+                               mac_scheduler_ce_info_handler& sched_,
+                               mac_ul_ue_manager&             ue_manager_,
+                               du_rnti_table&                 rnti_table_,
+                               mac_pcap&                      pcap_) :
+  ccch_notifier(ccch_notifier_),
+  ue_exec_mapper(ue_exec_mapper_),
+  logger(ocudulog::fetch_basic_logger("MAC")),
+  sched(sched_),
+  ue_manager(ue_manager_),
+  rnti_table(rnti_table_),
+  pcap(pcap_)
+{
+}
+
+bool pdu_rx_handler::handle_rx_pdu(slot_point sl_rx, du_cell_index_t cell_index, mac_rx_pdu pdu)
+{
+  trace_point rx_tp = up_tracer.now();
+  // > Store PCAP
+  write_pcap_rx_pdu(sl_rx, pdu);
+
+  // > Fetch UE index based on PDU RNTI.
+  du_ue_index_t ue_index = rnti_table[pdu.rnti];
+
+  // > Decode MAC UL PDU.
+  decoded_mac_rx_pdu      ctx{sl_rx, cell_index, std::move(pdu), ue_index};
+  error_type<std::string> ret = ctx.decoded_subpdus.unpack(ctx.pdu_rx.pdu);
+  if (not ret.has_value()) {
+    logger.info("{}: Failed to decode MAC UL PDU. Cause: {}", create_prefix(ctx), ret.error());
+    return false;
+  }
+
+  // > Log MAC UL PDU.
+  if (logger.info.enabled()) {
+    // Note: Since subPDUs are just views, they should not be passed by value to the logging backend.
+    fmt::memory_buffer fmtbuf;
+    fmt::format_to(std::back_inserter(fmtbuf), "{}", ctx.decoded_subpdus);
+    logger.info("{} subPDUs: [{}]", create_prefix(ctx), to_c_str(fmtbuf));
+  }
+
+  // > If Msg3 (UE index is still not assigned) is received, check if MAC CRNTI CE or UL-CCCH CE are present.
+  if (not is_du_ue_index_valid(ctx.ue_index)) {
+    for (unsigned n = ctx.decoded_subpdus.nof_subpdus(); n > 0; --n) {
+      const mac_ul_sch_subpdu& subpdu = ctx.decoded_subpdus.subpdu(n - 1);
+
+      if (subpdu.lcid() == lcid_ul_sch_t::CRNTI) {
+        // >> Dispatch continuation of subPDU handling to execution context of previous C-RNTI.
+        return handle_crnti_ce(ctx, subpdu);
+      }
+      if (subpdu.lcid() == lcid_ul_sch_t::CCCH_SIZE_48 or subpdu.lcid() == lcid_ul_sch_t::CCCH_SIZE_64) {
+        return handle_ccch_msg(ctx, subpdu);
+      }
+    }
+  }
+
+  // > Handle remaining MAC UL subPDUs.
+  bool pdu_ret = handle_rx_subpdus(ctx);
+  up_tracer << trace_event{"mac_rx_pdu", rx_tp};
+  return pdu_ret;
+}
+
+bool pdu_rx_handler::push_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer ul_ccch_msg)
+{
+  mac_ul_ue_context* ue = ue_manager.find_ue(ue_index);
+  if (ue == nullptr) {
+    logger.warning("UL subPDU ue={}, lcid={} UL-CCCH: Received UL-CCCH for non-existent UE", ue_index, LCID_SRB0);
+    return false;
+  }
+
+  if (not ue->ul_bearers.contains(LCID_SRB0)) {
+    logger.warning("{}: Received UL PDU for inexistent bearer.",
+                   pdu_log_prefix{.type = "UL subPDU", .rnti = ue->rnti, .lcid = LCID_SRB0});
+    return false;
+  }
+
+  logger.debug("{}: Forwarding UL SDU of {} bytes",
+               pdu_log_prefix{.type = "UL subPDU", .rnti = ue->rnti, .ue_index = ue->ue_index, .lcid = LCID_SRB0},
+               ul_ccch_msg.length());
+
+  // Push CCCH message to upper layers.
+  ue->ul_bearers[LCID_SRB0]->on_new_sdu(byte_buffer_slice{std::move(ul_ccch_msg)});
+
+  return true;
+}
+
+bool pdu_rx_handler::handle_rx_subpdus(const decoded_mac_rx_pdu& ctx)
+{
+  mac_ul_ue_context* ue = ue_manager.find_ue(ctx.ue_index);
+
+  // Process SDUs and MAC CEs that are not C-RNTI MAC CE.
+  for (const mac_ul_sch_subpdu& subpdu : ctx.decoded_subpdus) {
+    const bool ret = subpdu.lcid().is_sdu() ? handle_sdu(ctx, subpdu, ue) : handle_mac_ce(ctx, subpdu);
+    if (not ret) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool pdu_rx_handler::handle_sdu(const decoded_mac_rx_pdu& ctx, const mac_ul_sch_subpdu& sdu, mac_ul_ue_context* ue)
+{
+  if (ue == nullptr) {
+    // MAC PDUs can be processed after the UE has been removed, due to processing delays.
+    // TODO: Handle Msg3 SDUs that doesn't have UL-CCCH or C-RNTI CE.
+    ocudulog::log_channel& log_ch = ctx.ue_index == INVALID_DU_UE_INDEX ? logger.info : logger.warning;
+    log_ch("{}: Discarding SDU. Cause: Non-existent C-RNTI", create_prefix(ctx, sdu));
+    return false;
+  }
+
+  lcid_t lcid = (lcid_t)sdu.lcid().value();
+  if (not ue->ul_bearers.contains(lcid)) {
+    ocudulog::log_channel& log_ch = ue->rrc_config_pending ? logger.info : logger.warning;
+    log_ch("{}: Discarding SDU. Cause: Non-existent LCID", create_prefix(ctx, sdu));
+    return false;
+  }
+
+  // Log MAC UL SDU
+  logger.debug("{}: Forwarding SDU of {} bytes", create_prefix(ctx, sdu), sdu.sdu_length());
+
+  // Push PDU to upper layers
+  ue->ul_bearers[lcid]->on_new_sdu(byte_buffer_slice{ctx.pdu_rx.pdu, sdu.payload()});
+
+  return true;
+}
+
+void pdu_rx_handler::forward_phr(du_ue_index_t     ue_index,
+                                 du_cell_index_t   cell_index,
+                                 rnti_t            rnti,
+                                 slot_point        slot_rx,
+                                 const phr_report& phr)
+{
+  mac_phr_ce_info phr_ind{};
+  phr_ind.cell_index = cell_index;
+  phr_ind.ue_index   = ue_index;
+  phr_ind.rnti       = rnti;
+  phr_ind.slot_rx    = slot_rx;
+  phr_ind.phr        = phr;
+  sched.handle_ul_phr_indication(phr_ind);
+}
+
+void pdu_rx_handler::forward_ta_report(du_ue_index_t             ue_index,
+                                       du_cell_index_t           cell_index,
+                                       rnti_t                    rnti,
+                                       slot_point                slot_rx,
+                                       std::chrono::microseconds ul_ta)
+{
+  mac_ta_report_ce_info ta_report_ind{};
+  ta_report_ind.cell_index = cell_index;
+  ta_report_ind.ue_index   = ue_index;
+  ta_report_ind.rnti       = rnti;
+  ta_report_ind.slot_rx    = slot_rx;
+  ta_report_ind.ul_ta      = ul_ta;
+  sched.handle_ul_ta_report_indication(ta_report_ind);
+}
+
+bool pdu_rx_handler::handle_mac_ce(const decoded_mac_rx_pdu& ctx, const mac_ul_sch_subpdu& subpdu)
+{
+  // Handle MAC CEs
+  switch (subpdu.lcid().value()) {
+    case lcid_ul_sch_t::CCCH_SIZE_48:
+    case lcid_ul_sch_t::CCCH_SIZE_64: {
+      // The CCCH CE is handled separately in case of Msg3, before all other CEs. See handle_rx_pdu().
+      // At the point we enter this function, the CCCH should have been processed, and the UE should have been created.
+      // Here, we only ensure that we are not receiving CCCH for a non-Msg3 PUSCH.
+      if (is_du_ue_index_valid(ctx.ue_index)) {
+        // The UE already existed, so it should not be receiving an MAC UL-CCCH CE. However, there is a change that we
+        // received a PDU filled with zeros. In such case, we provide a clearer log message.
+        bool all_zeros = true;
+        for (span<const uint8_t> s : ctx.pdu_rx.pdu.segments()) {
+          if (std::any_of(s.begin(), s.end(), [](uint8_t v) { return v != 0; })) {
+            all_zeros = false;
+            break;
+          }
+        }
+        if (all_zeros) {
+          logger.warning("{}: Discarding PDU. Cause: Rx PDU is filled with zeros, meaning that it was likely corrupted",
+                         create_prefix(ctx, subpdu));
+        } else {
+          // This should not happen, but there is a tiny chance that there is a false alarm of an SR during UE creation
+          // and double toggle of the NDI, which will make the UE interpret a new UL grant as a Msg3 reTx.
+          logger.info("{}: Discarding PDU. Cause: UL-CCCH should be only for Msg3", create_prefix(ctx, subpdu));
+        }
+        return false;
+      }
+    } break;
+    case lcid_ul_sch_t::SHORT_BSR:
+    case lcid_ul_sch_t::SHORT_TRUNC_BSR:
+    case lcid_ul_sch_t::LONG_BSR:
+    case lcid_ul_sch_t::LONG_TRUNC_BSR: {
+      if (not is_du_ue_index_valid(ctx.ue_index)) {
+        logger.warning("{}: Discarding MAC CE. Cause: C-RNTI is not associated with any existing UE",
+                       create_prefix(ctx, subpdu));
+        return false;
+      }
+      // Forward decoded BSR to scheduler.
+      mac_bsr_ce_info bsr_ind{};
+      bsr_ind.cell_index = ctx.cell_index_rx;
+      bsr_ind.ue_index   = ctx.ue_index;
+      bsr_ind.rnti       = ctx.pdu_rx.rnti;
+      if (subpdu.lcid() == lcid_ul_sch_t::SHORT_BSR or subpdu.lcid() == lcid_ul_sch_t::SHORT_TRUNC_BSR) {
+        bsr_ind.bsr_fmt =
+            subpdu.lcid() == lcid_ul_sch_t::SHORT_BSR ? bsr_format::SHORT_BSR : bsr_format::SHORT_TRUNC_BSR;
+        bsr_ind.lcg_reports.push_back(decode_sbsr(subpdu.payload()));
+      } else {
+        bsr_ind.bsr_fmt = subpdu.lcid() == lcid_ul_sch_t::LONG_BSR ? bsr_format::LONG_BSR : bsr_format::LONG_TRUNC_BSR;
+        expected<long_bsr_report> lbsr_report = decode_lbsr(bsr_ind.bsr_fmt, subpdu.payload());
+        if (not lbsr_report.has_value()) {
+          logger.warning("{}: Discarding BSR MAC CE. Cause: BSR is invalid", create_prefix(ctx, subpdu));
+          return false;
+        }
+        bsr_ind.lcg_reports = lbsr_report.value().list;
+      }
+      sched.handle_ul_bsr_indication(bsr_ind);
+    } break;
+    case lcid_ul_sch_t::CRNTI: {
+      // The MAC C-RNTI CE is handled separately in case of Msg3, and before all other CEs. See handle_rx_pdu().
+      // At the point we enter this function, the MAC C-RNTI CE should have already been processed, and the
+      // old UE context should have been retrieved. Here, we only ensure that the C-RNTI CE is not being received
+      // for a PUSCH that is not Msg3.
+      const bool crnti_ce_was_not_yet_processed = decode_crnti_ce(subpdu.payload()) != ctx.pdu_rx.rnti;
+      if (crnti_ce_was_not_yet_processed) {
+        logger.warning("{}: C-RNTI CE received in PUSCH that is not Msg3", create_prefix(ctx, subpdu));
+        return false;
+      }
+    } break;
+    case lcid_ul_sch_t::SE_PHR: {
+      if (not is_du_ue_index_valid(ctx.ue_index)) {
+        logger.warning("{}: Discarding MAC CE. Cause: C-RNTI is not associated with any existing UE",
+                       create_prefix(ctx, subpdu));
+        return false;
+      }
+      forward_phr(ctx.ue_index, ctx.cell_index_rx, ctx.pdu_rx.rnti, ctx.slot_rx, decode_se_phr(subpdu.payload()));
+    } break;
+    case lcid_ul_sch_t::TIMING_ADVANCE_REPORT: {
+      if (not is_du_ue_index_valid(ctx.ue_index)) {
+        logger.warning("{}: Discarding MAC CE. Cause: C-RNTI is not associated with any existing UE",
+                       create_prefix(ctx, subpdu));
+        return false;
+      }
+      forward_ta_report(
+          ctx.ue_index, ctx.cell_index_rx, ctx.pdu_rx.rnti, ctx.slot_rx, decode_ta_report(subpdu.payload()));
+    } break;
+    case lcid_ul_sch_t::PADDING:
+      break;
+    default:
+      logger.warning("{}: Discarding MAC CE. Cause: Unhandled LCID", create_prefix(ctx, subpdu));
+  }
+
+  return true;
+}
+
+/// \brief Whether a MAC CE carried in a Msg3 with a UL-CCCH SDU can be forwarded once the UE context exists.
+///
+/// Restricted to the CEs that only report a UE measurement, as when they are processed the UE is still in
+/// pending_conres_ce. A BSR is deliberately excluded: it would place the UE in the fallback scheduler's pending UL
+/// list before contention resolution completes, and the UE has no C-RNTI to be granted on yet (TS 38.321, Sections
+/// 5.1.5 and 5.4.2.1). The UL-CCCH SDU is carried separately on the UE-creation path, and the C-RNTI CE only applies
+/// to the pre-creation path.
+static bool can_ul_ccch_msg3_ce_be_forwarded(lcid_ul_sch_t lcid)
+{
+  return lcid == lcid_ul_sch_t::TIMING_ADVANCE_REPORT or lcid == lcid_ul_sch_t::SE_PHR;
+}
+
+/// \brief Decodes the per-UE MAC CEs that will be processed once the UE context exists.
+static msg3_mac_ce_list decode_deferred_msg3_mac_ces(const mac_ul_sch_pdu& decoded_subpdus)
+{
+  msg3_mac_ce_list mac_ces;
+  for (const mac_ul_sch_subpdu& subpdu : decoded_subpdus) {
+    if (not can_ul_ccch_msg3_ce_be_forwarded(subpdu.lcid())) {
+      continue;
+    }
+    switch (subpdu.lcid().value()) {
+      case lcid_ul_sch_t::TIMING_ADVANCE_REPORT:
+        mac_ces.emplace_back(decode_ta_report(subpdu.payload()));
+        break;
+      case lcid_ul_sch_t::SE_PHR:
+        mac_ces.emplace_back(decode_se_phr(subpdu.payload()).get_se_phr());
+        break;
+      default:
+        ocudu_assertion_failure("Msg3 MAC CE with lcid={} is forwarded but not decoded", subpdu.lcid());
+    }
+  }
+  return mac_ces;
+}
+
+bool pdu_rx_handler::handle_ccch_msg(const decoded_mac_rx_pdu& ctx, const mac_ul_sch_subpdu& sdu)
+{
+  ocudu_assert(ctx.ue_index == INVALID_DU_UE_INDEX,
+               "This function should only be called for Msg3, when UE context has not been created yet");
+
+  rnti_t tc_rnti = ctx.pdu_rx.rnti;
+  if (ctx.pdu_rx.rapid.has_value()) {
+    // This CCCH message was carried in a 2-step RACH (MsgA) PUSCH. Per TS 38.211, 6.3.1.1, MsgA PUSCH is decoded
+    // using the RA-RNTI, not the UE's TC-RNTI, so ctx.pdu_rx.rnti is the (periodically recurring) RA-RNTI here, not
+    // the TC-RNTI mac_rach_handler allocated for this preamble. Resolve it back to the real TC-RNTI, and register
+    // the UE Contention Resolution Identity so the DU-MAC can echo it back in the successRAR MAC subPDU (see
+    // TS 38.321, 6.2.3a).
+    ue_con_res_id_t        con_res_id{};
+    const byte_buffer_view payload = sdu.payload();
+    std::copy(
+        payload.begin(), payload.begin() + std::min<size_t>(payload.length(), UE_CON_RES_ID_LEN), con_res_id.begin());
+
+    std::optional<rnti_t> resolved =
+        sched.handle_msga_ccch_sdu(ctx.cell_index_rx, ctx.pdu_rx.rnti, *ctx.pdu_rx.rapid, ctx.slot_rx, con_res_id);
+    if (not resolved.has_value()) {
+      logger.warning("{}: Discarding CCCH message. Cause: No TC-RNTI found for ra-rnti={} rapid={}",
+                     create_prefix(ctx, sdu),
+                     ctx.pdu_rx.rnti,
+                     *ctx.pdu_rx.rapid);
+      return false;
+    }
+    tc_rnti = resolved.value();
+  }
+
+  // Notify DU manager of received CCCH message.
+  ul_ccch_indication_message msg{};
+  msg.tc_rnti    = tc_rnti;
+  msg.cell_index = ctx.cell_index_rx;
+  msg.slot_rx    = ctx.slot_rx;
+
+  if (!msg.subpdu.append(sdu.payload())) {
+    logger.warning("{}: Unable to append SDU into sub-PDU", create_prefix(ctx, sdu));
+    return false;
+  }
+  // Decode the per-UE MAC CEs now, but defer their processing until the UE context exists.
+  msg.msg3_mac_ces = decode_deferred_msg3_mac_ces(ctx.decoded_subpdus);
+
+  if (logger.debug.enabled()) {
+    for (const mac_ul_sch_subpdu& subpdu : ctx.decoded_subpdus) {
+      // The C-RNTI CE is handled on the pre-creation path, so it is not discarded here.
+      if (subpdu.lcid().is_ccch() or subpdu.lcid() == lcid_ul_sch_t::PADDING or subpdu.lcid() == lcid_ul_sch_t::CRNTI or
+          can_ul_ccch_msg3_ce_be_forwarded(subpdu.lcid())) {
+        continue;
+      }
+      logger.debug("{}: Discarding subPDU carried in Msg3", create_prefix(ctx, subpdu));
+    }
+  }
+
+  ccch_notifier.on_ul_ccch_msg_received(msg);
+
+  return true;
+}
+
+bool pdu_rx_handler::handle_msg3_mac_ces(du_ue_index_t           ue_index,
+                                         du_cell_index_t         cell_index,
+                                         slot_point              slot_rx,
+                                         const msg3_mac_ce_list& mac_ces)
+{
+  const mac_ul_ue_context* ue = ue_manager.find_ue(ue_index);
+  if (ue == nullptr) {
+    logger.warning("ue={}: Discarding Msg3 MAC CEs. Cause: UE does not exist", ue_index);
+    return false;
+  }
+
+  // Forwards each Msg3 MAC CE to the scheduler. A new msg3_mac_ce alternative fails to compile rather than be dropped.
+  struct ce_forwarder {
+    pdu_rx_handler& parent;
+    du_ue_index_t   ue_index;
+    du_cell_index_t cell_index;
+    rnti_t          rnti;
+    slot_point      slot_rx;
+
+    void operator()(const cell_ph_report& cell_phr) const
+    {
+      phr_report phr = {};
+      phr.set_se_phr(cell_phr);
+      parent.forward_phr(ue_index, cell_index, rnti, slot_rx, phr);
+    }
+    void operator()(std::chrono::microseconds ul_ta) const
+    {
+      parent.forward_ta_report(ue_index, cell_index, rnti, slot_rx, ul_ta);
+    }
+  };
+
+  for (const msg3_mac_ce& mac_ce : mac_ces) {
+    std::visit(ce_forwarder{*this, ue_index, cell_index, ue->rnti, slot_rx}, mac_ce);
+  }
+
+  return true;
+}
+
+/// \brief Finds if there a BSR with positive buffer size in the list of decoded subPDUs.
+static bool contains_positive_bsr(const mac_ul_sch_pdu& decoded_subpdus)
+{
+  for (const auto& subpdu : decoded_subpdus) {
+    if (subpdu.lcid() == lcid_ul_sch_t::SHORT_TRUNC_BSR || subpdu.lcid() == lcid_ul_sch_t::SHORT_BSR) {
+      lcg_bsr_report rep = decode_sbsr(subpdu.payload());
+      if (rep.buffer_size > 0) {
+        return true;
+      }
+    }
+    if (subpdu.lcid() == lcid_ul_sch_t::LONG_TRUNC_BSR || subpdu.lcid() == lcid_ul_sch_t::LONG_BSR) {
+      auto bsr_fmt = subpdu.lcid() == lcid_ul_sch_t::LONG_BSR ? bsr_format::LONG_BSR : bsr_format::LONG_TRUNC_BSR;
+      expected<long_bsr_report> lbsr_report = decode_lbsr(bsr_fmt, subpdu.payload());
+      if (lbsr_report.has_value()) {
+        for (const auto& l : lbsr_report.value().list) {
+          if (l.buffer_size > 0) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool pdu_rx_handler::handle_crnti_ce(const decoded_mac_rx_pdu& ctx, const mac_ul_sch_subpdu& subpdu)
+{
+  // > Decode CRNTI CE and create new pdu context with the old C-RNTI.
+  decoded_mac_rx_pdu new_ctx = ctx;
+  new_ctx.pdu_rx.rnti        = decode_crnti_ce(subpdu.payload());
+  if (not is_crnti(new_ctx.pdu_rx.rnti)) {
+    logger.warning("{}: Discarding PDU. Cause: Invalid Payload length={} for C-RNTI MAC CE type",
+                   create_prefix(new_ctx, subpdu),
+                   subpdu.payload().length());
+    return false;
+  }
+
+  // > Fetch an existing UE with the same old C-RNTI.
+  new_ctx.ue_index = rnti_table[new_ctx.pdu_rx.rnti];
+  if (new_ctx.ue_index == INVALID_DU_UE_INDEX) {
+    // This situation can occur when the UE returns by naming its previous RNTI via "C-RNTI CE", but so much time has
+    // passed in the meantime that the previous context has already been deleted.
+    // Example: the UE did not finish its de-registration procedure and only came back to finish that procedure.
+    logger.warning("{}: Discarding PDU. Cause: C-RNTI in C-RNTI CE is not associated with any existing UE. "
+                   "It is likely that the old UE context has already been discarded",
+                   create_prefix(new_ctx, subpdu));
+    return false;
+  }
+
+  // > Dispatch continuation of subPDU handling to execution context of previous C-RNTI.
+  task_executor& ue_exec = ue_exec_mapper.mac_ul_pdu_executor(new_ctx.ue_index);
+  if (not ue_exec.execute([this, new_ctx = std::move(new_ctx)]() {
+        if (ue_manager.find_ue(new_ctx.ue_index) == nullptr) {
+          logger.warning(
+              "{}: Discarding PDU. Cause: UE with C-RNTI in C-RNTI CE has been deleted while the CE was being handled",
+              create_prefix(new_ctx));
+          return;
+        }
+
+        // >> Handle remaining subPDUs using old C-RNTI.
+        if (not handle_rx_subpdus(new_ctx)) {
+          return;
+        }
+
+        // >> Notify scheduler of received C-RNTI CE.
+        sched.handle_crnti_ce_indication(new_ctx.ue_index, new_ctx.cell_index_rx);
+
+        // >> Notify about reception of the C-RNTI CE to trigger Access Success notification.
+        ccch_notifier.on_crnti_ce_received({new_ctx.cell_index_rx, new_ctx.ue_index});
+
+        // >> In case no positive BSR was provided, we force a positive BSR in the scheduler to complete the RA
+        // procedure, as per TS 38.321, Section 5.1.5.
+        if (not contains_positive_bsr(new_ctx.decoded_subpdus)) {
+          sched.handle_ul_sched_command(
+              mac_ul_scheduling_command{new_ctx.cell_index_rx, new_ctx.slot_rx, new_ctx.ue_index, new_ctx.pdu_rx.rnti});
+        }
+      })) {
+    logger.warning("{}: Discarding PDU. Cause: Task queue is full.", create_prefix(ctx, subpdu));
+  }
+
+  return true;
+}
+
+void pdu_rx_handler::write_pcap_rx_pdu(slot_point sl_rx, const mac_rx_pdu& pdu)
+{
+  if (not pcap.is_write_enabled()) {
+    return;
+  }
+
+  ocudu::mac_nr_context_info context = {};
+  context.radioType                  = PCAP_FDD_RADIO;
+  context.direction                  = PCAP_DIRECTION_UPLINK;
+  context.rntiType                   = PCAP_C_RNTI;
+  context.rnti                       = to_underlying(pdu.rnti);
+  context.ueid   = rnti_table[pdu.rnti] == du_ue_index_t::INVALID_DU_UE_INDEX ? du_ue_index_t::INVALID_DU_UE_INDEX
+                                                                              : rnti_table[pdu.rnti] + 1;
+  context.harqid = pdu.harq_id;
+  context.system_frame_number = sl_rx.sfn();
+  context.sub_frame_number    = sl_rx.subframe_index();
+  context.length              = pdu.pdu.length();
+  pcap.push_pdu(context, pdu.pdu.copy());
+}

@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation. Licensed under the MIT license.
+#
+# EdgeRIC-on-Janus DL scheduling codeletset: one codelet on the mac_sched_dl_ctrl
+# control hook that BOTH reports per-UE state (out_dl_sched) and applies the
+# muApp's Max-Weight priority override (weight_in control-input channel).
+
+codeletset_id: edgeric_sched
+
+codelet_descriptor:
+  - codelet_name: dl_sched
+    codelet_path: ${JBPF_CODELETS}/edgeric/dl_sched.o
+    hook_name: mac_sched_dl_ctrl
+    priority: 1
+    out_io_channel:
+      - name: out_dl_sched
+        forward_destination: DestinationNone
+        serde:
+          file_path: ${JBPF_CODELETS}/edgeric/dl_sched_report:dl_sched_report_serializer.so
+          protobuf:
+            package_path: ${JBPF_CODELETS}/edgeric/dl_sched_report.pb
+            msg_name: dl_sched_report
+    in_io_channel:
+      - name: weight_in
