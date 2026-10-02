@@ -10,3 +10,15 @@ Tiny Twin OCUDU is the [OCUDU](https://gitlab.com/ocudu/ocudu) version of [Tiny 
 - **Built-in measurement.** Includes per-slot gNB timing, a broker profiler, and scripts that sweep the number of UEs and plot the results.
 
 Developed by [WCSNG](https://wcsng.ucsd.edu/) at UC San Diego. To get started, see [docs/quick-start.md](docs/quick-start.md).
+
+If you use Tiny-Twin in your research, please cite our paper:
+```
+@inproceedings{mamaghani2026tiny,
+  title={Tiny-Twin: A CPU-Native Full-stack Digital Twin for NextG Cellular Networks},
+  author={Mamaghani, Ali and Ghosh, Ushasi and Shakkottai, Srinivas and Bharadia, Dinesh and Jain, Ish Kumar},
+  booktitle={2026 IEEE International Symposium on Spectrum Innovation (DySPAN)},
+  pages={1--8},
+  year={2026},
+  organization={IEEE}
+}
+```
